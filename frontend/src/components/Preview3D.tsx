@@ -126,9 +126,6 @@ function Preview3D({ selectionBounds, sceneRef, lod }: Preview3DProps) {
       : 'https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/13100-bldg-lod1-2023/tileset.json'
 
     const center = getSelectionCenter(selectionBounds)
-    console.log('[Preview3D] Loading tileset:', tilesetUrl)
-    console.log('[Preview3D] Selection bounds:', selectionBounds)
-    console.log('[Preview3D] Center:', center)
 
     const tilesRenderer = new TilesRenderer(tilesetUrl)
     tilesRenderer.setCamera(cameraRef.current)
@@ -143,8 +140,6 @@ function Preview3D({ selectionBounds, sceneRef, lod }: Preview3DProps) {
     tilesRenderer.registerPlugin(reorientationPlugin)
 
     const handleLoadRootTileset = () => {
-      console.log('[Preview3D] load-root-tileset fired')
-
       if (cameraRef.current && controlsRef.current) {
         const latSpan = selectionBounds.north - selectionBounds.south
         const lonSpan = selectionBounds.east - selectionBounds.west
@@ -154,28 +149,22 @@ function Preview3D({ selectionBounds, sceneRef, lod }: Preview3DProps) {
           Math.pow(latSpan * 111320, 2) + Math.pow(lonSpan * 111320 * Math.cos((avgLat * Math.PI) / 180), 2)
         )
         const viewDistance = Math.max(diagonalMeters * 2, 500)
-        console.log('[Preview3D] Selection diagonal:', diagonalMeters.toFixed(0), 'm, view distance:', viewDistance.toFixed(0), 'm')
 
         cameraRef.current.position.set(0, viewDistance, viewDistance)
         controlsRef.current.target.set(0, 0, 0)
         controlsRef.current.update()
-        console.log('[Preview3D] Camera positioned at:', cameraRef.current.position.toArray())
       }
       setIsLoading(false)
     }
 
     const handleLoadError = (ev: { tile: unknown; error: Error; url: string | URL }) => {
-      console.warn('[Preview3D] load-error:', ev.url, ev.error?.message || ev.error)
+      console.warn('Tile load error:', ev.url, ev.error?.message || ev.error)
       setLoadError('PLATEAUデータの読み込みに失敗しました')
       setIsLoading(false)
     }
 
     tilesRenderer.addEventListener('load-root-tileset', handleLoadRootTileset)
     tilesRenderer.addEventListener('load-error', handleLoadError)
-    tilesRenderer.addEventListener('load-tileset', () => console.log('[Preview3D] load-tileset fired'))
-    tilesRenderer.addEventListener('load-model', () => console.log('[Preview3D] load-model fired'))
-    tilesRenderer.addEventListener('tiles-load-start', () => console.log('[Preview3D] tiles-load-start'))
-    tilesRenderer.addEventListener('tiles-load-end', () => console.log('[Preview3D] tiles-load-end'))
 
     return () => {
       tilesRenderer.removeEventListener('load-root-tileset', handleLoadRootTileset)
