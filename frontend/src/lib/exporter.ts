@@ -1,11 +1,25 @@
-import { Scene } from 'three'
+import { Scene, Mesh, BufferGeometry } from 'three'
 import { STLExporter } from 'three/addons/exporters/STLExporter.js'
 
 export function exportSceneToSTL(scene: Scene, filename: string): void {
-  const exporter = new STLExporter()
-  const text = exporter.parse(scene)
+  // GridHelperなどを除外し、Meshのみ収集
+  const meshes: Mesh[] = []
+  scene.traverse((obj) => {
+    if (obj instanceof Mesh && obj.geometry instanceof BufferGeometry) {
+      meshes.push(obj)
+    }
+  })
 
-  const blob = new Blob([text], { type: 'application/octet-stream' })
+  if (meshes.length === 0) {
+    throw new Error('エクスポートできるジオメトリが見つかりません。3Dプレビュータブで建物が表示されているか確認してください。')
+  }
+
+  const exporter = new STLExporter()
+  const tempScene = new Scene()
+  meshes.forEach((m) => tempScene.add(m.clone()))
+
+  const result = exporter.parse(tempScene, { binary: true })
+  const blob = new Blob(([result] as unknown) as BlobPart[], { type: 'application/octet-stream' })
 
   const MAX_SIZE_MB = 50
   if (blob.size > MAX_SIZE_MB * 1024 * 1024) {

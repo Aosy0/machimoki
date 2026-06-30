@@ -56,7 +56,8 @@ function App() {
     setTimeout(() => {
       try {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-        const filename = `machimoki-${timestamp}.stl`
+        const ext = parameters.exportFormat === '3mf' ? 'stl' : parameters.exportFormat
+        const filename = `machimoki-${timestamp}.${ext}`
         exportSceneToSTL(sceneRef.current!, filename)
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
@@ -64,7 +65,7 @@ function App() {
         setIsExporting(false)
       }
     }, 100)
-  }, [])
+  }, [parameters.exportFormat])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage
   const handleDismissError = () => {
@@ -226,7 +227,7 @@ function App() {
         {activeTab === 'preview' && (
           <div style={{ display: 'flex', width: '100%', height: '100%' }}>
             <div style={{ flex: 1, position: 'relative' }}>
-              <Preview3D selectionBounds={selectionBounds} sceneRef={sceneRef} />
+              <Preview3D selectionBounds={selectionBounds} sceneRef={sceneRef} lod={parameters.lod} />
               <LoadingOverlay message="エクスポート中..." visible={isExporting} />
             </div>
             <ParameterPanel

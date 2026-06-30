@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Scene, PerspectiveCamera, WebGLRenderer, Color, GridHelper, Sphere } from 'three'
+import { Scene, PerspectiveCamera, WebGLRenderer, Color, GridHelper } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { TilesRenderer } from '3d-tiles-renderer'
+import { ReorientationPlugin } from '3d-tiles-renderer/plugins'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
   sceneRef?: React.MutableRefObject<Scene | null>
+  lod: 'lod1' | 'lod2'
 }
 
 function getSelectionCenter(bounds: SelectionBounds): { lon: number; lat: number } {
@@ -16,7 +18,7 @@ function getSelectionCenter(bounds: SelectionBounds): { lon: number; lat: number
   }
 }
 
-function Preview3D({ selectionBounds, sceneRef }: Preview3DProps) {
+function Preview3D({ selectionBounds, sceneRef, lod }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const sceneRefInternal = useRef<Scene | null>(null)
   const cameraRef = useRef<PerspectiveCamera | null>(null)
@@ -99,7 +101,7 @@ function Preview3D({ selectionBounds, sceneRef }: Preview3DProps) {
     }
   }, [sceneRef])
 
-  // Tileset loading — runs when selectionBounds changes
+  // Tileset loading — runs when selectionBounds or lod changes
   useEffect(() => {
     if (!sceneRefInternal.current || !cameraRef.current || !rendererRef.current) return
 
@@ -119,53 +121,73 @@ function Preview3D({ selectionBounds, sceneRef }: Preview3DProps) {
     setIsLoading(true)
     setLoadError(null)
 
-    const tilesetUrl = 'https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/13-bldg-lod1-2025/tileset.json'
+    const tilesetUrl = lod === 'lod2'
+      ? 'https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/13100-bldg-lod2-2023/tileset.json'
+      : 'https://api.plateauview.mlit.go.jp/datacatalog/3dtiles/13100-bldg-lod1-2023/tileset.json'
+
+    const center = getSelectionCenter(selectionBounds)
+    console.log('[Preview3D] Loading tileset:', tilesetUrl)
+    console.log('[Preview3D] Selection bounds:', selectionBounds)
+    console.log('[Preview3D] Center:', center)
+
     const tilesRenderer = new TilesRenderer(tilesetUrl)
     tilesRenderer.setCamera(cameraRef.current)
     tilesRenderer.setResolutionFromRenderer(cameraRef.current, rendererRef.current)
     sceneRefInternal.current.add(tilesRenderer.group)
     tilesRendererRef.current = tilesRenderer
 
+    const reorientationPlugin = new ReorientationPlugin({
+      lat: (center.lat * Math.PI) / 180,
+      lon: (center.lon * Math.PI) / 180,
+    })
+    tilesRenderer.registerPlugin(reorientationPlugin)
+
     const handleLoadRootTileset = () => {
-      const sphere = new Sphere()
-      tilesRenderer.getBoundingSphere(sphere)
-      tilesRenderer.group.position.copy(sphere.center).multiplyScalar(-1)
+      console.log('[Preview3D] load-root-tileset fired')
 
-      const center = getSelectionCenter(selectionBounds)
-      const dLon = selectionBounds.east - selectionBounds.west
-      const dLat = selectionBounds.north - selectionBounds.south
-      const widthM = dLon * 111320 * Math.cos((center.lat * Math.PI) / 180)
-      const heightM = dLat * 110540
-      const selectionRadius = Math.sqrt(widthM * widthM + heightM * heightM) / 2
+      if (cameraRef.current && controlsRef.current) {
+        const latSpan = selectionBounds.north - selectionBounds.south
+        const lonSpan = selectionBounds.east - selectionBounds.west
+        const avgLat = (selectionBounds.north + selectionBounds.south) / 2
+        // Haversine-approximate diagonal in meters
+        const diagonalMeters = Math.sqrt(
+          Math.pow(latSpan * 111320, 2) + Math.pow(lonSpan * 111320 * Math.cos((avgLat * Math.PI) / 180), 2)
+        )
+        const viewDistance = Math.max(diagonalMeters * 2, 500)
+        console.log('[Preview3D] Selection diagonal:', diagonalMeters.toFixed(0), 'm, view distance:', viewDistance.toFixed(0), 'm')
 
-      const radius = Math.max(sphere.radius, selectionRadius)
-      if (radius > 0 && cameraRef.current && controlsRef.current) {
-        cameraRef.current.position.set(radius * 0.5, radius * 0.8, radius * 1.2)
+        cameraRef.current.position.set(0, viewDistance, viewDistance)
         controlsRef.current.target.set(0, 0, 0)
         controlsRef.current.update()
+        console.log('[Preview3D] Camera positioned at:', cameraRef.current.position.toArray())
       }
       setIsLoading(false)
     }
 
-    const handleLoadError = (ev: ErrorEvent) => {
-      console.warn('Tile load error (non-critical):', ev.error || ev.message)
+    const handleLoadError = (ev: { tile: unknown; error: Error; url: string | URL }) => {
+      console.warn('[Preview3D] load-error:', ev.url, ev.error?.message || ev.error)
       setLoadError('PLATEAUデータの読み込みに失敗しました')
       setIsLoading(false)
     }
 
     tilesRenderer.addEventListener('load-root-tileset', handleLoadRootTileset)
     tilesRenderer.addEventListener('load-error', handleLoadError)
+    tilesRenderer.addEventListener('load-tileset', () => console.log('[Preview3D] load-tileset fired'))
+    tilesRenderer.addEventListener('load-model', () => console.log('[Preview3D] load-model fired'))
+    tilesRenderer.addEventListener('tiles-load-start', () => console.log('[Preview3D] tiles-load-start'))
+    tilesRenderer.addEventListener('tiles-load-end', () => console.log('[Preview3D] tiles-load-end'))
 
     return () => {
       tilesRenderer.removeEventListener('load-root-tileset', handleLoadRootTileset)
       tilesRenderer.removeEventListener('load-error', handleLoadError)
+      ;(reorientationPlugin as unknown as { dispose: () => void }).dispose()
       sceneRefInternal.current?.remove(tilesRenderer.group)
       tilesRenderer.dispose()
       if (tilesRendererRef.current === tilesRenderer) {
         tilesRendererRef.current = null
       }
     }
-  }, [selectionBounds])
+  }, [selectionBounds, lod])
 
   return (
     <div ref={containerRef} style={containerStyle}>
