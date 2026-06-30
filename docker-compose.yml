@@ -1,0 +1,26 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - node_modules:/app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - HOST=0.0.0.0
+    command: npm run dev
+    networks:
+      - machimoki_default
+      - shared-network
+
+volumes:
+  node_modules:
+
+networks:
+  machimoki_default:
+    driver: bridge
+  shared-network:
+    external: true

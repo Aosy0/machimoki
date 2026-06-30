@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "3d-web-experience": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "skillPath": "skills/3d-web-experience/SKILL.md",
+      "computedHash": "abf349a30764951de0ff17fe6e4b0d3a5332d3682b3b97109d7a23f813406d1a"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "computedHash": "4eabc66183767153e404b39d1b839b1c37f2d82d86f0a0d7e880a579d8d62336"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/skill-creator/SKILL.md",
+      "computedHash": "5ea13a6d9f0d4bb694405d79acd00cadec0d21bb138c4dd10fcf3c500cb835c2"
+    },
+    "threejs-scene-builder": {
+      "source": "jarrodmedrano/jarrod-claude-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/react-three-fiber/SKILL.md",
+      "computedHash": "a59126fcd04e7c6077ffd8ada53665a998724fedf062101805907053d2c56b82"
+    }
+  }
+}

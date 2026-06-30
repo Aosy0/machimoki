@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.playwright-mcp/
+omo/
+*.log
+.env
+.env.*

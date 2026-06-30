@@ -1,0 +1,12 @@
+{
+  "name": "machimoki",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "worker"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev -w frontend",
+    "dev:worker": "npm run dev -w worker"
+  }
+}
