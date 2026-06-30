@@ -1,9 +1,16 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import cesium from 'vite-plugin-cesium'
+import { resolve } from 'path'
 
 export default defineConfig({
-  plugins: [react(), cesium()],
+  plugins: [
+    react(),
+    cesium({
+      cesiumBuildRootPath: resolve(__dirname, '../node_modules/cesium/Build'),
+      cesiumBuildPath: resolve(__dirname, '../node_modules/cesium/Build/Cesium/'),
+    }),
+  ],
   define: {
     CESIUM_BASE_URL: JSON.stringify('/cesium'),
   },

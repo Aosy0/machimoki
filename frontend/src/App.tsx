@@ -102,6 +102,7 @@ function App() {
       navigationHelpButton: false,
       baseLayer: false,
       sceneMode: SceneMode.SCENE3D,
+      skyBox: false,
     })
 
     viewer.imageryLayers.addImageryProvider(
