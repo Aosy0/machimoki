@@ -2,6 +2,7 @@ node_modules/
 dist/
 .playwright-mcp/
 omo/
+.omo/
 *.log
 .env
 .env.*
