@@ -46,6 +46,14 @@ function App() {
   } = useRectangleSelection(viewer)
 
   const handleExport = useCallback(() => {
+    if (!selectionBounds) {
+      setErrorMessage('エクスポートする前に地図で範囲を選択してください')
+      return
+    }
+    if (parameters.exportFormat === '3mf') {
+      setErrorMessage('3MF出力は未実装です。STLをお選びください。')
+      return
+    }
     if (!sceneRef.current) {
       setErrorMessage('3Dシーンが初期化されていません')
       return
@@ -65,7 +73,7 @@ function App() {
         setIsExporting(false)
       }
     }, 100)
-  }, [parameters.exportFormat])
+  }, [parameters.exportFormat, selectionBounds])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage
   const handleDismissError = () => {
