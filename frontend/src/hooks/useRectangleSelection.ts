@@ -32,8 +32,8 @@ export function useRectangleSelection(viewer: Viewer | null) {
       const width = CesiumMath.toRadians(east - west) * 6371000
       const height = CesiumMath.toRadians(north - south) * 6371000
       const areaKm2 = (width * height) / 1_000_000
-      if (areaKm2 > 1.0) {
-        return `選択範囲が広すぎます（${areaKm2.toFixed(2)} km²）。最大1km²まで。`
+      if (areaKm2 > 1000.0) {
+        return `選択範囲が広すぎます（${areaKm2.toFixed(2)} km²）。最大1000km²まで。`
       }
       return null
     },
@@ -214,6 +214,7 @@ export function useRectangleSelection(viewer: Viewer | null) {
 
   return {
     selectionBounds,
+    setSelectionBounds,
     isDrawing,
     errorMessage,
     clearError,

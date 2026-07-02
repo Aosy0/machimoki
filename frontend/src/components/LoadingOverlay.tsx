@@ -3,9 +3,10 @@ import React from 'react'
 interface LoadingOverlayProps {
   message: string
   visible: boolean
+  progress?: number
 }
 
-function LoadingOverlay({ message, visible }: LoadingOverlayProps) {
+function LoadingOverlay({ message, visible, progress }: LoadingOverlayProps) {
   if (!visible) return null
 
   return (
@@ -36,6 +37,28 @@ function LoadingOverlay({ message, visible }: LoadingOverlayProps) {
         }}
       />
       <p style={{ marginTop: '16px', fontSize: '14px' }}>{message}</p>
+      {progress !== undefined && (
+        <div
+          style={{
+            width: '200px',
+            height: '6px',
+            background: '#333',
+            borderRadius: '3px',
+            marginTop: '12px',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              width: `${Math.max(0, Math.min(100, progress))}%`,
+              height: '100%',
+              background: '#00bcd4',
+              borderRadius: '3px',
+              transition: 'width 0.2s ease',
+            }}
+          />
+        </div>
+      )}
       <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
     </div>
   )

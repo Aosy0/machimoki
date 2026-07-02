@@ -6,3 +6,5 @@ omo/
 *.log
 .env
 .env.*
+screenshots/
+.debug-journal.md

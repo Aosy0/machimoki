@@ -17,6 +17,7 @@ import ErrorToast from './components/ErrorToast'
 import HelpPanel from './components/HelpPanel'
 import { exportSceneToSTL } from './lib/exporter'
 import { useRectangleSelection } from './hooks/useRectangleSelection'
+import type { PipelineState } from './types/pipeline'
 
 type Tab = 'map' | 'preview'
 
@@ -38,12 +39,55 @@ function App() {
   const cesiumContainer = useRef<HTMLDivElement>(null)
   const [viewer, setViewer] = useState<Viewer | null>(null)
   const sceneRef = useRef<Scene | null>(null)
+  const manifoldRef = useRef<any>(null)
+  const [pipelineState, setPipelineState] = useState<PipelineState>({
+    phase: 'idle',
+    progress: 0,
+    message: '',
+    error: null,
+  })
+
+  const [manualCoords, setManualCoords] = useState({
+    west: '139.8053',
+    south: '35.7470',
+    east: '139.8080',
+    north: '35.7495',
+  })
 
   const {
     selectionBounds,
+    setSelectionBounds,
     errorMessage: selectionErrorMessage,
     clearError: clearSelectionError,
   } = useRectangleSelection(viewer)
+
+  const handleManualSelect = useCallback(() => {
+    const w = parseFloat(manualCoords.west)
+    const s = parseFloat(manualCoords.south)
+    const e = parseFloat(manualCoords.east)
+    const n = parseFloat(manualCoords.north)
+    if ([w, s, e, n].some(isNaN)) {
+      setErrorMessage('座標値が無効です')
+      return
+    }
+    if (w >= e || s >= n) {
+      setErrorMessage('無効な選択範囲です (west < east, south < north)')
+      return
+    }
+    setSelectionBounds({ west: w, south: s, east: e, north: n })
+    setErrorMessage(null)
+  }, [manualCoords, setSelectionBounds])
+
+  const applyPreset = useCallback((preset: { west: number; south: number; east: number; north: number }) => {
+    setManualCoords({
+      west: preset.west.toString(),
+      south: preset.south.toString(),
+      east: preset.east.toString(),
+      north: preset.north.toString(),
+    })
+    setSelectionBounds(preset)
+    setErrorMessage(null)
+  }, [setSelectionBounds])
 
   const handleExport = useCallback(() => {
     if (!selectionBounds) {
@@ -75,17 +119,20 @@ function App() {
     }, 100)
   }, [parameters.exportFormat, selectionBounds])
 
-  const displayErrorMessage = errorMessage || selectionErrorMessage
+  const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
   const handleDismissError = () => {
     setErrorMessage(null)
     clearSelectionError()
+    if (pipelineState.phase === 'error') {
+      setPipelineState((prev) => ({ ...prev, phase: 'idle', error: null }))
+    }
   }
 
-  // WASM initialization
   useEffect(() => {
     setIsWasmLoading(true)
     Module().then((wasm) => {
       wasm.setup()
+      manifoldRef.current = wasm
       setIsWasmLoading(false)
     }).catch((err: unknown) => {
       setIsWasmLoading(false)
@@ -133,6 +180,7 @@ function App() {
     })
 
     setViewer(viewer)
+    ;(window as any).__viewer = viewer
 
     return () => {
       setViewer(null)
@@ -230,12 +278,95 @@ function App() {
             >
               Shift + ドラッグ で範囲選択
             </div>
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '16px',
+                right: '16px',
+                background: 'rgba(0, 0, 0, 0.75)',
+                color: '#fff',
+                padding: '10px',
+                borderRadius: '6px',
+                fontSize: '12px',
+                zIndex: 100,
+                width: '220px',
+              }}
+            >
+              <div style={{ marginBottom: '6px', fontWeight: 'bold' }}>座標で選択</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginBottom: '6px' }}>
+                <input
+                  type="text"
+                  placeholder="W"
+                  value={manualCoords.west}
+                  onChange={(e) => setManualCoords((prev) => ({ ...prev, west: e.target.value }))}
+                  style={{ width: '100%', padding: '4px', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px' }}
+                />
+                <input
+                  type="text"
+                  placeholder="E"
+                  value={manualCoords.east}
+                  onChange={(e) => setManualCoords((prev) => ({ ...prev, east: e.target.value }))}
+                  style={{ width: '100%', padding: '4px', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px' }}
+                />
+                <input
+                  type="text"
+                  placeholder="S"
+                  value={manualCoords.south}
+                  onChange={(e) => setManualCoords((prev) => ({ ...prev, south: e.target.value }))}
+                  style={{ width: '100%', padding: '4px', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px' }}
+                />
+                <input
+                  type="text"
+                  placeholder="N"
+                  value={manualCoords.north}
+                  onChange={(e) => setManualCoords((prev) => ({ ...prev, north: e.target.value }))}
+                  style={{ width: '100%', padding: '4px', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
+                <button
+                  onClick={() => applyPreset({ west: 139.8053, south: 35.7470, east: 139.8080, north: 35.7495 })}
+                  style={{ flex: 1, padding: '4px', fontSize: '10px', background: '#444', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                >
+                  足立区
+                </button>
+                <button
+                  onClick={() => applyPreset({ west: 139.6899, south: 35.7029, east: 139.6932, north: 35.7070 })}
+                  style={{ flex: 1, padding: '4px', fontSize: '10px', background: '#444', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                >
+                  新宿
+                </button>
+                <button
+                  onClick={() => applyPreset({ west: 139.7639, south: 35.6764, east: 139.7708, north: 35.6855 })}
+                  style={{ flex: 1, padding: '4px', fontSize: '10px', background: '#444', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                >
+                  東京駅
+                </button>
+              </div>
+              <button
+                onClick={handleManualSelect}
+                style={{ width: '100%', padding: '6px', fontSize: '11px', background: '#00bcd4', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+              >
+                適用
+              </button>
+            </div>
           </div>
         )}
         {activeTab === 'preview' && (
           <div style={{ display: 'flex', width: '100%', height: '100%' }}>
             <div style={{ flex: 1, position: 'relative' }}>
-              <Preview3D selectionBounds={selectionBounds} sceneRef={sceneRef} lod={parameters.lod} />
+              <Preview3D
+                selectionBounds={selectionBounds}
+                sceneRef={sceneRef}
+                lod={parameters.lod}
+                manifoldRef={manifoldRef}
+                onPipelineStateChange={setPipelineState}
+              />
+              <LoadingOverlay
+                message={pipelineState.message}
+                visible={pipelineState.phase !== 'idle' && pipelineState.phase !== 'complete'}
+                progress={pipelineState.progress}
+              />
               <LoadingOverlay message="エクスポート中..." visible={isExporting} />
             </div>
             <ParameterPanel
@@ -258,6 +389,7 @@ function App() {
       <ErrorToast
         message={displayErrorMessage}
         onDismiss={handleDismissError}
+        onRetry={pipelineState.phase === 'error' ? handleDismissError : undefined}
       />
     </div>
   )
