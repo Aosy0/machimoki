@@ -18,3 +18,10 @@ HMRのため、毎回サーバーを再起動する必要はありません。�
 - 起動完了メッセージ（`ready in ... ms` など）が出れば正常に立ち上がっている。
 - サーバーを裏で動かし続けたい場合は `&` でバックグラウンド実行する
   （例: `node server.js &`）。
+
+## 参照コード（読み取り専用）
+
+- ~/Documents/plateau-streaming-tutorial
+- ~/Documents/plateau-catalog-generator
+
+PLATEAU公式のCesium/データカタログAPI実装。参考にするのみで、編集・変更は禁止。

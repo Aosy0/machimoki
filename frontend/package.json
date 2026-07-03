@@ -10,7 +10,6 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "3d-tiles-renderer": "^0.4.28",
     "cesium": "^1.127.0",
     "manifold-3d": "^3.0.0",
     "react": "^18.3.1",
