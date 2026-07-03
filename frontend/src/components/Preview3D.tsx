@@ -2,10 +2,7 @@ import { useEffect, useRef } from 'react'
 import {
   Viewer,
   Cesium3DTileset,
-  Rectangle,
   Color,
-  ClippingPlane,
-  ClippingPlaneCollection,
   Cartesian3,
   Math as CesiumMath,
 } from 'cesium'
@@ -13,6 +10,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
 import { resolveMuniCode, findTilesetUrl } from '../lib/catalogApi'
+import { applyClippingToTileset, applyClippingToGlobe } from '../lib/clipping'
 
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
@@ -136,48 +134,31 @@ export default function Preview3D({
         viewer!.scene.primitives.add(tileset)
         tilesetRef.current = tileset
 
-        // 選択範囲でクリッピング（範囲外の建物を非表示）
-        const R = 6378137.0 // WGS84長半径
-        const westRad = CesiumMath.toRadians(bounds.west)
-        const eastRad = CesiumMath.toRadians(bounds.east)
-        const southRad = CesiumMath.toRadians(bounds.south)
-        const northRad = CesiumMath.toRadians(bounds.north)
-
-        tileset.clippingPlanes = new ClippingPlaneCollection({
-          planes: [
-            // 西境界: 東側を保持
-            new ClippingPlane(
-              new Cartesian3(-Math.sin(westRad), Math.cos(westRad), 0),
-              0
-            ),
-            // 東境界: 西側を保持
-            new ClippingPlane(
-              new Cartesian3(Math.sin(eastRad), -Math.cos(eastRad), 0),
-              0
-            ),
-            // 南境界: 北側を保持
-            new ClippingPlane(
-              new Cartesian3(0, 0, 1),
-              -R * Math.sin(southRad)
-            ),
-            // 北境界: 南側を保持
-            new ClippingPlane(
-              new Cartesian3(0, 0, -1),
-              R * Math.sin(northRad)
-            ),
-          ],
+        applyClippingToTileset(tileset, bounds, {
           edgeWidth: 2.0,
           edgeColor: Color.WHITE,
-          unionClippingRegions: false,
+        })
+        applyClippingToGlobe(viewer!.scene.globe, bounds, {
+          edgeWidth: 2.0,
+          edgeColor: Color.WHITE,
         })
 
+        const flyLon = (bounds.west + bounds.east) / 2
+        const flyLat = (bounds.south + bounds.north) / 2
+        const widthDeg = bounds.east - bounds.west
+        const heightDeg = bounds.north - bounds.south
+        const widthMeters = CesiumMath.toRadians(widthDeg) * 6371000 * Math.cos(CesiumMath.toRadians(flyLat))
+        const heightMeters = CesiumMath.toRadians(heightDeg) * 6371000
+        const maxDim = Math.max(widthMeters, heightMeters)
+        const cameraHeight = Math.max(maxDim * 1.5, 500)
+
         viewer!.camera.flyTo({
-          destination: Rectangle.fromDegrees(
-            bounds.west,
-            bounds.south,
-            bounds.east,
-            bounds.north
-          ),
+          destination: Cartesian3.fromDegrees(flyLon, flyLat, cameraHeight),
+          orientation: {
+            heading: 0,
+            pitch: CesiumMath.toRadians(-45),
+            roll: 0,
+          },
         })
 
         onPipelineStateChange?.({
