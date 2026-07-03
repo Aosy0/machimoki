@@ -56,7 +56,6 @@ export default function Preview3D({
     }
 
     viewerRef.current = viewer
-    ;(window as any).__cesiumViewer = viewer
 
     return () => {
       if (tilesetRef.current) {
