@@ -6,6 +6,7 @@ import {
   Math as CesiumMath,
   Ellipsoid,
   Cartographic,
+  Matrix4,
 } from 'cesium'
 
 export interface SelectionBounds {
@@ -14,6 +15,7 @@ export interface SelectionBounds {
   east: number
   north: number
 }
+
 
 export function createClippingPlanesFromBounds(
   bounds: SelectionBounds,
@@ -30,74 +32,46 @@ export function createClippingPlanesFromBounds(
   const southRad = CesiumMath.toRadians(south)
   const northRad = CesiumMath.toRadians(north)
 
-  const planes: ClippingPlane[] = []
+  const centerCartographic = new Cartographic(
+    (westRad + eastRad) / 2,
+    (southRad + northRad) / 2,
+    0
+  )
+  const center = Ellipsoid.WGS84.cartographicToCartesian(
+    centerCartographic,
+    new Cartesian3()
+  )
 
-  const createPlaneFromEdge = (
-    point1: Cartesian3,
-    point2: Cartesian3,
-    center: Cartesian3
-  ): ClippingPlane => {
-    const midpoint = Cartesian3.add(point1, point2, new Cartesian3())
-    Cartesian3.multiplyByScalar(midpoint, 0.5, midpoint)
-
-    const up = Cartesian3.normalize(center, new Cartesian3())
-    const right = Cartesian3.subtract(point2, midpoint, new Cartesian3())
-    Cartesian3.normalize(right, right)
-
-    const normal = Cartesian3.cross(up, right, new Cartesian3())
+  const createPlaneThroughEdge = (edgeMidpoint: Cartesian3): ClippingPlane => {
+    const normal = Cartesian3.subtract(center, edgeMidpoint, new Cartesian3())
     Cartesian3.normalize(normal, normal)
-
-    const distance = Cartesian3.dot(normal, midpoint)
-
+    const distance = -Cartesian3.dot(normal, edgeMidpoint)
     return new ClippingPlane(normal, distance)
   }
 
-  const centerLat = (southRad + northRad) / 2
-  const centerLon = (westRad + eastRad) / 2
-  const center = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(centerLon, centerLat, 0),
+  const midWest = Ellipsoid.WGS84.cartographicToCartesian(
+    new Cartographic(westRad, (southRad + northRad) / 2, 0),
+    new Cartesian3()
+  )
+  const midEast = Ellipsoid.WGS84.cartographicToCartesian(
+    new Cartographic(eastRad, (southRad + northRad) / 2, 0),
+    new Cartesian3()
+  )
+  const midSouth = Ellipsoid.WGS84.cartographicToCartesian(
+    new Cartographic((westRad + eastRad) / 2, southRad, 0),
+    new Cartesian3()
+  )
+  const midNorth = Ellipsoid.WGS84.cartographicToCartesian(
+    new Cartographic((westRad + eastRad) / 2, northRad, 0),
     new Cartesian3()
   )
 
-  const westNorth = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(westRad, northRad, 0),
-    new Cartesian3()
-  )
-  const westSouth = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(westRad, southRad, 0),
-    new Cartesian3()
-  )
-  planes.push(createPlaneFromEdge(westNorth, westSouth, center))
-
-  const eastNorth = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(eastRad, northRad, 0),
-    new Cartesian3()
-  )
-  const eastSouth = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(eastRad, southRad, 0),
-    new Cartesian3()
-  )
-  planes.push(createPlaneFromEdge(eastSouth, eastNorth, center))
-
-  const southWest = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(westRad, southRad, 0),
-    new Cartesian3()
-  )
-  const southEast = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(eastRad, southRad, 0),
-    new Cartesian3()
-  )
-  planes.push(createPlaneFromEdge(southEast, southWest, center))
-
-  const northWest = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(westRad, northRad, 0),
-    new Cartesian3()
-  )
-  const northEast = Ellipsoid.WGS84.cartographicToCartesian(
-    new Cartographic(eastRad, northRad, 0),
-    new Cartesian3()
-  )
-  planes.push(createPlaneFromEdge(northWest, northEast, center))
+  const planes: ClippingPlane[] = [
+    createPlaneThroughEdge(midWest),
+    createPlaneThroughEdge(midEast),
+    createPlaneThroughEdge(midSouth),
+    createPlaneThroughEdge(midNorth),
+  ]
 
   return new ClippingPlaneCollection({
     planes,
@@ -108,7 +82,10 @@ export function createClippingPlanesFromBounds(
 }
 
 export function applyClippingToTileset(
-  tileset: { clippingPlanes?: ClippingPlaneCollection },
+  tileset: {
+    clippingPlanes?: ClippingPlaneCollection
+    root?: { transform?: Matrix4 }
+  },
   bounds: SelectionBounds,
   options?: {
     edgeWidth?: number
@@ -116,7 +93,24 @@ export function applyClippingToTileset(
     unionClippingRegions?: boolean
   }
 ): void {
-  tileset.clippingPlanes = createClippingPlanesFromBounds(bounds, options)
+  const clippingPlanes = createClippingPlanesFromBounds(bounds, options)
+
+  const rootTransform = tileset.root?.transform
+  console.log('[clipping] rootTransform:', rootTransform ? 'exists' : 'undefined/null')
+  if (rootTransform) {
+    const elements = Matrix4.toArray(rootTransform)
+    const isIdentity = Matrix4.equals(rootTransform, Matrix4.IDENTITY)
+    console.log('[clipping] rootTransform is identity:', isIdentity)
+    console.log('[clipping] rootTransform diagonal:', elements[0], elements[5], elements[10], elements[15])
+    if (!isIdentity) {
+      clippingPlanes.modelMatrix = rootTransform
+      console.log('[clipping] Set modelMatrix = rootTransform')
+    } else {
+      console.log('[clipping] rootTransform is IDENTITY, leaving modelMatrix as default')
+    }
+  }
+
+  tileset.clippingPlanes = clippingPlanes
 }
 
 export function applyClippingToGlobe(

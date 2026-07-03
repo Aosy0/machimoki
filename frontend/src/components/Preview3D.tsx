@@ -5,6 +5,9 @@ import {
   Color,
   Cartesian3,
   Math as CesiumMath,
+  Ion,
+  Terrain,
+  CesiumTerrainProvider,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
@@ -30,6 +33,7 @@ export default function Preview3D({
   const tilesetRef = useRef<Cesium3DTileset | null>(null)
 
   useEffect(() => {
+    console.log('[Preview3D] Viewer useEffect fired')
     if (!containerRef.current) return
 
     const viewer = new Viewer(containerRef.current, {
@@ -47,6 +51,18 @@ export default function Preview3D({
 
     viewer.scene.backgroundColor = new Color(0x1a2332)
     viewer.scene.globe.baseColor = new Color(0x1a2332)
+
+    Ion.defaultAccessToken =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY'
+
+    try {
+      viewer.scene.setTerrain(
+        new Terrain(CesiumTerrainProvider.fromIonAssetId(3258112))
+      )
+      console.log('[Preview3D] Terrain set successfully')
+    } catch (err) {
+      console.error('[Preview3D] Terrain setup failed:', err)
+    }
 
     const creditContainer = viewer.cesiumWidget.creditContainer as HTMLElement
     if (creditContainer) {
@@ -66,8 +82,12 @@ export default function Preview3D({
   }, [])
 
   useEffect(() => {
+    console.log('[Preview3D] Tileset useEffect fired, selectionBounds:', selectionBounds)
     const viewer = viewerRef.current
-    if (!viewer) return
+    if (!viewer) {
+      console.log('[Preview3D] No viewer yet, returning')
+      return
+    }
 
     if (tilesetRef.current) {
       try {
