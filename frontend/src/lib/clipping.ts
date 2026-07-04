@@ -1,13 +1,4 @@
-import {
-  Cartesian3,
-  ClippingPlane,
-  ClippingPlaneCollection,
-  Color,
-  Ellipsoid,
-  Cartographic,
-  Transforms,
-  CustomShader,
-} from 'cesium'
+import { Math as CesiumMath } from 'cesium'
 
 export interface SelectionBounds {
   west: number
@@ -16,80 +7,48 @@ export interface SelectionBounds {
   north: number
 }
 
-function toEcef(lonDeg: number, latDeg: number): Cartesian3 {
-  return Ellipsoid.WGS84.cartographicToCartesian(
-    Cartographic.fromDegrees(lonDeg, latDeg, 0),
-    new Cartesian3()
-  )
-}
-
-export function createTilesetClipShader(bounds: SelectionBounds): CustomShader {
-  const { west, south, east, north } = bounds
-
-  console.log('[clipping] CustomShader bounds (deg):', { west, south, east, north })
-
-  return new CustomShader({
-    fragmentShaderText: `
-      void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
-        material.diffuse = vec3(1.0, 0.0, 0.0);
-      }
-    `,
-  })
-}
+let patched = false
 
 export function applyClippingToTileset(
   tileset: any,
-  bounds: SelectionBounds,
-  _options?: {
-    edgeWidth?: number
-    edgeColor?: Color
-    unionClippingRegions?: boolean
-  }
+  bounds: SelectionBounds
 ): void {
-  console.log('[clipping] Applying CustomShader clipping to tileset')
-  const shader = createTilesetClipShader(bounds)
-  tileset.customShader = shader
-  console.log('[clipping] CustomShader applied successfully')
+  console.log('[clipping] Applying update-patch clipping')
+
+  tileset.clippingPlanes = undefined
+  tileset.clippingPolygons = undefined
+  tileset.style = undefined
+
+  tileset._customSelectionBounds = bounds
+
+  const Cesium3DTile = tileset._root?.constructor
+  if (!Cesium3DTile || patched) return
+  patched = true
+
+  const originalUpdate = Cesium3DTile.prototype.update
+  Cesium3DTile.prototype.update = function (
+    ts: any,
+    frameState: any,
+    passOptions: any
+  ) {
+    const b = ts._customSelectionBounds
+    if (b && this._header?.boundingVolume?.region) {
+      const [w, s, e, n] = this._header.boundingVolume.region
+      if (
+        CesiumMath.toDegrees(e) < b.west ||
+        CesiumMath.toDegrees(w) > b.east ||
+        CesiumMath.toDegrees(n) < b.south ||
+        CesiumMath.toDegrees(s) > b.north
+      ) {
+        return
+      }
+    }
+    return originalUpdate.call(this, ts, frameState, passOptions)
+  }
+
+  console.log('[clipping] Update patch applied')
 }
 
-export function createGlobeClippingPlanes(
-  bounds: SelectionBounds,
-  options?: {
-    edgeWidth?: number
-    edgeColor?: Color
-    unionClippingRegions?: boolean
-  }
-): ClippingPlaneCollection {
-  const { west, south, east, north } = bounds
-
-  const centerLon = (west + east) / 2
-  const centerLat = (south + north) / 2
-
-  const center = Ellipsoid.WGS84.cartographicToCartesian(
-    Cartographic.fromDegrees(centerLon, centerLat, 0),
-    new Cartesian3()
-  )
-
-  const modelMatrix = Transforms.eastNorthUpToFixedFrame(center)
-
-  const halfWidthMeters =
-    Cartesian3.distance(toEcef(east, centerLat), toEcef(west, centerLat)) / 2
-
-  const halfHeightMeters =
-    Cartesian3.distance(toEcef(centerLon, north), toEcef(centerLon, south)) / 2
-
-  const planes = [
-    new ClippingPlane(new Cartesian3(1, 0, 0), halfWidthMeters),
-    new ClippingPlane(new Cartesian3(-1, 0, 0), halfWidthMeters),
-    new ClippingPlane(new Cartesian3(0, 1, 0), halfHeightMeters),
-    new ClippingPlane(new Cartesian3(0, -1, 0), halfHeightMeters),
-  ]
-
-  return new ClippingPlaneCollection({
-    planes,
-    modelMatrix,
-    edgeWidth: options?.edgeWidth ?? 2.0,
-    edgeColor: options?.edgeColor ?? Color.WHITE,
-    unionClippingRegions: options?.unionClippingRegions ?? false,
-  })
+export function createGlobeClippingPlanes(_bounds: SelectionBounds): any {
+  return undefined
 }

@@ -6,14 +6,13 @@ import {
   Cartesian3,
   Math as CesiumMath,
   Ion,
-  Terrain,
   CesiumTerrainProvider,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
 import { resolveMuniCode, findTilesetUrl } from '../lib/catalogApi'
-import { applyClippingToTileset, createGlobeClippingPlanes } from '../lib/clipping'
+import { applyClippingToTileset } from '../lib/clipping'
 
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
@@ -31,6 +30,7 @@ export default function Preview3D({
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetRef = useRef<Cesium3DTileset | null>(null)
+  const rectangleRef = useRef<any>(null)
 
   useEffect(() => {
     console.log('[Preview3D] Viewer useEffect fired')
@@ -55,21 +55,25 @@ export default function Preview3D({
     Ion.defaultAccessToken =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY'
 
-    try {
-      viewer.scene.setTerrain(
-        new Terrain(CesiumTerrainProvider.fromIonAssetId(3258112))
-      )
-      console.log('[Preview3D] Terrain set successfully')
-    } catch (err) {
-      console.error('[Preview3D] Terrain setup failed:', err)
-    }
-
     const creditContainer = viewer.cesiumWidget.creditContainer as HTMLElement
     if (creditContainer) {
       creditContainer.style.display = 'none'
     }
 
     viewerRef.current = viewer
+
+    const loadTerrain = async () => {
+      try {
+        const terrainProvider = await CesiumTerrainProvider.fromIonAssetId(3258112)
+        if (viewerRef.current) {
+          viewer.scene.terrainProvider = terrainProvider
+          console.log('[Preview3D] Terrain set successfully')
+        }
+      } catch (err) {
+        console.error('[Preview3D] Terrain setup failed:', err)
+      }
+    }
+    loadTerrain()
 
     return () => {
       if (tilesetRef.current) {
@@ -96,6 +100,15 @@ export default function Preview3D({
         void 0
       }
       tilesetRef.current = null
+    }
+
+    if (rectangleRef.current) {
+      try {
+        viewer.entities.remove(rectangleRef.current)
+      } catch {
+        void 0
+      }
+      rectangleRef.current = null
     }
 
     if (!selectionBounds) {
@@ -154,14 +167,26 @@ export default function Preview3D({
         viewer!.scene.primitives.add(tileset)
         tilesetRef.current = tileset
 
-        applyClippingToTileset(tileset, bounds, {
-          edgeWidth: 2.0,
-          edgeColor: Color.WHITE,
+        applyClippingToTileset(tileset, bounds)
+
+        const w = bounds.west
+        const s = bounds.south
+        const e = bounds.east
+        const n = bounds.north
+        const rectangle = viewer!.entities.add({
+          polyline: {
+            positions: [
+              Cartesian3.fromDegrees(w, s, 300),
+              Cartesian3.fromDegrees(w, n, 300),
+              Cartesian3.fromDegrees(e, n, 300),
+              Cartesian3.fromDegrees(e, s, 300),
+              Cartesian3.fromDegrees(w, s, 300),
+            ],
+            width: 15,
+            material: Color.RED,
+          },
         })
-        viewer!.scene.globe.clippingPlanes = createGlobeClippingPlanes(bounds, {
-          edgeWidth: 2.0,
-          edgeColor: Color.WHITE,
-        })
+        rectangleRef.current = rectangle
 
         const flyLon = (bounds.west + bounds.east) / 2
         const flyLat = (bounds.south + bounds.north) / 2
@@ -170,13 +195,13 @@ export default function Preview3D({
         const widthMeters = CesiumMath.toRadians(widthDeg) * 6371000 * Math.cos(CesiumMath.toRadians(flyLat))
         const heightMeters = CesiumMath.toRadians(heightDeg) * 6371000
         const maxDim = Math.max(widthMeters, heightMeters)
-        const cameraHeight = Math.max(maxDim * 1.5, 500)
+        const cameraHeight = Math.max(maxDim * 2, 300)
 
         viewer!.camera.flyTo({
           destination: Cartesian3.fromDegrees(flyLon, flyLat, cameraHeight),
           orientation: {
             heading: 0,
-            pitch: CesiumMath.toRadians(-45),
+            pitch: CesiumMath.toRadians(-90),
             roll: 0,
           },
         })
