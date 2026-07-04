@@ -13,7 +13,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
 import { resolveMuniCode, findTilesetUrl } from '../lib/catalogApi'
-import { applyClippingToTileset, applyClippingToGlobe } from '../lib/clipping'
+import { applyClippingToTileset, createGlobeClippingPlanes } from '../lib/clipping'
 
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
@@ -158,7 +158,7 @@ export default function Preview3D({
           edgeWidth: 2.0,
           edgeColor: Color.WHITE,
         })
-        applyClippingToGlobe(viewer!.scene.globe, bounds, {
+        viewer!.scene.globe.clippingPlanes = createGlobeClippingPlanes(bounds, {
           edgeWidth: 2.0,
           edgeColor: Color.WHITE,
         })
