@@ -8,12 +8,22 @@ import {
   Ion,
   CesiumTerrainProvider,
   Rectangle,
+  ClippingPlaneCollection,
+  DirectionalLight,
+  GridImageryProvider,
+  UrlTemplateImageryProvider,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
 import { resolveMuniCode, findTilesetUrl } from '../lib/catalogApi'
-import { applyClippingToTileset } from '../lib/clipping'
+import { applyClippingToTileset, createGlobeClippingPlanes } from '../lib/clipping'
+
+function clearGlobeClippingPlanes(
+  globe: { clippingPlanes: ClippingPlaneCollection | undefined }
+): void {
+  globe.clippingPlanes = undefined
+}
 
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
@@ -21,25 +31,28 @@ interface Preview3DProps {
   lod: 'lod1' | 'lod2'
   manifoldRef?: React.MutableRefObject<any>
   onPipelineStateChange?: (state: PipelineState) => void
+  showTerrainImagery?: boolean
 }
 
 export default function Preview3D({
   selectionBounds,
   lod,
   onPipelineStateChange,
+  showTerrainImagery = false,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetRef = useRef<Cesium3DTileset | null>(null)
   const rectangleRef = useRef<any>(null)
   const fillRef = useRef<any>(null)
+  const gridLayerRef = useRef<any>(null)
+  const textureLayerRef = useRef<any>(null)
 
   useEffect(() => {
     console.log('[Preview3D] Viewer useEffect fired')
     if (!containerRef.current) return
 
     const viewer = new Viewer(containerRef.current, {
-      baseLayer: false,
       baseLayerPicker: false,
       geocoder: false,
       homeButton: false,
@@ -49,10 +62,20 @@ export default function Preview3D({
       timeline: false,
       skyBox: false,
       skyAtmosphere: false,
+      baseLayer: false,
     })
 
-    viewer.scene.backgroundColor = new Color(0x1a2332)
-    viewer.scene.globe.baseColor = new Color(0x1a2332)
+    viewer.scene.backgroundColor = Color.fromCssColorString('#0d1117')
+    viewer.scene.globe.baseColor = Color.fromCssColorString('#5a7a9a')
+    viewer.scene.globe.enableLighting = true
+    viewer.scene.globe.lightingFadeOutDistance = 5000.0
+    viewer.scene.globe.lightingFadeInDistance = 1000.0
+    viewer.scene.globe.depthTestAgainstTerrain = true
+
+    const directionalLight = new DirectionalLight({
+      direction: new Cartesian3(0.5, -0.5, -1.0),
+    })
+    viewer.scene.light = directionalLight
 
     Ion.defaultAccessToken =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY'
@@ -63,6 +86,13 @@ export default function Preview3D({
     }
 
     viewerRef.current = viewer
+    ;(window as any).__cesiumViewer = viewer
+
+    const textureProvider = new UrlTemplateImageryProvider({
+      url: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    })
+    textureLayerRef.current = viewer.scene.globe.imageryLayers.addImageryProvider(textureProvider)
+    textureLayerRef.current.show = false
 
     const loadTerrain = async () => {
       try {
@@ -86,6 +116,48 @@ export default function Preview3D({
       viewerRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    const imageryLayers = viewer.scene.globe.imageryLayers
+
+    if (showTerrainImagery) {
+      for (let i = 0; i < imageryLayers.length; i++) {
+        const layer = imageryLayers.get(i)
+        if (layer === gridLayerRef.current) {
+          layer.show = false
+        } else {
+          layer.show = true
+        }
+      }
+    } else {
+      for (let i = 0; i < imageryLayers.length; i++) {
+        const layer = imageryLayers.get(i)
+        if (layer === gridLayerRef.current) {
+          layer.show = true
+        } else {
+          layer.show = false
+        }
+      }
+
+      if (!gridLayerRef.current) {
+        const gridProvider = new GridImageryProvider({
+          cells: 8,
+          color: Color.fromCssColorString('#ffffff'),
+          glowColor: Color.fromCssColorString('#00bcd4'),
+          backgroundColor: Color.fromCssColorString('#00000000'),
+        })
+        gridLayerRef.current = imageryLayers.addImageryProvider(gridProvider)
+        gridLayerRef.current.alpha = 0.4
+      }
+    }
+
+    console.log(
+      `[Preview3D] Imagery layers visibility set to: ${showTerrainImagery}`
+    )
+  }, [showTerrainImagery])
 
   useEffect(() => {
     console.log('[Preview3D] Tileset useEffect fired, selectionBounds:', selectionBounds)
@@ -123,6 +195,10 @@ export default function Preview3D({
     }
 
     if (!selectionBounds) {
+      if (viewer.scene.globe.clippingPlanes) {
+        clearGlobeClippingPlanes(viewer.scene.globe)
+        console.log('[Preview3D] Globe clipping planes cleared')
+      }
       onPipelineStateChange?.({
         phase: 'idle',
         progress: 0,
@@ -179,6 +255,10 @@ export default function Preview3D({
         tilesetRef.current = tileset
 
         applyClippingToTileset(tileset, bounds)
+
+        const globePlanes = createGlobeClippingPlanes(bounds)
+        viewer!.scene.globe.clippingPlanes = globePlanes
+        console.log('[Preview3D] Globe clipping planes applied')
 
         const w = bounds.west
         const s = bounds.south

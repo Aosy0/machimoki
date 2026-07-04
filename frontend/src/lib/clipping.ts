@@ -1,4 +1,10 @@
-import { Math as CesiumMath } from 'cesium'
+import {
+  Math as CesiumMath,
+  Cartesian3,
+  ClippingPlane,
+  ClippingPlaneCollection,
+  Transforms,
+} from 'cesium'
 
 export interface SelectionBounds {
   west: number
@@ -100,6 +106,37 @@ export function applyClippingToTileset(
   console.log('[clipping] Feature-level clipping applied')
 }
 
-export function createGlobeClippingPlanes(_bounds: SelectionBounds): any {
-  return undefined
+export function createGlobeClippingPlanes(bounds: SelectionBounds): ClippingPlaneCollection {
+  // 矩形の中心を計算
+  const centerLon = (bounds.west + bounds.east) / 2
+  const centerLat = (bounds.south + bounds.north) / 2
+  
+  // 中心位置からローカル座標系（East-North-Up）を生成
+  const centerCartesian = Cartesian3.fromDegrees(centerLon, centerLat, 0)
+  const modelMatrix = Transforms.eastNorthUpToFixedFrame(centerCartesian)
+  
+  // 矩形の幅と高さをメートル単位で計算
+  const widthRad = CesiumMath.toRadians(bounds.east - bounds.west)
+  const heightRad = CesiumMath.toRadians(bounds.north - bounds.south)
+  const widthMeters = widthRad * 6371000 * Math.cos(CesiumMath.toRadians(centerLat))
+  const heightMeters = heightRad * 6371000
+  
+  // 各辺までの距離（中心から半分）
+  const halfWidth = widthMeters / 2
+  const halfHeight = heightMeters / 2
+  
+  // ローカル座標系で外向きの法線を定義
+  // X軸: 東向き, Y軸: 北向き, Z軸: 上向き
+  const planes = [
+    new ClippingPlane(new Cartesian3(1.0, 0.0, 0.0), halfWidth),   // 東側の平面（西向きにクリップ）
+    new ClippingPlane(new Cartesian3(-1.0, 0.0, 0.0), halfWidth),  // 西側の平面（東向きにクリップ）
+    new ClippingPlane(new Cartesian3(0.0, 1.0, 0.0), halfHeight),  // 北側の平面（南向きにクリップ）
+    new ClippingPlane(new Cartesian3(0.0, -1.0, 0.0), halfHeight), // 南側の平面（北向きにクリップ）
+  ]
+  
+  return new ClippingPlaneCollection({
+    modelMatrix: modelMatrix,
+    planes: planes,
+    unionClippingRegions: true, // OR条件: いずれかの平面の外側をクリッピング
+  })
 }

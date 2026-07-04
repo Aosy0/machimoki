@@ -7,4 +7,7 @@ omo/
 .env
 .env.*
 screenshots/
-.debug-journal.md
+test/
+*.md
+!README.md
+!AGENTS.md

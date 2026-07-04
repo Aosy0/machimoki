@@ -4,6 +4,7 @@ export interface Parameters {
   terrainThickness: number
   flattenBottom: boolean
   includeTerrain: boolean
+  showTerrainImagery: boolean
   lod: 'lod1' | 'lod2'
   exportFormat: '3mf' | 'stl'
 }
@@ -100,6 +101,15 @@ function ParameterPanel({ parameters, onChange, onExport }: ParameterPanelProps)
             onChange={(e) => handleChange('includeTerrain', e.target.checked)}
           />
           <span style={{ fontSize: '14px' }}>地形を含める</span>
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '12px' }}>
+          <input
+            type="checkbox"
+            checked={parameters.showTerrainImagery}
+            onChange={(e) => handleChange('showTerrainImagery', e.target.checked)}
+          />
+          <span style={{ fontSize: '14px' }}>航空写真テクスチャを表示</span>
         </label>
 
         <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#aaa' }}>

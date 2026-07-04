@@ -32,6 +32,7 @@ function App() {
     terrainThickness: 10,
     flattenBottom: true,
     includeTerrain: true,
+    showTerrainImagery: false,
     lod: 'lod1',
     exportFormat: '3mf',
   })
@@ -361,6 +362,7 @@ function App() {
                 lod={parameters.lod}
                 manifoldRef={manifoldRef}
                 onPipelineStateChange={setPipelineState}
+                showTerrainImagery={parameters.showTerrainImagery}
               />
               <LoadingOverlay
                 message={pipelineState.message}
