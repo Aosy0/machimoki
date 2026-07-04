@@ -7,6 +7,7 @@ import {
   Math as CesiumMath,
   Ion,
   CesiumTerrainProvider,
+  Rectangle,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
@@ -31,6 +32,7 @@ export default function Preview3D({
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetRef = useRef<Cesium3DTileset | null>(null)
   const rectangleRef = useRef<any>(null)
+  const fillRef = useRef<any>(null)
 
   useEffect(() => {
     console.log('[Preview3D] Viewer useEffect fired')
@@ -111,6 +113,15 @@ export default function Preview3D({
       rectangleRef.current = null
     }
 
+    if (fillRef.current) {
+      try {
+        viewer.entities.remove(fillRef.current)
+      } catch {
+        void 0
+      }
+      fillRef.current = null
+    }
+
     if (!selectionBounds) {
       onPipelineStateChange?.({
         phase: 'idle',
@@ -173,6 +184,18 @@ export default function Preview3D({
         const s = bounds.south
         const e = bounds.east
         const n = bounds.north
+        const highlightColor = Color.fromCssColorString('#ff4757')
+
+        const fillEntity = viewer!.entities.add({
+          rectangle: {
+            coordinates: Rectangle.fromDegrees(w, s, e, n),
+            height: 300,
+            material: highlightColor.withAlpha(0.15),
+            outline: false,
+          },
+        })
+        fillRef.current = fillEntity
+
         const rectangle = viewer!.entities.add({
           polyline: {
             positions: [
@@ -182,8 +205,8 @@ export default function Preview3D({
               Cartesian3.fromDegrees(e, s, 300),
               Cartesian3.fromDegrees(w, s, 300),
             ],
-            width: 15,
-            material: Color.RED,
+            width: 6,
+            material: highlightColor,
           },
         })
         rectangleRef.current = rectangle
