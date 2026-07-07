@@ -1,0 +1,197 @@
+/**
+ * machimoki HTTP API server.
+ *
+ * Endpoints:
+ *   POST /api/export  -> binary 3MF/STL model
+ *   POST /api/validate -> JSON ValidationResult
+ */
+
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { serve, ServerType } from '@hono/node-server';
+import { pathToFileURL } from 'node:url';
+import { buildPrintableModel } from '../core/pipeline.js';
+import { validateMesh } from '../core/validate.js';
+import { Bounds, ExportOptions } from '../core/types.js';
+
+const app = new Hono();
+
+app.use('*', cors());
+
+app.get('/', (c) => c.text('machimoki API'));
+
+app.post('/api/export', async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const parseResult = parseExportBody(body);
+  if (!parseResult.ok) {
+    return c.json({ error: parseResult.error }, 400);
+  }
+
+  const { bounds, options } = parseResult.value;
+
+  try {
+    const buffer = await buildPrintableModel(bounds, options);
+    const extension = options.format === 'stl' ? 'stl' : '3mf';
+    return new Response(buffer, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="model.${extension}"`,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: message }, 500);
+  }
+});
+
+app.post('/api/validate', async (c) => {
+  let file: File | undefined;
+  try {
+    const body = await c.req.parseBody({ all: false });
+    const uploaded = body.file;
+    if (uploaded instanceof File) {
+      file = uploaded;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: `Failed to parse multipart body: ${message}` }, 400);
+  }
+
+  if (!file) {
+    return c.json({ error: 'Missing file field' }, 400);
+  }
+
+  const mimeType = detectMimeType(file.name);
+  if (!mimeType) {
+    return c.json({ error: `Unsupported file extension: ${file.name}` }, 400);
+  }
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const result = await validateMesh(buffer, mimeType);
+    return c.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: message }, 500);
+  }
+});
+
+interface ParseSuccess {
+  ok: true;
+  value: { bounds: Bounds; options: ExportOptions };
+}
+
+interface ParseFailure {
+  ok: false;
+  error: string;
+}
+
+function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, error: 'Request body must be an object' };
+  }
+
+  const record = body as Record<string, unknown>;
+
+  const bounds = parseBounds(record.bounds);
+  if (!bounds) {
+    return { ok: false, error: 'Missing or invalid bounds' };
+  }
+
+  const terrainThickness = parseNumber(record.terrainThickness);
+  if (terrainThickness === null || terrainThickness <= 0) {
+    return { ok: false, error: 'Missing or invalid terrainThickness' };
+  }
+
+  const flattenBottom = typeof record.flattenBottom === 'boolean' ? record.flattenBottom : true;
+  const format = parseFormat(record.format) ?? '3mf';
+  const lod = parseLod(record.lod) ?? 'lod1';
+  const includeTerrain =
+    typeof record.includeTerrain === 'boolean' ? record.includeTerrain : true;
+
+  const options: ExportOptions = {
+    terrainThickness,
+    flattenBottom,
+    format,
+    lod,
+    includeTerrain,
+  };
+
+  return { ok: true, value: { bounds, options } };
+}
+
+function parseBounds(value: unknown): Bounds | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  const west = parseNumber(record.west);
+  const south = parseNumber(record.south);
+  const east = parseNumber(record.east);
+  const north = parseNumber(record.north);
+
+  if (west === null || south === null || east === null || north === null) {
+    return null;
+  }
+  if (west >= east || south >= north) {
+    return null;
+  }
+
+  return { west, south, east, north };
+}
+
+function parseNumber(value: unknown): number | null {
+  if (typeof value === 'number' && !Number.isNaN(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+function parseFormat(value: unknown): '3mf' | 'stl' | null {
+  if (typeof value !== 'string') return null;
+  const lower = value.toLowerCase();
+  if (lower === '3mf' || lower === 'stl') return lower;
+  return null;
+}
+
+function parseLod(value: unknown): 'lod1' | 'lod2' | null {
+  if (typeof value !== 'string') return null;
+  const lower = value.toLowerCase();
+  if (lower === 'lod1' || lower === 'lod2') return lower;
+  return null;
+}
+
+function detectMimeType(fileName: string): string | null {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.3mf')) return 'model/3mf';
+  if (lower.endsWith('.stl')) return 'model/stl';
+  return null;
+}
+
+export function createServer(port?: number): ServerType {
+  const resolvedPort = port ?? (Number(process.env.PORT) || 3000);
+  return serve({ fetch: app.fetch, port: resolvedPort });
+}
+
+function isMainModule(): boolean {
+  try {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  const port = Number(process.env.PORT) || 3000;
+  createServer(port);
+  console.error(`machimoki API server listening on port ${port}`);
+}
+
+export { app };

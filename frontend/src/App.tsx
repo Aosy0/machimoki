@@ -8,14 +8,13 @@ import {
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
-import { Scene } from 'three'
 import Preview3D from './components/Preview3D'
 import ParameterPanel from './components/ParameterPanel'
 import type { Parameters } from './components/ParameterPanel'
 import LoadingOverlay from './components/LoadingOverlay'
 import ErrorToast from './components/ErrorToast'
 import HelpPanel from './components/HelpPanel'
-import { exportSceneToSTL } from './lib/exporter'
+import { exportModel } from './lib/apiClient'
 import { useRectangleSelection } from './hooks/useRectangleSelection'
 import type { PipelineState } from './types/pipeline'
 
@@ -39,7 +38,6 @@ function App() {
 
   const cesiumContainer = useRef<HTMLDivElement>(null)
   const [viewer, setViewer] = useState<Viewer | null>(null)
-  const sceneRef = useRef<Scene | null>(null)
   const manifoldRef = useRef<any>(null)
   const [pipelineState, setPipelineState] = useState<PipelineState>({
     phase: 'idle',
@@ -90,35 +88,27 @@ function App() {
     setErrorMessage(null)
   }, [setSelectionBounds])
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     if (!selectionBounds) {
       setErrorMessage('エクスポートする前に地図で範囲を選択してください')
       return
     }
-    if (parameters.exportFormat === '3mf') {
-      setErrorMessage('3MF出力は未実装です。STLをお選びください。')
-      return
-    }
-    if (!sceneRef.current) {
-      setErrorMessage('3Dシーンが初期化されていません')
-      return
-    }
     setIsExporting(true)
     setErrorMessage(null)
-
-    setTimeout(() => {
-      try {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-        const ext = parameters.exportFormat === '3mf' ? 'stl' : parameters.exportFormat
-        const filename = `machimoki-${timestamp}.${ext}`
-        exportSceneToSTL(sceneRef.current!, filename)
-      } catch (err) {
-        setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
-      } finally {
-        setIsExporting(false)
-      }
-    }, 100)
-  }, [parameters.exportFormat, selectionBounds])
+    try {
+      await exportModel(selectionBounds, {
+        terrainThickness: parameters.terrainThickness,
+        flattenBottom: parameters.flattenBottom,
+        format: parameters.exportFormat,
+        lod: parameters.lod,
+        includeTerrain: parameters.includeTerrain,
+      })
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
+    } finally {
+      setIsExporting(false)
+    }
+  }, [parameters, selectionBounds])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
   const handleDismissError = () => {
@@ -170,7 +160,7 @@ function App() {
       sceneModePicker: false,
       navigationHelpButton: false,
       baseLayer: false,
-      sceneMode: SceneMode.SCENE3D,
+      sceneMode: SceneMode.SCENE2D,
       skyBox: false,
     })
 
@@ -182,14 +172,18 @@ function App() {
 
     setIsMapLoading(false)
 
-    viewer.camera.flyTo({
+    const ssec = viewer.scene.screenSpaceCameraController
+    ssec.enableTilt = false
+    ssec.enableRotate = false
+    ssec.enableLook = false
+
+    viewer.camera.setView({
       destination: Cartesian3.fromDegrees(139.6917, 35.6895, 1500.0),
       orientation: {
         heading: CesiumMath.toRadians(0.0),
-        pitch: CesiumMath.toRadians(-45.0),
+        pitch: CesiumMath.toRadians(-90.0),
         roll: 0.0,
       },
-      duration: 0,
     })
 
     setViewer(viewer)
@@ -370,7 +364,6 @@ function App() {
             <div style={{ flex: 1, position: 'relative' }}>
               <Preview3D
                 selectionBounds={selectionBounds}
-                sceneRef={sceneRef}
                 lod={parameters.lod}
                 manifoldRef={manifoldRef}
                 onPipelineStateChange={setPipelineState}

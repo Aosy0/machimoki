@@ -1,0 +1,131 @@
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+
+describe('catalog', () => {
+  let fetchSpy: MockInstance<typeof globalThis.fetch>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockReset();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('resolveMuniCode returns muniCd from GSI reverse geocoder', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ results: { muniCd: '13101', lv01Nm: '千代田区' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const { resolveMuniCode } = await import('../../src/core/catalog');
+    const result = await resolveMuniCode(35.6895, 139.6917);
+
+    expect(result).toBe('13101');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=35.6895&lon=139.6917',
+    );
+  });
+
+  it('resolveMuniCode throws when muniCd is missing', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ results: { lv01Nm: '千代田区' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const { resolveMuniCode } = await import('../../src/core/catalog');
+    await expect(resolveMuniCode(35.6895, 139.6917)).rejects.toThrow('市区町村コード');
+  });
+
+  it('resolveMuniCode throws on HTTP error', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response('error', { status: 500 }));
+
+    const { resolveMuniCode } = await import('../../src/core/catalog');
+    await expect(resolveMuniCode(35.6895, 139.6917)).rejects.toThrow('逆ジオコーディング失敗');
+  });
+
+  it('findTilesetUrl returns the URL for a matching dataset', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          datasets: [
+            {
+              id: '1',
+              name: '東京都千代田区建築物モデル',
+              pref: '東京都',
+              pref_code: '13',
+              city: '千代田区',
+              city_code: '13101',
+              ward: null,
+              ward_code: null,
+              type: '建築物モデル',
+              type_en: 'building',
+              url: 'https://example.com/tileset.json',
+              format: '3D Tiles',
+              lod: '1',
+              texture: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const { findTilesetUrl } = await import('../../src/core/catalog');
+    const url = await findTilesetUrl('13101', 'lod1');
+
+    expect(url).toBe('https://example.com/tileset.json');
+  });
+
+  it('findTilesetUrl memoizes catalog datasets', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          datasets: [
+            {
+              id: '1',
+              name: '東京都千代田区建築物モデル',
+              pref: '東京都',
+              pref_code: '13',
+              city: '千代田区',
+              city_code: '13101',
+              ward: null,
+              ward_code: null,
+              type: '建築物モデル',
+              type_en: 'building',
+              url: 'https://example.com/tileset.json',
+              format: '3D Tiles',
+              lod: '1',
+              texture: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const { findTilesetUrl } = await import('../../src/core/catalog');
+    await findTilesetUrl('13101', 'lod1');
+    await findTilesetUrl('13101', 'lod1');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('findTilesetUrl throws when no matching dataset', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ datasets: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const { findTilesetUrl } = await import('../../src/core/catalog');
+    await expect(findTilesetUrl('99999', 'lod1')).rejects.toThrow(
+      '該当する3D Tilesデータセットが見つかりません',
+    );
+  });
+});

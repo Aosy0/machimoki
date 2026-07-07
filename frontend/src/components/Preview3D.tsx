@@ -27,7 +27,6 @@ function clearGlobeClippingPlanes(
 
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
-  sceneRef?: React.MutableRefObject<any>
   lod: 'lod1' | 'lod2'
   manifoldRef?: React.MutableRefObject<any>
   onPipelineStateChange?: (state: PipelineState) => void
@@ -37,6 +36,7 @@ interface Preview3DProps {
 export default function Preview3D({
   selectionBounds,
   lod,
+  manifoldRef: _manifoldRef,
   onPipelineStateChange,
   showTerrainImagery = false,
 }: Preview3DProps) {

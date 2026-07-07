@@ -23,6 +23,53 @@ HMRのため、毎回サーバーを再起動する必要はありません。�
 - サーバーを裏で動かし続けたい場合は `&` でバックグラウンド実行する
   （例: `node server.js &`）。
 
+## Core/CLI/API について
+
+`core/` ワークスペースにブラウザ非依存のヘッドレスパイプラインがある。
+PLATEAU 3D Tiles + Cesium地形から 3MF/STL を生成し、メッシュ検査も行う。
+
+### コマンド
+
+```bash
+# APIサーバー起動（port 3000）
+npm run dev:api
+
+# CLI: エクスポート（stdoutはログ、--json はないが結果はファイルに出力）
+npx tsx core/src/cli/index.ts export \
+  --bounds 139.6903,35.6997,139.6906,35.7000 \
+  --terrain-thickness 10 --flatten-bottom --format 3mf \
+  --output model.3mf
+
+# CLI: 検証（JSONはstdout、ログはstderr）
+npx tsx core/src/cli/index.ts validate --file model.3mf --json
+```
+
+### APIエンドポイント
+
+| Method | Path | 説明 |
+|--------|------|------|
+| POST | `/api/export` | JSON body → 3MF/STLバイナリを返す |
+| POST | `/api/validate` | multipart file → 検査結果JSONを返す |
+
+### 検査の合否ルール
+
+- **pass**: open_edges=0, non_manifold_edges=0, self_intersections=0, numShells=1
+- **warning**: 同上だが numShells>1（複数シェル）
+- **fail**: open_edges>0 または non_manifold_edges>0 または self_intersections>0
+
+### テスト
+
+```bash
+npm run test -w core   # 47 tests
+```
+
+## AIエージェント用 SKILL
+
+`skills/machimoki-pipeline.md` に SKILL 文書がある。
+AIエージェントが `machimoki-pipeline` をトリガーすると、
+normalize → export → validate → judge のワークフローを自動実行できる。
+CLI/API の呼び出し手順と合否ルールが記載されている。
+
 ## 既知の問題
 
 ### ブラウザが localhost の開発サーバーにアクセスできない

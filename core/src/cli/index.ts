@@ -1,0 +1,135 @@
+/**
+ * machimoki CLI
+ *
+ * Commands:
+ *   export   --bounds <west,south,east,north> --terrain-thickness <number>
+ *            [--flatten-bottom|--no-flatten-bottom] [--format <3mf|stl>]
+ *            --output <file> [--lod <lod1|lod2>] [--no-terrain]
+ *
+ *   validate --file <path> [--json|--no-json]
+ */
+
+import { Command } from 'commander';
+import { readFile, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { buildPrintableModel } from '../core/pipeline.js';
+import { validateMesh } from '../core/validate.js';
+import { Bounds, ExportOptions } from '../core/types.js';
+
+export const program = new Command();
+
+program.name('machimoki').description('Build printable 3D models from PLATEAU data').version('1.0.0');
+
+export function parseBounds(value: string): Bounds {
+  const parts = value.split(',').map((part) => Number(part.trim()));
+  if (parts.length !== 4 || parts.some(Number.isNaN)) {
+    throw new Error(`Invalid bounds format: ${value}. Expected west,south,east,north`);
+  }
+  const [west, south, east, north] = parts;
+  if (west >= east || south >= north) {
+    throw new Error(`Invalid bounds: west=${west}, south=${south}, east=${east}, north=${north}`);
+  }
+  return { west, south, east, north };
+}
+
+export function parseFormat(value: string): '3mf' | 'stl' {
+  const lower = value.toLowerCase();
+  if (lower !== '3mf' && lower !== 'stl') {
+    throw new Error(`Invalid format: ${value}. Expected 3mf or stl`);
+  }
+  return lower;
+}
+
+export function parseLod(value: string): 'lod1' | 'lod2' {
+  const lower = value.toLowerCase();
+  if (lower !== 'lod1' && lower !== 'lod2') {
+    throw new Error(`Invalid LOD: ${value}. Expected lod1 or lod2`);
+  }
+  return lower;
+}
+
+export function detectMimeType(filePath: string): string {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.3mf')) return 'model/3mf';
+  if (lower.endsWith('.stl')) return 'model/stl';
+  throw new Error(`Unsupported file extension: ${filePath}. Expected .3mf or .stl`);
+}
+
+program
+  .command('export')
+  .description('Export a printable 3D model')
+  .requiredOption('--bounds <west,south,east,north>', 'geographic bounds', parseBounds)
+  .requiredOption('--terrain-thickness <number>', 'terrain thickness', (value) => {
+    const num = Number(value);
+    if (Number.isNaN(num) || num <= 0) {
+      throw new Error(`Invalid terrain thickness: ${value}`);
+    }
+    return num;
+  })
+  .option('--flatten-bottom', 'flatten the bottom surface', true)
+  .option('--no-flatten-bottom', 'do not flatten the bottom surface')
+  .option('--format <3mf|stl>', 'output format', parseFormat, '3mf')
+  .requiredOption('--output <file>', 'output file path')
+  .option('--lod <lod1|lod2>', 'building LOD', parseLod, 'lod1')
+  .option('--terrain', 'include terrain generation', true)
+  .option('--no-terrain', 'skip terrain generation')
+  .action(async (options) => {
+    const exportOptions: ExportOptions = {
+      terrainThickness: options.terrainThickness,
+      flattenBottom: options.flattenBottom,
+      format: options.format,
+      lod: options.lod,
+      includeTerrain: options.terrain,
+    };
+
+    console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds);
+
+    const buffer = await buildPrintableModel(options.bounds, exportOptions);
+    await writeFile(options.output, buffer);
+    console.error(`Wrote ${buffer.length} bytes to ${options.output}`);
+  });
+
+program
+  .command('validate')
+  .description('Validate a 3MF or STL file')
+  .requiredOption('--file <path>', 'input file path')
+  .option('--json', 'output JSON to stdout', true)
+  .option('--no-json', 'output plain text to stdout')
+  .action(async (options) => {
+    const buffer = await readFile(options.file);
+    const mimeType = detectMimeType(options.file);
+    const result = await validateMesh(buffer, mimeType);
+
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Status: ${result.status}`);
+      console.log(`Triangles: ${result.numTri}`);
+      console.log(`Volume: ${result.volume}`);
+      console.log(`Status code: ${result.statusCode}`);
+    }
+
+    if (result.status === 'fail') {
+      process.exit(2);
+    }
+  });
+
+export async function run(argv: string[]): Promise<void> {
+  await program.parseAsync(argv);
+}
+
+function isMainModule(): boolean {
+  try {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
+  run(process.argv).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Unexpected error: ${message}`);
+    process.exit(1);
+  });
+}
