@@ -11,3 +11,4 @@ test/
 *.md
 !README.md
 !AGENTS.md
+report/

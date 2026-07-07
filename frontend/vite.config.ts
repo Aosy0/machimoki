@@ -25,7 +25,8 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
-    allowedHosts: ['machimoki.aosy-minipc.theworkpc.com'],
+
+    allowedHosts: ['localhost', '127.0.0.1', 'machimoki.aosy-minipc.theworkpc.com'],
     fs: {
       allow: ['..'],
     },

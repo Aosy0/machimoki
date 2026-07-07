@@ -7,7 +7,7 @@ import {
   SceneMode,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
-import Module from 'manifold-3d'
+
 import { Scene } from 'three'
 import Preview3D from './components/Preview3D'
 import ParameterPanel from './components/ParameterPanel'
@@ -131,13 +131,25 @@ function App() {
 
   useEffect(() => {
     setIsWasmLoading(true)
-    Module().then((wasm) => {
+    console.log('[Machimoki] WASM初期化開始')
+    const timeout = setTimeout(() => {
+      console.warn('[Machimoki] WASM初期化が30秒以上挂かっています')
+    }, 30000)
+    import('manifold-3d').then(({ default: Module }) => {
+      console.log('[Machimoki] manifold-3dモジュール読み込み完了')
+      return Module()
+    }).then((wasm) => {
+      console.log('[Machimoki] WASM読み込み完了、setup()開始')
       wasm.setup()
+      console.log('[Machimoki] WASM setup()完了')
       manifoldRef.current = wasm
       setIsWasmLoading(false)
     }).catch((err: unknown) => {
+      console.error('[Machimoki] WASM初期化エラー:', err)
       setIsWasmLoading(false)
       setErrorMessage(err instanceof Error ? `WASM初期化失敗: ${err.message}` : 'WASM初期化に失敗しました')
+    }).finally(() => {
+      clearTimeout(timeout)
     })
   }, [])
 
@@ -398,3 +410,4 @@ function App() {
 }
 
 export default App
+
