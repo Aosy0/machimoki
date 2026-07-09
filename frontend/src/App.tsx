@@ -5,6 +5,7 @@ import {
   Math as CesiumMath,
   UrlTemplateImageryProvider,
   SceneMode,
+  WebMercatorProjection,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
@@ -161,6 +162,7 @@ function App() {
       navigationHelpButton: false,
       baseLayer: false,
       sceneMode: SceneMode.SCENE2D,
+      mapProjection: new WebMercatorProjection(),
       skyBox: false,
     })
 
