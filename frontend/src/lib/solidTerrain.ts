@@ -39,6 +39,7 @@ export interface SolidTerrainPrimitiveResult {
 type SolidTerrainPrimitive = Primitive & {
   _machimokiSolidTerrain?: boolean
   _machimokiSolidTerrainVertexCount?: number
+  _machimokiSolidTerrainHasNormals?: boolean
 }
 
 const DEFAULT_GRID_SIZE = 64
@@ -124,6 +125,66 @@ function buildTerrainIndices(gridSize: number): Uint32Array {
   return new Uint32Array(indices)
 }
 
+function buildTerrainNormals(positions: Float64Array, indices: Uint32Array): Float32Array {
+  const accumulatedNormals = new Float64Array(positions.length)
+
+  for (let i = 0; i < indices.length; i += 3) {
+    const a = indices[i] * 3
+    const b = indices[i + 1] * 3
+    const c = indices[i + 2] * 3
+
+    const abX = positions[b] - positions[a]
+    const abY = positions[b + 1] - positions[a + 1]
+    const abZ = positions[b + 2] - positions[a + 2]
+    const acX = positions[c] - positions[a]
+    const acY = positions[c + 1] - positions[a + 1]
+    const acZ = positions[c + 2] - positions[a + 2]
+
+    const normalX = abY * acZ - abZ * acY
+    const normalY = abZ * acX - abX * acZ
+    const normalZ = abX * acY - abY * acX
+    const length = Math.hypot(normalX, normalY, normalZ)
+
+    if (length === 0) continue
+
+    const x = normalX / length
+    const y = normalY / length
+    const z = normalZ / length
+
+    accumulatedNormals[a] += x
+    accumulatedNormals[a + 1] += y
+    accumulatedNormals[a + 2] += z
+    accumulatedNormals[b] += x
+    accumulatedNormals[b + 1] += y
+    accumulatedNormals[b + 2] += z
+    accumulatedNormals[c] += x
+    accumulatedNormals[c + 1] += y
+    accumulatedNormals[c + 2] += z
+  }
+
+  const normals = new Float32Array(positions.length)
+  for (let i = 0; i < accumulatedNormals.length; i += 3) {
+    const x = accumulatedNormals[i]
+    const y = accumulatedNormals[i + 1]
+    const z = accumulatedNormals[i + 2]
+    const length = Math.hypot(x, y, z)
+
+    if (length === 0) {
+      const fallbackLength = Math.hypot(positions[i], positions[i + 1], positions[i + 2]) || 1
+      normals[i] = positions[i] / fallbackLength
+      normals[i + 1] = positions[i + 1] / fallbackLength
+      normals[i + 2] = positions[i + 2] / fallbackLength
+      continue
+    }
+
+    normals[i] = x / length
+    normals[i + 1] = y / length
+    normals[i + 2] = z / length
+  }
+
+  return normals
+}
+
 export async function createSolidTerrainPrimitive(
   bounds: TerrainBounds,
   terrainProvider: TerrainProvider,
@@ -189,12 +250,18 @@ export async function createSolidTerrainPrimitive(
   }
 
   const indices = buildTerrainIndices(gridSize)
+  const normalValues = buildTerrainNormals(positionValues, indices)
   const boundingSphere = BoundingSphere.fromVertices(positionValues)
   const attributes = new GeometryAttributes()
   attributes.position = new GeometryAttribute({
     componentDatatype: ComponentDatatype.DOUBLE,
     componentsPerAttribute: 3,
     values: positionValues,
+  })
+  attributes.normal = new GeometryAttribute({
+    componentDatatype: ComponentDatatype.FLOAT,
+    componentsPerAttribute: 3,
+    values: normalValues,
   })
 
   const geometry = new Geometry({
@@ -215,13 +282,14 @@ export async function createSolidTerrainPrimitive(
     geometryInstances: instance,
     appearance: new PerInstanceColorAppearance({
       closed: true,
-      flat: true,
+      flat: false,
       translucent: false,
     }),
     asynchronous: false,
   }) as SolidTerrainPrimitive
   primitive._machimokiSolidTerrain = true
   primitive._machimokiSolidTerrainVertexCount = vertexCount
+  primitive._machimokiSolidTerrainHasNormals = true
 
   return {
     primitive,

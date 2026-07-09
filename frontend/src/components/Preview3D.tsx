@@ -7,7 +7,6 @@ import {
   Math as CesiumMath,
   Ion,
   CesiumTerrainProvider,
-  Rectangle,
   ClippingPlaneCollection,
   DirectionalLight,
   GridImageryProvider,
@@ -53,8 +52,6 @@ export default function Preview3D({
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetRef = useRef<Cesium3DTileset | null>(null)
-  const rectangleRef = useRef<any>(null)
-  const fillRef = useRef<any>(null)
   const solidTerrainPrimitiveRef = useRef<Primitive | null>(null)
   const gridLayerRef = useRef<any>(null)
   const textureLayerRef = useRef<any>(null)
@@ -194,15 +191,6 @@ export default function Preview3D({
       tilesetRef.current = null
     }
 
-    if (rectangleRef.current) {
-      try {
-        viewer.entities.remove(rectangleRef.current)
-      } catch {
-        void 0
-      }
-      rectangleRef.current = null
-    }
-
     if (solidTerrainPrimitiveRef.current) {
       try {
         viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
@@ -213,15 +201,6 @@ export default function Preview3D({
     }
 
     viewer.scene.globe.show = true
-
-    if (fillRef.current) {
-      try {
-        viewer.entities.remove(fillRef.current)
-      } catch {
-        void 0
-      }
-      fillRef.current = null
-    }
 
     if (!selectionBounds) {
       if (viewer.scene.globe.clippingPlanes) {
@@ -326,37 +305,6 @@ export default function Preview3D({
           viewer!.scene.globe.show = true
           console.log('[Preview3D] Globe clipping planes applied')
         }
-
-        const w = bounds.west
-        const s = bounds.south
-        const e = bounds.east
-        const n = bounds.north
-        const highlightColor = Color.fromCssColorString('#ff4757')
-
-        const fillEntity = viewer!.entities.add({
-          rectangle: {
-            coordinates: Rectangle.fromDegrees(w, s, e, n),
-            height: 300,
-            material: highlightColor.withAlpha(0.15),
-            outline: false,
-          },
-        })
-        fillRef.current = fillEntity
-
-        const rectangle = viewer!.entities.add({
-          polyline: {
-            positions: [
-              Cartesian3.fromDegrees(w, s, 300),
-              Cartesian3.fromDegrees(w, n, 300),
-              Cartesian3.fromDegrees(e, n, 300),
-              Cartesian3.fromDegrees(e, s, 300),
-              Cartesian3.fromDegrees(w, s, 300),
-            ],
-            width: 6,
-            material: highlightColor,
-          },
-        })
-        rectangleRef.current = rectangle
 
         const flyLon = (bounds.west + bounds.east) / 2
         const flyLat = (bounds.south + bounds.north) / 2
