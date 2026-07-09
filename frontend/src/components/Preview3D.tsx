@@ -13,6 +13,7 @@ import {
   GridImageryProvider,
   UrlTemplateImageryProvider,
   HeadingPitchRange,
+  Matrix4,
 } from 'cesium'
 import type { BoundingSphere, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
@@ -367,15 +368,17 @@ export default function Preview3D({
         const cameraHeight = Math.max(maxDim * 2, 300)
 
         if (terrainBoundingSphere) {
-          viewer!.camera.flyToBoundingSphere(terrainBoundingSphere, {
-            offset: new HeadingPitchRange(
+          viewer!.camera.viewBoundingSphere(
+            terrainBoundingSphere,
+            new HeadingPitchRange(
               CesiumMath.toRadians(35),
               CesiumMath.toRadians(-45),
               Math.max(maxDim * 2.4, 300)
-            ),
-          })
+            )
+          )
+          viewer!.camera.lookAtTransform(Matrix4.IDENTITY)
         } else {
-          viewer!.camera.flyTo({
+          viewer!.camera.setView({
             destination: Cartesian3.fromDegrees(flyLon, flyLat, cameraHeight),
             orientation: {
               heading: 0,
