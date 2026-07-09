@@ -368,6 +368,9 @@ function App() {
                 manifoldRef={manifoldRef}
                 onPipelineStateChange={setPipelineState}
                 showTerrainImagery={parameters.showTerrainImagery}
+                terrainThickness={parameters.terrainThickness}
+                flattenBottom={parameters.flattenBottom}
+                includeTerrain={parameters.includeTerrain}
               />
               <LoadingOverlay
                 message={pipelineState.message}
