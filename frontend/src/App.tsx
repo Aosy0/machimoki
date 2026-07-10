@@ -5,6 +5,7 @@ import {
   Math as CesiumMath,
   UrlTemplateImageryProvider,
   SceneMode,
+  WebMercatorProjection,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
@@ -161,6 +162,7 @@ function App() {
       navigationHelpButton: false,
       baseLayer: false,
       sceneMode: SceneMode.SCENE2D,
+      mapProjection: new WebMercatorProjection(),
       skyBox: false,
     })
 
@@ -368,6 +370,9 @@ function App() {
                 manifoldRef={manifoldRef}
                 onPipelineStateChange={setPipelineState}
                 showTerrainImagery={parameters.showTerrainImagery}
+                terrainThickness={parameters.terrainThickness}
+                flattenBottom={parameters.flattenBottom}
+                includeTerrain={parameters.includeTerrain}
               />
               <LoadingOverlay
                 message={pipelineState.message}

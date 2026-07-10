@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Viewer,
   Cesium3DTileset,
@@ -7,17 +7,20 @@ import {
   Math as CesiumMath,
   Ion,
   CesiumTerrainProvider,
-  Rectangle,
   ClippingPlaneCollection,
   DirectionalLight,
   GridImageryProvider,
   UrlTemplateImageryProvider,
+  HeadingPitchRange,
+  Matrix4,
 } from 'cesium'
+import type { BoundingSphere, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
 import { resolveMuniCode, findTilesetUrl } from '../lib/catalogApi'
 import { applyClippingToTileset, createGlobeClippingPlanes } from '../lib/clipping'
+import { createSolidTerrainPrimitive } from '../lib/solidTerrain'
 
 function clearGlobeClippingPlanes(
   globe: { clippingPlanes: ClippingPlaneCollection | undefined }
@@ -31,6 +34,9 @@ interface Preview3DProps {
   manifoldRef?: React.MutableRefObject<any>
   onPipelineStateChange?: (state: PipelineState) => void
   showTerrainImagery?: boolean
+  terrainThickness?: number
+  flattenBottom?: boolean
+  includeTerrain?: boolean
 }
 
 export default function Preview3D({
@@ -39,14 +45,17 @@ export default function Preview3D({
   manifoldRef: _manifoldRef,
   onPipelineStateChange,
   showTerrainImagery = false,
+  terrainThickness = 10,
+  flattenBottom = true,
+  includeTerrain = true,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetRef = useRef<Cesium3DTileset | null>(null)
-  const rectangleRef = useRef<any>(null)
-  const fillRef = useRef<any>(null)
+  const solidTerrainPrimitiveRef = useRef<Primitive | null>(null)
   const gridLayerRef = useRef<any>(null)
   const textureLayerRef = useRef<any>(null)
+  const [terrainProvider, setTerrainProvider] = useState<TerrainProvider | null>(null)
 
   useEffect(() => {
     console.log('[Preview3D] Viewer useEffect fired')
@@ -99,6 +108,7 @@ export default function Preview3D({
         const terrainProvider = await CesiumTerrainProvider.fromIonAssetId(3258112)
         if (viewerRef.current) {
           viewer.scene.terrainProvider = terrainProvider
+          setTerrainProvider(terrainProvider)
           console.log('[Preview3D] Terrain set successfully')
         }
       } catch (err) {
@@ -112,6 +122,11 @@ export default function Preview3D({
         viewer.scene.primitives.remove(tilesetRef.current)
         tilesetRef.current = null
       }
+      if (solidTerrainPrimitiveRef.current) {
+        viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
+        solidTerrainPrimitiveRef.current = null
+      }
+      setTerrainProvider(null)
       viewer.destroy()
       viewerRef.current = null
     }
@@ -176,23 +191,16 @@ export default function Preview3D({
       tilesetRef.current = null
     }
 
-    if (rectangleRef.current) {
+    if (solidTerrainPrimitiveRef.current) {
       try {
-        viewer.entities.remove(rectangleRef.current)
+        viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
       } catch {
         void 0
       }
-      rectangleRef.current = null
+      solidTerrainPrimitiveRef.current = null
     }
 
-    if (fillRef.current) {
-      try {
-        viewer.entities.remove(fillRef.current)
-      } catch {
-        void 0
-      }
-      fillRef.current = null
-    }
+    viewer.scene.globe.show = true
 
     if (!selectionBounds) {
       if (viewer.scene.globe.clippingPlanes) {
@@ -203,6 +211,16 @@ export default function Preview3D({
         phase: 'idle',
         progress: 0,
         message: '',
+        error: null,
+      })
+      return
+    }
+
+    if (includeTerrain && !terrainProvider) {
+      onPipelineStateChange?.({
+        phase: 'acquiring',
+        progress: 0,
+        message: '地形データを読み込み中',
         error: null,
       })
       return
@@ -256,40 +274,37 @@ export default function Preview3D({
 
         applyClippingToTileset(tileset, bounds)
 
-        const globePlanes = createGlobeClippingPlanes(bounds)
-        viewer!.scene.globe.clippingPlanes = globePlanes
-        console.log('[Preview3D] Globe clipping planes applied')
+        let terrainBoundingSphere: BoundingSphere | null = null
 
-        const w = bounds.west
-        const s = bounds.south
-        const e = bounds.east
-        const n = bounds.north
-        const highlightColor = Color.fromCssColorString('#ff4757')
+        if (includeTerrain) {
+          onPipelineStateChange?.({
+            phase: 'composing',
+            progress: 70,
+            message: '地形を閉じたメッシュに変換中',
+            error: null,
+          })
 
-        const fillEntity = viewer!.entities.add({
-          rectangle: {
-            coordinates: Rectangle.fromDegrees(w, s, e, n),
-            height: 300,
-            material: highlightColor.withAlpha(0.15),
-            outline: false,
-          },
-        })
-        fillRef.current = fillEntity
+          const solidTerrain = await createSolidTerrainPrimitive(bounds, terrainProvider!, {
+            terrainThickness,
+            flattenBottom,
+          })
+          if (cancelled) {
+            solidTerrain.primitive.destroy()
+            return
+          }
 
-        const rectangle = viewer!.entities.add({
-          polyline: {
-            positions: [
-              Cartesian3.fromDegrees(w, s, 300),
-              Cartesian3.fromDegrees(w, n, 300),
-              Cartesian3.fromDegrees(e, n, 300),
-              Cartesian3.fromDegrees(e, s, 300),
-              Cartesian3.fromDegrees(w, s, 300),
-            ],
-            width: 6,
-            material: highlightColor,
-          },
-        })
-        rectangleRef.current = rectangle
+          viewer!.scene.primitives.add(solidTerrain.primitive)
+          solidTerrainPrimitiveRef.current = solidTerrain.primitive
+          terrainBoundingSphere = solidTerrain.boundingSphere
+          clearGlobeClippingPlanes(viewer!.scene.globe)
+          viewer!.scene.globe.show = false
+          console.log('[Preview3D] Solid terrain mesh applied')
+        } else {
+          const globePlanes = createGlobeClippingPlanes(bounds)
+          viewer!.scene.globe.clippingPlanes = globePlanes
+          viewer!.scene.globe.show = true
+          console.log('[Preview3D] Globe clipping planes applied')
+        }
 
         const flyLon = (bounds.west + bounds.east) / 2
         const flyLat = (bounds.south + bounds.north) / 2
@@ -300,14 +315,26 @@ export default function Preview3D({
         const maxDim = Math.max(widthMeters, heightMeters)
         const cameraHeight = Math.max(maxDim * 2, 300)
 
-        viewer!.camera.flyTo({
-          destination: Cartesian3.fromDegrees(flyLon, flyLat, cameraHeight),
-          orientation: {
-            heading: 0,
-            pitch: CesiumMath.toRadians(-90),
-            roll: 0,
-          },
-        })
+        if (terrainBoundingSphere) {
+          viewer!.camera.viewBoundingSphere(
+            terrainBoundingSphere,
+            new HeadingPitchRange(
+              CesiumMath.toRadians(35),
+              CesiumMath.toRadians(-45),
+              Math.max(maxDim * 2.4, 300)
+            )
+          )
+          viewer!.camera.lookAtTransform(Matrix4.IDENTITY)
+        } else {
+          viewer!.camera.setView({
+            destination: Cartesian3.fromDegrees(flyLon, flyLat, cameraHeight),
+            orientation: {
+              heading: 0,
+              pitch: CesiumMath.toRadians(-90),
+              roll: 0,
+            },
+          })
+        }
 
         onPipelineStateChange?.({
           phase: 'complete',
@@ -336,7 +363,7 @@ export default function Preview3D({
     return () => {
       cancelled = true
     }
-  }, [selectionBounds, lod, onPipelineStateChange])
+  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, includeTerrain, terrainThickness, flattenBottom])
 
   return <div ref={containerRef} style={containerStyle} />
 }
