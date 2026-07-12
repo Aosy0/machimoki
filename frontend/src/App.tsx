@@ -35,6 +35,8 @@ function App() {
     showTerrainImagery: false,
     lod: 'lod1',
     exportFormat: '3mf',
+    buildingColor: '#ffffff',
+    terrainColor: '#ffffff',
   })
 
   const cesiumContainer = useRef<HTMLDivElement>(null)
@@ -373,6 +375,8 @@ function App() {
                 terrainThickness={parameters.terrainThickness}
                 flattenBottom={parameters.flattenBottom}
                 includeTerrain={parameters.includeTerrain}
+                buildingColor={parameters.buildingColor}
+                terrainColor={parameters.terrainColor}
               />
               <LoadingOverlay
                 message={pipelineState.message}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Viewer,
   Cesium3DTileset,
+  Cesium3DTileStyle,
   Color,
   Cartesian3,
   Math as CesiumMath,
@@ -37,6 +38,8 @@ interface Preview3DProps {
   terrainThickness?: number
   flattenBottom?: boolean
   includeTerrain?: boolean
+  buildingColor?: string
+  terrainColor?: string
 }
 
 export default function Preview3D({
@@ -48,6 +51,8 @@ export default function Preview3D({
   terrainThickness = 10,
   flattenBottom = true,
   includeTerrain = true,
+  buildingColor = '#ffffff',
+  terrainColor = '#ffffff',
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -55,6 +60,7 @@ export default function Preview3D({
   const solidTerrainPrimitiveRef = useRef<Primitive | null>(null)
   const gridLayerRef = useRef<any>(null)
   const textureLayerRef = useRef<any>(null)
+  const appliedTerrainColorRef = useRef<string | undefined>()
   const [terrainProvider, setTerrainProvider] = useState<TerrainProvider | null>(null)
 
   useEffect(() => {
@@ -274,6 +280,12 @@ export default function Preview3D({
 
         applyClippingToTileset(tileset, bounds)
 
+        const showExpr = `\${_x} >= ${bounds.west} && \${_x} <= ${bounds.east} && \${_y} >= ${bounds.south} && \${_y} <= ${bounds.north}`
+        tileset.style = new Cesium3DTileStyle({
+          color: `color("${buildingColor}")`,
+          show: showExpr,
+        })
+
         let terrainBoundingSphere: BoundingSphere | null = null
 
         if (includeTerrain) {
@@ -287,6 +299,7 @@ export default function Preview3D({
           const solidTerrain = await createSolidTerrainPrimitive(bounds, terrainProvider!, {
             terrainThickness,
             flattenBottom,
+            terrainColor,
           })
           if (cancelled) {
             solidTerrain.primitive.destroy()
@@ -295,6 +308,7 @@ export default function Preview3D({
 
           viewer!.scene.primitives.add(solidTerrain.primitive)
           solidTerrainPrimitiveRef.current = solidTerrain.primitive
+          appliedTerrainColorRef.current = terrainColor
           terrainBoundingSphere = solidTerrain.boundingSphere
           clearGlobeClippingPlanes(viewer!.scene.globe)
           viewer!.scene.globe.show = false
@@ -364,6 +378,49 @@ export default function Preview3D({
       cancelled = true
     }
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, includeTerrain, terrainThickness, flattenBottom])
+
+  useEffect(() => {
+    if (tilesetRef.current && selectionBounds) {
+      const showExpr = `\${_x} >= ${selectionBounds.west} && \${_x} <= ${selectionBounds.east} && \${_y} >= ${selectionBounds.south} && \${_y} <= ${selectionBounds.north}`
+      tilesetRef.current.style = new Cesium3DTileStyle({
+        color: `color("${buildingColor}")`,
+        show: showExpr,
+      })
+    }
+  }, [buildingColor, selectionBounds])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || !selectionBounds || !terrainProvider || !includeTerrain) return
+    if (!solidTerrainPrimitiveRef.current) return
+    if (appliedTerrainColorRef.current === terrainColor) return
+
+    if (solidTerrainPrimitiveRef.current) {
+      try {
+        viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
+      } catch {
+        void 0
+      }
+      solidTerrainPrimitiveRef.current = null
+    }
+
+    ;(async () => {
+      try {
+        const solidTerrain = await createSolidTerrainPrimitive(selectionBounds, terrainProvider, {
+          terrainThickness,
+          flattenBottom,
+          terrainColor,
+        })
+        viewer.scene.primitives.add(solidTerrain.primitive)
+        solidTerrainPrimitiveRef.current = solidTerrain.primitive
+        appliedTerrainColorRef.current = terrainColor
+        clearGlobeClippingPlanes(viewer.scene.globe)
+        viewer.scene.globe.show = false
+      } catch (err) {
+        console.error('[Preview3D] Terrain color update failed:', err)
+      }
+    })()
+  }, [terrainColor])
 
   return <div ref={containerRef} style={containerStyle} />
 }

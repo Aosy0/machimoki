@@ -7,6 +7,8 @@ export interface Parameters {
   showTerrainImagery: boolean
   lod: 'lod1' | 'lod2'
   exportFormat: '3mf' | 'stl'
+  buildingColor: string
+  terrainColor: string
 }
 
 interface ParameterPanelProps {
@@ -38,6 +40,44 @@ function ParameterPanel({ parameters, onChange, onExport }: ParameterPanelProps)
       <h3 style={{ margin: 0, fontSize: '16px', borderBottom: '1px solid #333', paddingBottom: '8px' }}>
         設定
       </h3>
+
+      {/* Display Colors */}
+      <div>
+        <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#aaa' }}>
+          建物色
+        </label>
+        <input
+          type="color"
+          value={parameters.buildingColor}
+          onChange={(e) => handleChange('buildingColor', e.target.value)}
+          style={{
+            width: '100%',
+            height: '36px',
+            padding: '2px',
+            background: '#333',
+            border: '1px solid #555',
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        />
+        <label style={{ display: 'block', fontSize: '12px', marginTop: '10px', marginBottom: '6px', color: '#aaa' }}>
+          地形色
+        </label>
+        <input
+          type="color"
+          value={parameters.terrainColor}
+          onChange={(e) => handleChange('terrainColor', e.target.value)}
+          style={{
+            width: '100%',
+            height: '36px',
+            padding: '2px',
+            background: '#333',
+            border: '1px solid #555',
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        />
+      </div>
 
       {/* Export Format */}
       <div>

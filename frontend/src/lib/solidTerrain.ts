@@ -29,6 +29,7 @@ export interface SolidTerrainOptions {
   terrainThickness: number
   flattenBottom: boolean
   gridSize?: number
+  terrainColor?: string
 }
 
 export interface SolidTerrainPrimitiveResult {
@@ -84,18 +85,12 @@ void main()
     vec3 positionToEyeEC = -v_positionEC;
     vec3 normalEC = normalize(v_normalEC);
     float directLight = max(dot(normalEC, normalize(czm_lightDirectionEC)), 0.0);
-    float contrastLight = smoothstep(0.05, 0.95, directLight);
     float relief = clamp(v_terrainShade, 0.0, 1.0);
 
-    vec3 lowColor = vec3(0.36, 0.50, 0.32);
-    vec3 midColor = vec3(0.56, 0.68, 0.43);
-    vec3 highColor = vec3(0.82, 0.86, 0.58);
-    vec3 terrainColor = mix(lowColor, midColor, smoothstep(0.00, 0.55, relief));
-    terrainColor = mix(terrainColor, highColor, smoothstep(0.45, 1.00, relief));
+    float lightFactor = 0.5 + 0.5 * directLight;
+    float reliefFactor = 0.9 + 0.1 * relief;
 
-    float reliefContrast = 0.72 + relief * 0.42;
-    float lightContrast = 0.42 + contrastLight * 0.72;
-    vec3 color = terrainColor * reliefContrast * lightContrast;
+    vec3 color = v_color.rgb * lightFactor * reliefFactor;
 
     out_FragColor = czm_gammaCorrect(vec4(color, v_color.a));
 }
@@ -351,10 +346,11 @@ export async function createSolidTerrainPrimitive(
     boundingSphere,
   })
 
+  const terrainColor = Color.fromCssColorString(options.terrainColor ?? '#ffffff')
   const instance = new GeometryInstance({
     geometry,
     attributes: {
-      color: ColorGeometryInstanceAttribute.fromColor(Color.fromCssColorString('#6f8f6a')),
+      color: ColorGeometryInstanceAttribute.fromColor(terrainColor),
     },
   })
 

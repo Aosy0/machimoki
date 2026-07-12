@@ -19,11 +19,8 @@ export function applyClippingToTileset(
   tileset: any,
   bounds: SelectionBounds
 ): void {
-  console.log('[clipping] Applying feature-level clipping')
-
   tileset.clippingPlanes = undefined
   tileset.clippingPolygons = undefined
-  tileset.style = undefined
 
   tileset._customSelectionBounds = bounds
 
@@ -50,14 +47,12 @@ export function applyClippingToTileset(
       }
       return originalUpdate.call(this, ts, frameState, passOptions)
     }
-    console.log('[clipping] Tile-level culling patch applied')
   }
 
   const filterFeatures = (tile: any) => {
     const content = tile?.content
     if (!content || !content.featuresLength) return
 
-    let filtered = 0
     for (let i = 0; i < content.featuresLength; i++) {
       const feature = content.getFeature(i)
       if (!feature) continue
@@ -75,11 +70,7 @@ export function applyClippingToTileset(
           y >= bounds.south &&
           y <= bounds.north
         feature.show = inBounds
-        if (!inBounds) filtered++
       }
-    }
-    if (filtered > 0) {
-      console.log(`[clipping] Filtered ${filtered} features outside bounds in tile`)
     }
   }
 
@@ -95,15 +86,11 @@ export function applyClippingToTileset(
 
   if (tileset.tileLoad) {
     tileset.tileLoad.addEventListener(filterFeatures)
-    console.log('[clipping] tileLoad event listener added')
   }
 
   if (tileset._root) {
     traverseTiles(tileset._root)
-    console.log('[clipping] Initial tile traversal complete')
   }
-
-  console.log('[clipping] Feature-level clipping applied')
 }
 
 export function createGlobeClippingPlanes(bounds: SelectionBounds): ClippingPlaneCollection {
