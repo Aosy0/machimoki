@@ -41,7 +41,6 @@ type SolidTerrainPrimitive = Primitive & {
   _machimokiSolidTerrain?: boolean
   _machimokiSolidTerrainVertexCount?: number
   _machimokiSolidTerrainHasNormals?: boolean
-  _machimokiSolidTerrainHasReliefShading?: boolean
 }
 
 const DEFAULT_GRID_SIZE = 64
@@ -52,13 +51,10 @@ const RELIEF_VERTEX_SHADER = `
 in vec3 position3DHigh;
 in vec3 position3DLow;
 in vec3 normal;
-in float terrainShade;
 in vec4 color;
 in float batchId;
 
 out vec3 v_positionEC;
-out vec3 v_normalEC;
-out float v_terrainShade;
 out vec4 v_color;
 
 void main()
@@ -66,8 +62,6 @@ void main()
     vec4 p = czm_computePosition();
 
     v_positionEC = (czm_modelViewRelativeToEye * p).xyz;
-    v_normalEC = czm_normal * normal;
-    v_terrainShade = terrainShade;
     v_color = color;
 
     gl_Position = czm_modelViewProjectionRelativeToEye * p;
@@ -76,23 +70,18 @@ void main()
 
 const RELIEF_FRAGMENT_SHADER = `
 in vec3 v_positionEC;
-in vec3 v_normalEC;
-in float v_terrainShade;
 in vec4 v_color;
 
 void main()
 {
-    vec3 positionToEyeEC = -v_positionEC;
-    vec3 normalEC = normalize(v_normalEC);
-    float directLight = max(dot(normalEC, normalize(czm_lightDirectionEC)), 0.0);
-    float relief = clamp(v_terrainShade, 0.0, 1.0);
+    // Flat normal from screen-space derivatives — CAD-style per-face shading
+    vec3 flatNormal = normalize(cross(dFdx(v_positionEC), dFdy(v_positionEC)));
 
-    float lightFactor = 0.5 + 0.5 * directLight;
-    float reliefFactor = 0.9 + 0.1 * relief;
+    // Simple directional light with high contrast
+    float light = max(dot(flatNormal, normalize(czm_lightDirectionEC)), 0.0);
+    float lightFactor = mix(0.3, 1.0, light);
 
-    vec3 color = v_color.rgb * lightFactor * reliefFactor;
-
-    out_FragColor = czm_gammaCorrect(vec4(color, v_color.a));
+    out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * lightFactor, v_color.a));
 }
 `
 
@@ -173,23 +162,6 @@ function buildTerrainIndices(gridSize: number): Uint32Array {
   }
 
   return new Uint32Array(indices)
-}
-
-function buildTerrainShadeValues(
-  topLocalPositions: Cartesian3[],
-  minTopHeight: number,
-  maxTopHeight: number,
-  vertexCount: number
-): Float32Array {
-  const topVertexCount = topLocalPositions.length
-  const shadeValues = new Float32Array(vertexCount)
-  const heightRange = Math.max(maxTopHeight - minTopHeight, 0.01)
-
-  for (let i = 0; i < topVertexCount; i++) {
-    shadeValues[i] = (topLocalPositions[i].z - minTopHeight) / heightRange
-  }
-
-  return shadeValues
 }
 
 function buildTerrainNormals(positions: Float64Array, indices: Uint32Array): Float32Array {
@@ -320,7 +292,6 @@ export async function createSolidTerrainPrimitive(
 
   const indices = buildTerrainIndices(gridSize)
   const normalValues = buildTerrainNormals(positionValues, indices)
-  const shadeValues = buildTerrainShadeValues(topLocalPositions, minTopHeight, maxTopHeight, vertexCount)
   const boundingSphere = BoundingSphere.fromVertices(positionValues)
   const attributes = new GeometryAttributes()
   attributes.position = new GeometryAttribute({
@@ -332,11 +303,6 @@ export async function createSolidTerrainPrimitive(
     componentDatatype: ComponentDatatype.FLOAT,
     componentsPerAttribute: 3,
     values: normalValues,
-  })
-  ;(attributes as GeometryAttributes & { terrainShade: GeometryAttribute }).terrainShade = new GeometryAttribute({
-    componentDatatype: ComponentDatatype.FLOAT,
-    componentsPerAttribute: 1,
-    values: shadeValues,
   })
 
   const geometry = new Geometry({
@@ -368,7 +334,6 @@ export async function createSolidTerrainPrimitive(
   primitive._machimokiSolidTerrain = true
   primitive._machimokiSolidTerrainVertexCount = vertexCount
   primitive._machimokiSolidTerrainHasNormals = true
-  primitive._machimokiSolidTerrainHasReliefShading = true
 
   return {
     primitive,
