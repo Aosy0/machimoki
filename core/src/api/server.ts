@@ -36,12 +36,20 @@ app.post('/api/export', async (c) => {
   const { bounds, options } = parseResult.value;
 
   try {
-    const buffer = await buildPrintableModel(bounds, options);
+    const { buffer, warnings } = await buildPrintableModel(bounds, options);
+    const mimeType = options.format === 'stl' ? 'model/stl' : 'model/3mf';
+    const validation = await validateMesh(buffer, mimeType);
+
+    if (validation.status === 'fail') {
+      return c.json({ error: 'Validation failed', warnings, validation }, 422);
+    }
+
     const extension = options.format === 'stl' ? 'stl' : '3mf';
     return new Response(buffer, {
       headers: {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="model.${extension}"`,
+        'X-Validation-Status': validation.status,
       },
     });
   } catch (error) {

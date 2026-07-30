@@ -26,6 +26,21 @@ vi.mock('cesium', () => {
       result.z = cartesian.z;
       return result;
     }
+    static multiply(left: Matrix4, right: Matrix4, result: Matrix4): Matrix4 {
+      const a = left.elements;
+      const b = right.elements;
+      const out = result.elements;
+      for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) {
+          out[i * 4 + j] =
+            a[i * 4 + 0] * b[0 * 4 + j] +
+            a[i * 4 + 1] * b[1 * 4 + j] +
+            a[i * 4 + 2] * b[2 * 4 + j] +
+            a[i * 4 + 3] * b[3 * 4 + j];
+        }
+      }
+      return result;
+    }
     static IDENTITY = new Matrix4();
   }
 

@@ -17,7 +17,20 @@ vi.mock('../../src/core/pipeline.js', () => ({
 }));
 
 vi.mock('../../src/core/validate.js', () => ({
-  validateMesh: vi.fn(),
+  validateMesh: vi.fn().mockResolvedValue({
+    status: 'pass',
+    numTri: 1,
+    numVert: 3,
+    numEdge: 3,
+    volume: 1,
+    surfaceArea: 1,
+    genus: 0,
+    numShells: 1,
+    open_edges: 0,
+    non_manifold_edges: 0,
+    self_intersections: 0,
+    statusCode: 'NoError',
+  }),
 }));
 
 const buildPrintableModel = vi.mocked(
@@ -67,6 +80,20 @@ describe('CLI export command', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'machimoki-cli-'));
     buildPrintableModel.mockReset();
     validateMesh.mockReset();
+    validateMesh.mockResolvedValue({
+      status: 'pass',
+      numTri: 1,
+      numVert: 3,
+      numEdge: 3,
+      volume: 1,
+      surfaceArea: 1,
+      genus: 0,
+      numShells: 1,
+      open_edges: 0,
+      non_manifold_edges: 0,
+      self_intersections: 0,
+      statusCode: 'NoError',
+    });
   });
 
   afterEach(() => {
@@ -75,7 +102,10 @@ describe('CLI export command', () => {
 
   it('writes a model file with default options', async () => {
     const outputPath = join(tempDir, 'out.3mf');
-    buildPrintableModel.mockResolvedValue(Buffer.from('model-bytes'));
+    buildPrintableModel.mockResolvedValue({
+      buffer: Buffer.from('model-bytes'),
+      warnings: [],
+    });
 
     await program.parseAsync([
       'node',
@@ -103,7 +133,10 @@ describe('CLI export command', () => {
 
   it('honors --no-terrain and --format stl', async () => {
     const outputPath = join(tempDir, 'out.stl');
-    buildPrintableModel.mockResolvedValue(Buffer.from('stl-bytes'));
+    buildPrintableModel.mockResolvedValue({
+      buffer: Buffer.from('stl-bytes'),
+      warnings: [],
+    });
 
     await program.parseAsync([
       'node',

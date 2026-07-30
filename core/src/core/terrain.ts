@@ -77,8 +77,8 @@ export async function buildTerrainMesh(
 
   // Bottom vertices
   for (let i = 0; i < numVertices; i++) {
-    const z = flattenBottom ? bottomZ : topZValues[i] - thickness;
-    allVertices.push(vertices[i * 3], vertices[i * 3 + 1], z);
+    const y = flattenBottom ? bottomZ : topZValues[i] - thickness;
+    allVertices.push(vertices[i * 3], y, vertices[i * 3 + 2]);
   }
 
   const indices: number[] = [];

@@ -377,6 +377,7 @@ export default function Preview3D({
     return () => {
       cancelled = true
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, includeTerrain, terrainThickness, flattenBottom])
 
   useEffect(() => {
@@ -420,6 +421,7 @@ export default function Preview3D({
         console.error('[Preview3D] Terrain color update failed:', err)
       }
     })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terrainColor])
 
   return <div ref={containerRef} style={containerStyle} />

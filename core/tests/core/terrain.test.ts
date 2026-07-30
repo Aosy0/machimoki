@@ -89,26 +89,26 @@ describe('terrain', () => {
     const mesh = await buildTerrainMesh(bounds, 10, true);
     const numVertices = 64 * 64;
 
-    const bottomZValues: number[] = [];
+    const bottomYValues: number[] = [];
     for (let i = numVertices; i < numVertices * 2; i++) {
-      bottomZValues.push(mesh.positions[i * 3 + 2]);
+      bottomYValues.push(mesh.positions[i * 3 + 1]);
     }
 
-    const uniqueZ = [...new Set(bottomZValues.map((z) => Math.round(z * 1000) / 1000))];
-    expect(uniqueZ.length).toBe(1);
+    const uniqueY = [...new Set(bottomYValues.map((y) => Math.round(y * 1000) / 1000))];
+    expect(uniqueY.length).toBe(1);
   });
 
   it('keeps bottom relative to surface when flattenBottom is false', async () => {
     const mesh = await buildTerrainMesh(bounds, 10, false);
     const numVertices = 64 * 64;
 
-    const bottomZValues: number[] = [];
+    const bottomYValues: number[] = [];
     for (let i = numVertices; i < numVertices * 2; i++) {
-      bottomZValues.push(mesh.positions[i * 3 + 2]);
+      bottomYValues.push(mesh.positions[i * 3 + 1]);
     }
 
-    const uniqueZ = [...new Set(bottomZValues.map((z) => Math.round(z * 1000) / 1000))];
-    expect(uniqueZ.length).toBeGreaterThan(1);
+    const uniqueY = [...new Set(bottomYValues.map((y) => Math.round(y * 1000) / 1000))];
+    expect(uniqueY.length).toBeGreaterThan(1);
   });
 
   it('applies axis swap (ENU -> engine)', async () => {

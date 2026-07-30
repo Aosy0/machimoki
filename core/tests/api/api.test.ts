@@ -6,6 +6,23 @@ vi.mock('../../src/core/pipeline.js', () => ({
   buildPrintableModel: vi.fn(),
 }));
 
+vi.mock('../../src/core/validate.js', () => ({
+  validateMesh: vi.fn().mockResolvedValue({
+    status: 'pass',
+    numTri: 1,
+    numVert: 3,
+    numEdge: 3,
+    volume: 1,
+    surfaceArea: 1,
+    genus: 0,
+    numShells: 1,
+    open_edges: 0,
+    non_manifold_edges: 0,
+    self_intersections: 0,
+    statusCode: 'NoError',
+  }),
+}));
+
 const buildPrintableModel = vi.mocked(
   (await import('../../src/core/pipeline.js')).buildPrintableModel,
 );
@@ -39,7 +56,7 @@ describe('API server', () => {
 
   it('POST /api/export returns binary model with attachment headers', async () => {
     const fakeBuffer = Buffer.from('binary-model-data');
-    buildPrintableModel.mockResolvedValue(fakeBuffer);
+    buildPrintableModel.mockResolvedValue({ buffer: fakeBuffer, warnings: ['demo warning'] });
 
     const response = await fetch(`${baseUrl}/api/export`, {
       method: 'POST',
@@ -72,7 +89,7 @@ describe('API server', () => {
   });
 
   it('POST /api/export supports STL format', async () => {
-    buildPrintableModel.mockResolvedValue(Buffer.from('stl-data'));
+    buildPrintableModel.mockResolvedValue({ buffer: Buffer.from('stl-data'), warnings: [] });
 
     const response = await fetch(`${baseUrl}/api/export`, {
       method: 'POST',

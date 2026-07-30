@@ -15,12 +15,12 @@ export default defineConfig({
     CESIUM_BASE_URL: JSON.stringify('/cesium'),
   },
   resolve: {
-    alias: {
-      'manifold-3d': 'manifold-3d/manifold.js',
-    },
+    alias: [
+      { find: /^manifold-3d$/, replacement: 'manifold-3d/manifold.js' },
+    ],
   },
   optimizeDeps: {
-    exclude: ['manifold-3d'],
+    include: ['manifold-3d'],
   },
   server: {
     host: '0.0.0.0',

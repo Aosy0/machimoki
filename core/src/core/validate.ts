@@ -106,6 +106,11 @@ export async function validateMesh(
     const numShells = countShells(manifold);
     const selfIntersections = statusCode === 'NoError' ? 0 : 1;
 
+    const volume = manifold.volume();
+    const surfaceArea = manifold.surfaceArea();
+    const numTri = manifold.numTri();
+    const numVert = manifold.numVert();
+
     let status: ValidationResult['status'];
     if (openEdges === 0 && nonManifoldEdges === 0 && selfIntersections === 0) {
       status = numShells === 1 ? 'pass' : 'warning';
@@ -113,13 +118,17 @@ export async function validateMesh(
       status = 'fail';
     }
 
+    if (numTri === 0 || numVert === 0 || !Number.isFinite(volume) || volume <= 0 || !Number.isFinite(surfaceArea) || surfaceArea <= 0) {
+      status = 'fail';
+    }
+
     return {
       status,
-      numTri: manifold.numTri(),
-      numVert: manifold.numVert(),
+      numTri,
+      numVert,
       numEdge: manifold.numEdge(),
-      volume: manifold.volume(),
-      surfaceArea: manifold.surfaceArea(),
+      volume,
+      surfaceArea,
       genus: manifold.genus(),
       numShells,
       open_edges: openEdges,

@@ -24,6 +24,11 @@ export interface ExportRequest {
   options: ExportOptions;
 }
 
+export interface ExportResult {
+  buffer: Buffer;
+  warnings: string[];
+}
+
 export interface ValidationResult {
   status: 'pass' | 'warning' | 'fail';
   numTri: number;

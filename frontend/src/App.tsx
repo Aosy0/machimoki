@@ -10,6 +10,7 @@ import {
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
 import Preview3D from './components/Preview3D'
+import ModelViewer from './components/ModelViewer'
 import ParameterPanel from './components/ParameterPanel'
 import type { Parameters } from './components/ParameterPanel'
 import LoadingOverlay from './components/LoadingOverlay'
@@ -19,7 +20,7 @@ import { exportModel } from './lib/apiClient'
 import { useRectangleSelection } from './hooks/useRectangleSelection'
 import type { PipelineState } from './types/pipeline'
 
-type Tab = 'map' | 'preview'
+type Tab = 'map' | 'preview' | 'viewer'
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('map')
@@ -132,7 +133,7 @@ function App() {
     }, 30000)
     import('manifold-3d').then(({ default: Module }) => {
       console.log('[Machimoki] manifold-3dモジュール読み込み完了')
-      return Module()
+      return Module({ locateFile: () => '/@fs/C:/Users/koboy/Documents/machimoki/node_modules/manifold-3d/manifold.wasm' })
     }).then((wasm) => {
       console.log('[Machimoki] WASM読み込み完了、setup()開始')
       wasm.setup()
@@ -242,6 +243,22 @@ function App() {
           }}
         >
           3Dで確認する
+        </button>
+        <button
+          onClick={() => setActiveTab('viewer')}
+          style={{
+            flex: 1,
+            padding: '12px',
+            background: activeTab === 'viewer' ? '#333' : '#1a1a1a',
+            color: '#fff',
+            border: 'none',
+            borderBottom: activeTab === 'viewer' ? '2px solid #00bcd4' : 'none',
+            cursor: 'pointer',
+            fontSize: '14px',
+            fontWeight: activeTab === 'viewer' ? 'bold' : 'normal',
+          }}
+        >
+          モデルビューワー
         </button>
       </div>
 
@@ -397,6 +414,11 @@ function App() {
               }}
               onExport={handleExport}
             />
+          </div>
+        )}
+        {activeTab === 'viewer' && (
+          <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}>
+            <ModelViewer manifoldRef={manifoldRef} />
           </div>
         )}
         <HelpPanel mode={activeTab} />

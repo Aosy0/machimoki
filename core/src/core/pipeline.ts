@@ -2,15 +2,17 @@
  * High-level orchestration pipeline: bounds + options -> printable model buffer.
  */
 
-import { Bounds, ExportOptions, RawMesh } from './types.js';
+import { Bounds, ExportOptions, ExportResult, RawMesh } from './types.js';
 import { buildBuildingMeshes } from './meshBuilder.js';
 import { buildTerrainMesh } from './terrain.js';
+import type { Manifold } from 'manifold-3d';
 import {
   createManifoldFromMesh,
   exportPartsTo3MF,
   exportMeshesToSTL,
-  mergeRawMeshes,
+  unionMeshes,
 } from './manifoldOps.js';
+import { capBuildingBottom, splitConnectedComponents, weldVertices } from './buildingCapper.js';
 
 /**
  * Build a printable 3D model from geographic bounds and export options.
@@ -26,74 +28,87 @@ import {
 export async function buildPrintableModel(
   bounds: Bounds,
   options: ExportOptions,
-): Promise<Buffer> {
+): Promise<ExportResult> {
+  try {
+    return await buildPrintableModelUnsafe(bounds, options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to build printable model: ${message}`);
+  }
+}
+
+async function buildPrintableModelUnsafe(
+  bounds: Bounds,
+  options: ExportOptions,
+): Promise<ExportResult> {
   const includeTerrain = options.includeTerrain ?? true;
   const lod = options.lod ?? 'lod1';
   const format = options.format;
   const buildingColor = options.buildingColor ?? '#ffffff';
   const terrainColor = options.terrainColor ?? '#ffffff';
+  const warnings: string[] = [];
+
+  const buildingMeshes = await buildBuildingMeshes(bounds, lod);
+
+  const terrainMesh = includeTerrain
+    ? await buildTerrainMesh(bounds, options.terrainThickness, options.flattenBottom)
+    : null;
+
+  const buildingManifolds: Manifold[] = [];
+  for (let i = 0; i < buildingMeshes.length; i++) {
+    const welded = weldVertices(buildingMeshes[i]);
+    const components = splitConnectedComponents(welded);
+    for (let j = 0; j < components.length; j++) {
+      const comp = components[j];
+      const capped = capBuildingBottom(comp);
+      try {
+        const m = await createManifoldFromMesh(capped);
+        buildingManifolds.push(m);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`Building ${i + 1}.${j + 1} skipped (not printable): ${message}`);
+      }
+    }
+  }
+
+  if (format === 'stl') {
+    const meshes: RawMesh[] = [];
+    if (terrainMesh) meshes.push(terrainMesh);
+    meshes.push(...buildingManifolds.map((m) => meshToRaw(m.getMesh())));
+
+    if (meshes.length === 0) {
+      throw new Error('No printable meshes generated for the requested bounds');
+    }
+
+    const union = await unionMeshes(meshes);
+    try {
+      return { buffer: exportMeshesToSTL([meshToRaw(union.getMesh())]), warnings };
+    } finally {
+      union.delete();
+    }
+  }
+
+  const parts: Array<{ manifold: Manifold; color: string }> = [];
+  if (terrainMesh) {
+    parts.push({ manifold: await createManifoldFromMesh(terrainMesh), color: terrainColor });
+  }
+  for (const manifold of buildingManifolds) {
+    parts.push({ manifold, color: buildingColor });
+  }
+
+  if (parts.length === 0) {
+    throw new Error('No printable meshes generated for the requested bounds');
+  }
 
   try {
-    const buildingMeshes = await buildBuildingMeshes(bounds, lod);
-
-    if (format === 'stl') {
-      // STL has no material support — merge all raw meshes together.
-      const meshes: RawMesh[] = [];
-      if (includeTerrain) {
-        const terrainMesh = await buildTerrainMesh(
-          bounds,
-          options.terrainThickness,
-          options.flattenBottom,
-        );
-        meshes.push(terrainMesh);
-      }
-      meshes.push(...buildingMeshes);
-
-      if (meshes.length === 0) {
-        throw new Error('No meshes generated for the requested bounds');
-      }
-
-      return exportMeshesToSTL(meshes);
+    return { buffer: await exportPartsTo3MF(parts), warnings };
+  } finally {
+    for (const part of parts) {
+      part.manifold.delete();
     }
-
-    // 3MF: export terrain (as manifold) and buildings (as raw mesh) as
-    // separate colored components. Building meshes from PLATEAU 3D Tiles
-    // are often not closed manifolds, so we skip manifold creation for them.
-    const parts: Array<
-      | { manifold: Manifold; color: string }
-      | { mesh: RawMesh; color: string }
-    > = [];
-
-    if (includeTerrain) {
-      const terrainMesh = await buildTerrainMesh(
-        bounds,
-        options.terrainThickness,
-        options.flattenBottom,
-      );
-      const terrainManifold = await createManifoldFromMesh(terrainMesh);
-      parts.push({ manifold: terrainManifold, color: terrainColor });
-    }
-
-    if (buildingMeshes.length > 0) {
-      const buildingMeshesMerged = mergeRawMeshes(buildingMeshes);
-      parts.push({ mesh: buildingMeshesMerged, color: buildingColor });
-    }
-
-    if (parts.length === 0) {
-      throw new Error('No meshes generated for the requested bounds');
-    }
-
-    try {
-      return await exportPartsTo3MF(parts);
-    } finally {
-      for (const part of parts) {
-        if ('manifold' in part) {
-          part.manifold.delete();
-        }
-      }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to build printable model: ${message}`);
   }
+}
+
+function meshToRaw(mesh: { vertProperties: Float32Array; triVerts: Uint32Array }): RawMesh {
+  return { positions: mesh.vertProperties, indices: mesh.triVerts };
 }

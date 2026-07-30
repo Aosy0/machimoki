@@ -10,7 +10,7 @@
  */
 
 import { Command } from 'commander';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { buildPrintableModel } from '../core/pipeline.js';
 import { validateMesh } from '../core/validate.js';
@@ -84,9 +84,26 @@ program
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds);
 
-    const buffer = await buildPrintableModel(options.bounds, exportOptions);
+    const { buffer, warnings } = await buildPrintableModel(options.bounds, exportOptions);
+    for (const warning of warnings) {
+      console.error(`Warning: ${warning}`);
+    }
+
     await writeFile(options.output, buffer);
     console.error(`Wrote ${buffer.length} bytes to ${options.output}`);
+
+    const mimeType = detectMimeType(options.output);
+    const result = await validateMesh(buffer, mimeType);
+    if (result.status === 'fail') {
+      console.error(`Validation fail: ${JSON.stringify(result)}`);
+      await unlink(options.output);
+      process.exit(2);
+    }
+    if (result.status === 'warning') {
+      console.error(`Validation warning: ${JSON.stringify(result)}`);
+    } else {
+      console.error(`Validation pass: ${JSON.stringify(result)}`);
+    }
   });
 
 program
@@ -111,6 +128,9 @@ program
 
     if (result.status === 'fail') {
       process.exit(2);
+    }
+    if (result.status === 'warning') {
+      process.exit(1);
     }
   });
 

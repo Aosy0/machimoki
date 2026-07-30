@@ -12,18 +12,16 @@ import {
 import { NodeIO } from '@gltf-transform/core';
 import { KHRDracoMeshCompression } from '@gltf-transform/extensions';
 import type { Accessor, Primitive } from '@gltf-transform/core';
-import { createDecoderModule } from 'draco3d';
-import type { Bounds, RawMesh } from './types';
-import { findTilesetUrl, resolveMuniCode } from './catalog';
+import type { Bounds, RawMesh } from './types.js';
+import { findTilesetUrl, resolveMuniCode } from './catalog.js';
 import draco3dgltf from 'draco3dgltf';
 
 let dracoDecoderPromise: Promise<unknown> | null = null;
 
 function getDracoDecoder(): Promise<unknown> {
-  if (!dracoDecoderPromise) {
-    dracoDecoderPromise = draco3dgltf.createDecoderModule();
-  }
-  return dracoDecoderPromise;
+  const promise = dracoDecoderPromise ?? draco3dgltf.createDecoderModule();
+  dracoDecoderPromise = promise;
+  return promise;
 }
 
 interface TileLike {
@@ -65,7 +63,12 @@ function tileIntersectsBounds(tile: TileLike, bounds: Bounds): boolean {
  * bounding-volume center, so we only strip the extension requirement from
  * the JSON (without modifying position data) so NodeIO can parse the GLB.
  */
-function preprocessGlbForNodeIO(buffer: ArrayBuffer): ArrayBuffer {
+interface PreprocessedGLB {
+  buffer: ArrayBuffer;
+  rtcCenter?: Cartesian3;
+}
+
+function preprocessGlbForNodeIO(buffer: ArrayBuffer): PreprocessedGLB {
   const dataView = new DataView(buffer);
   const totalLength = dataView.getUint32(8, true);
 
@@ -84,17 +87,22 @@ function preprocessGlbForNodeIO(buffer: ArrayBuffer): ArrayBuffer {
     offset += 8 + chunkLength;
   }
 
-  if (jsonStart < 0) return buffer;
+  if (jsonStart < 0) return { buffer };
 
   const jsonBytes = new Uint8Array(buffer, jsonStart, jsonLength);
   let gltf: any;
   try {
     gltf = JSON.parse(new TextDecoder().decode(jsonBytes));
   } catch {
-    return buffer;
+    return { buffer };
   }
 
-  if (!gltf.extensions?.CESIUM_RTC) return buffer;
+  const rtcCenterArray = gltf.extensions?.CESIUM_RTC?.center;
+  const rtcCenter = Array.isArray(rtcCenterArray)
+    ? new Cartesian3(rtcCenterArray[0], rtcCenterArray[1], rtcCenterArray[2])
+    : undefined;
+
+  if (!gltf.extensions?.CESIUM_RTC) return { buffer, rtcCenter };
 
   if (gltf.extensionsUsed) {
     gltf.extensionsUsed = gltf.extensionsUsed.filter((e: string) => e !== 'CESIUM_RTC');
@@ -107,7 +115,7 @@ function preprocessGlbForNodeIO(buffer: ArrayBuffer): ArrayBuffer {
     gltf.extensions = undefined;
   }
 
-  return rebuildGlbJson(buffer, jsonStart, jsonLength, gltf);
+  return { buffer: rebuildGlbJson(buffer, jsonStart, jsonLength, gltf), rtcCenter };
 }
 
 /**
@@ -142,7 +150,6 @@ function rebuildGlbJson(
   result.fill(0x20, jsonStart + newJsonBytes.length, jsonStart + newJsonChunkLen);
   const hdr = new DataView(result.buffer, result.byteOffset, 12);
   hdr.setUint32(8, newTotalLen, true);
-  const delta = newJsonChunkLen - jsonLength;
   result.set(origView.subarray(jsonStart + jsonLength), jsonStart + newJsonChunkLen);
 
   return result.buffer;
@@ -226,6 +233,13 @@ function matrix4FromMat4(elements: readonly number[]): Matrix4 {
   );
 }
 
+const GLTF_TO_ECEF_ROTATION = new Matrix4(
+  1, 0, 0, 0,
+  0, 0, 1, 0,
+  0, -1, 0, 0,
+  0, 0, 0, 1,
+);
+
 function transformPosition(
   x: number,
   y: number,
@@ -233,10 +247,15 @@ function transformPosition(
   nodeMatrix: Matrix4,
   tileMatrix: Matrix4,
   invCenterMatrix: Matrix4,
+  rtcCenter?: Cartesian3,
 ): { x: number; y: number; z: number } {
   const local = Cartesian3.fromElements(x, y, z);
-  const nodeWorld = Matrix4.multiplyByPoint(nodeMatrix, local, new Cartesian3());
-  const ecef = Matrix4.multiplyByPoint(tileMatrix, nodeWorld, new Cartesian3());
+  const nodeWorldYup = Matrix4.multiplyByPoint(nodeMatrix, local, new Cartesian3());
+  const nodeWorldZup = Matrix4.multiplyByPoint(GLTF_TO_ECEF_ROTATION, nodeWorldYup, new Cartesian3());
+  if (rtcCenter) {
+    Cartesian3.add(nodeWorldZup, rtcCenter, nodeWorldZup);
+  }
+  const ecef = Matrix4.multiplyByPoint(tileMatrix, nodeWorldZup, new Cartesian3());
   const enu = Matrix4.multiplyByPoint(invCenterMatrix, ecef, new Cartesian3());
   return { x: enu.x, y: enu.z, z: -enu.y };
 }
@@ -246,7 +265,7 @@ async function parseGlbToRawMeshes(
   tileMatrix: Matrix4,
   invCenterMatrix: Matrix4,
 ): Promise<RawMesh[]> {
-  const processedBuffer = preprocessGlbForNodeIO(glbBuffer);
+  const { buffer: processedBuffer, rtcCenter } = preprocessGlbForNodeIO(glbBuffer);
   const decoder = await getDracoDecoder();
   const io = new NodeIO()
     .registerExtensions([KHRDracoMeshCompression])
@@ -268,7 +287,7 @@ async function parseGlbToRawMeshes(
       const worldMatrix = matrix4FromMat4(node.getWorldMatrix());
 
       for (const primitive of mesh.listPrimitives()) {
-        const raw = primitiveToRawMesh(primitive, worldMatrix, tileMatrix, invCenterMatrix);
+        const raw = primitiveToRawMesh(primitive, worldMatrix, tileMatrix, invCenterMatrix, rtcCenter);
         if (raw.positions.length > 0 && raw.indices.length > 0) {
           result.push(raw);
         }
@@ -284,6 +303,7 @@ function primitiveToRawMesh(
   nodeMatrix: Matrix4,
   tileMatrix: Matrix4,
   invCenterMatrix: Matrix4,
+  rtcCenter?: Cartesian3,
 ): RawMesh {
   const positionAccessor = primitive.getAttribute('POSITION');
   const indexAccessor = primitive.getIndices();
@@ -302,7 +322,7 @@ function primitiveToRawMesh(
     const x = positions[i * 3];
     const y = positions[i * 3 + 1];
     const z = positions[i * 3 + 2];
-    const t = transformPosition(x, y, z, nodeMatrix, tileMatrix, invCenterMatrix);
+    const t = transformPosition(x, y, z, nodeMatrix, tileMatrix, invCenterMatrix, rtcCenter);
     transformedPositions[i * 3] = t.x;
     transformedPositions[i * 3 + 1] = t.y;
     transformedPositions[i * 3 + 2] = t.z;
@@ -337,7 +357,9 @@ export async function buildBuildingMeshes(
     const contentUrl = getTileContentUrl(tile);
     if (!contentUrl) return;
 
-    const tileMatrix = tile.computedTransform ?? Matrix4.IDENTITY;
+    const tilesetMatrix = (tileset as any).modelMatrix ?? Matrix4.IDENTITY;
+    const tileLocalMatrix = tile.computedTransform ?? Matrix4.IDENTITY;
+    const tileMatrix = Matrix4.multiply(tilesetMatrix, tileLocalMatrix, new Matrix4());
 
     const promise = (async () => {
       try {
