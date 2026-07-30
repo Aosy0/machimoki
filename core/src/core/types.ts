@@ -15,6 +15,8 @@ export interface ExportOptions {
   format: '3mf' | 'stl';
   lod?: 'lod1' | 'lod2';
   includeTerrain?: boolean;
+  buildingColor?: string;
+  terrainColor?: string;
 }
 
 export interface ExportRequest {

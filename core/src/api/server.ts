@@ -115,6 +115,8 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
   const lod = parseLod(record.lod) ?? 'lod1';
   const includeTerrain =
     typeof record.includeTerrain === 'boolean' ? record.includeTerrain : true;
+  const buildingColor = parseColor(record.buildingColor);
+  const terrainColor = parseColor(record.terrainColor);
 
   const options: ExportOptions = {
     terrainThickness,
@@ -122,6 +124,8 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     format,
     lod,
     includeTerrain,
+    buildingColor,
+    terrainColor,
   };
 
   return { ok: true, value: { bounds, options } };
@@ -166,6 +170,12 @@ function parseLod(value: unknown): 'lod1' | 'lod2' | null {
   const lower = value.toLowerCase();
   if (lower === 'lod1' || lower === 'lod2') return lower;
   return null;
+}
+
+function parseColor(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  if (!/^#[0-9a-fA-F]{6}$/.test(value)) return undefined;
+  return value;
 }
 
 function detectMimeType(fileName: string): string | null {

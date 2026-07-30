@@ -10,7 +10,9 @@ import {
   Transforms,
 } from 'cesium';
 import { NodeIO } from '@gltf-transform/core';
+import { KHRDracoMeshCompression } from '@gltf-transform/extensions';
 import type { Accessor, Primitive } from '@gltf-transform/core';
+import { createDecoderModule } from 'draco3d';
 import type { Bounds, RawMesh } from './types';
 import { findTilesetUrl, resolveMuniCode } from './catalog';
 
@@ -45,6 +47,95 @@ function tileIntersectsBounds(tile: TileLike, bounds: Bounds): boolean {
   const north = CesiumMath.toDegrees(region[3]);
 
   return !(east < bounds.west || west > bounds.east || north < bounds.south || south > bounds.north);
+}
+
+/**
+ * CESIUM_RTC stores vertex positions relative to a center point. The tile's
+ * computedTransform already accounts for this offset via the 3D Tiles
+ * bounding-volume center, so we only strip the extension requirement from
+ * the JSON (without modifying position data) so NodeIO can parse the GLB.
+ */
+function preprocessGlbForNodeIO(buffer: ArrayBuffer): ArrayBuffer {
+  const dataView = new DataView(buffer);
+  const totalLength = dataView.getUint32(8, true);
+
+  let offset = 12;
+  let jsonStart = -1;
+  let jsonLength = 0;
+
+  while (offset < totalLength) {
+    const chunkLength = dataView.getUint32(offset, true);
+    const chunkType = dataView.getUint32(offset + 4, true);
+    if (chunkType === 0x4e4f534a) {
+      jsonStart = offset + 8;
+      jsonLength = chunkLength;
+      break;
+    }
+    offset += 8 + chunkLength;
+  }
+
+  if (jsonStart < 0) return buffer;
+
+  const jsonBytes = new Uint8Array(buffer, jsonStart, jsonLength);
+  let gltf: any;
+  try {
+    gltf = JSON.parse(new TextDecoder().decode(jsonBytes));
+  } catch {
+    return buffer;
+  }
+
+  if (!gltf.extensions?.CESIUM_RTC) return buffer;
+
+  if (gltf.extensionsUsed) {
+    gltf.extensionsUsed = gltf.extensionsUsed.filter((e: string) => e !== 'CESIUM_RTC');
+  }
+  if (gltf.extensionsRequired) {
+    gltf.extensionsRequired = gltf.extensionsRequired.filter((e: string) => e !== 'CESIUM_RTC');
+  }
+  gltf.extensions.CESIUM_RTC = undefined;
+  if (Object.keys(gltf.extensions).length === 0) {
+    gltf.extensions = undefined;
+  }
+
+  return rebuildGlbJson(buffer, jsonStart, jsonLength, gltf);
+}
+
+/**
+ * Replace the JSON chunk in a GLB buffer in-place with space padding.
+ * CESIUM_RTC removal always shrinks the JSON so it always fits.
+ */
+function rebuildGlbJson(
+  buffer: ArrayBuffer,
+  jsonStart: number,
+  jsonLength: number,
+  gltf: any,
+): ArrayBuffer {
+  const newJson = JSON.stringify(gltf);
+  const newJsonBytes = new TextEncoder().encode(newJson);
+
+  if (newJsonBytes.length <= jsonLength) {
+    const target = new Uint8Array(buffer, jsonStart, jsonLength);
+    target.fill(0x20);
+    target.set(newJsonBytes);
+    return buffer;
+  }
+
+  const origView = new Uint8Array(buffer);
+  const totalLength = new DataView(buffer).getUint32(8, true);
+  const padLen = (8 - (newJsonBytes.length % 8)) % 8;
+  const newJsonChunkLen = newJsonBytes.length + padLen;
+  const newTotalLen = totalLength - jsonLength + newJsonChunkLen;
+  const result = new Uint8Array(newTotalLen);
+
+  result.set(origView.subarray(0, jsonStart));
+  result.set(newJsonBytes, jsonStart);
+  result.fill(0x20, jsonStart + newJsonBytes.length, jsonStart + newJsonChunkLen);
+  const hdr = new DataView(result.buffer, result.byteOffset, 12);
+  hdr.setUint32(8, newTotalLen, true);
+  const delta = newJsonChunkLen - jsonLength;
+  result.set(origView.subarray(jsonStart + jsonLength), jsonStart + newJsonChunkLen);
+
+  return result.buffer;
 }
 
 /**
@@ -140,13 +231,28 @@ function transformPosition(
   return { x: enu.x, y: enu.z, z: -enu.y };
 }
 
+let dracoDecoderPromise: Promise<any> | null = null;
+
+async function getDracoDecoder(): Promise<any> {
+  if (!dracoDecoderPromise) {
+    dracoDecoderPromise = createDecoderModule();
+  }
+  return dracoDecoderPromise;
+}
+
 async function parseGlbToRawMeshes(
   glbBuffer: ArrayBuffer,
   tileMatrix: Matrix4,
   invCenterMatrix: Matrix4,
 ): Promise<RawMesh[]> {
-  const io = new NodeIO();
-  const document = await io.readBinary(new Uint8Array(glbBuffer));
+  const processedBuffer = preprocessGlbForNodeIO(glbBuffer);
+  const decoder = await getDracoDecoder();
+  const io = new NodeIO()
+    .registerExtensions([KHRDracoMeshCompression])
+    .registerDependencies({
+      'draco3d.decoder': decoder,
+    });
+  const document = await io.readBinary(new Uint8Array(processedBuffer));
   const result: RawMesh[] = [];
 
   const scenes = document.getRoot().listScenes();

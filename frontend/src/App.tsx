@@ -105,6 +105,8 @@ function App() {
         format: parameters.exportFormat,
         lod: parameters.lod,
         includeTerrain: parameters.includeTerrain,
+        buildingColor: parameters.buildingColor,
+        terrainColor: parameters.terrainColor,
       })
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
