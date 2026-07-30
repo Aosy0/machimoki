@@ -15,6 +15,16 @@ import type { Accessor, Primitive } from '@gltf-transform/core';
 import { createDecoderModule } from 'draco3d';
 import type { Bounds, RawMesh } from './types';
 import { findTilesetUrl, resolveMuniCode } from './catalog';
+import draco3dgltf from 'draco3dgltf';
+
+let dracoDecoderPromise: Promise<unknown> | null = null;
+
+function getDracoDecoder(): Promise<unknown> {
+  if (!dracoDecoderPromise) {
+    dracoDecoderPromise = draco3dgltf.createDecoderModule();
+  }
+  return dracoDecoderPromise;
+}
 
 interface TileLike {
   children?: TileLike[];
@@ -229,15 +239,6 @@ function transformPosition(
   const ecef = Matrix4.multiplyByPoint(tileMatrix, nodeWorld, new Cartesian3());
   const enu = Matrix4.multiplyByPoint(invCenterMatrix, ecef, new Cartesian3());
   return { x: enu.x, y: enu.z, z: -enu.y };
-}
-
-let dracoDecoderPromise: Promise<any> | null = null;
-
-async function getDracoDecoder(): Promise<any> {
-  if (!dracoDecoderPromise) {
-    dracoDecoderPromise = createDecoderModule();
-  }
-  return dracoDecoderPromise;
 }
 
 async function parseGlbToRawMeshes(

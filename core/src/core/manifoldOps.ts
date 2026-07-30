@@ -313,6 +313,42 @@ export function exportMeshesToSTL(meshes: RawMesh[]): Buffer {
   return writeBinarySTL(merged);
 }
 
+export async function exportMeshesTo3MF(meshes: RawMesh[]): Promise<Buffer> {
+  const doc = new Document();
+  const buffer = doc.createBuffer();
+  const scene = doc.createScene();
+
+  for (const mesh of meshes) {
+    if (mesh.positions.length === 0 || mesh.indices.length === 0) continue;
+
+    const positionAccessor = doc
+      .createAccessor()
+      .setType('VEC3')
+      .setArray(mesh.positions)
+      .setBuffer(buffer);
+
+    const indicesAccessor = doc
+      .createAccessor()
+      .setType('SCALAR')
+      .setArray(mesh.indices)
+      .setBuffer(buffer);
+
+    const primitive = doc
+      .createPrimitive()
+      .setAttribute('POSITION', positionAccessor)
+      .setIndices(indicesAccessor);
+
+    const gltfMesh = doc.createMesh().addPrimitive(primitive);
+    const node = doc.createNode().setMesh(gltfMesh);
+    scene.addChild(node);
+  }
+
+  doc.getRoot().setDefaultScene(scene);
+
+  const arrayBuffer = await export3mf(doc, { header: { unit: 'millimeter' } });
+  return Buffer.from(arrayBuffer);
+}
+
 /**
  * Export a Manifold to a binary STL buffer.
  */
