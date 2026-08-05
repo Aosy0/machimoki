@@ -14,6 +14,9 @@ import {
 import type { Bounds, RawMesh } from './types';
 
 const TERRAIN_GRID_SIZE = 64;
+// Preview3D.tsx と同じ PLATEAU 地形。asset 1 (Cesium World Terrain) は標高が異なり、
+// プレビューとエクスポートの地形が一致しない原因になるため変更しないこと。
+const PLATEAU_TERRAIN_ION_ASSET_ID = 3258112;
 const CESIUM_ION_TOKEN =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY';
 
@@ -29,7 +32,7 @@ export async function buildTerrainMesh(
 ): Promise<RawMesh> {
   Ion.defaultAccessToken = CESIUM_ION_TOKEN;
 
-  const terrainProvider = await CesiumTerrainProvider.fromIonAssetId(1);
+  const terrainProvider = await CesiumTerrainProvider.fromIonAssetId(PLATEAU_TERRAIN_ION_ASSET_ID);
 
   const widthDeg = bounds.east - bounds.west;
   const heightDeg = bounds.north - bounds.south;
