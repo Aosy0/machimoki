@@ -214,4 +214,69 @@ describe('buildPrintableModel', () => {
       ),
     ).rejects.toThrow('Failed to build printable model');
   });
+
+  it('scale=2 doubles mesh dimensions (volume ≈ 8x for unit cube)', async () => {
+    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
+    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { capBuildingBottom } = await import('../../src/core/buildingCapper.js');
+
+    vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
+    vi.mocked(capBuildingBottom).mockImplementation((mesh: RawMesh) => mesh);
+
+    let capturedMesh: RawMesh | null = null;
+    vi.mocked(createManifoldFromMesh).mockImplementation(async (mesh: RawMesh) => {
+      capturedMesh = mesh;
+      return createFakeManifold();
+    });
+    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+
+    await buildPrintableModel(
+      { west: 0, south: 0, east: 1, north: 1 },
+      { terrainThickness: 5, flattenBottom: true, format: '3mf', includeTerrain: false, scale: 2 },
+    );
+
+    expect(capturedMesh).not.toBeNull();
+    const positions = capturedMesh!.positions;
+    expect(positions[0]).toBeCloseTo(0);
+    expect(positions[1]).toBeCloseTo(0);
+    expect(positions[2]).toBeCloseTo(0);
+    expect(positions[3]).toBeCloseTo(2);
+    expect(positions[4]).toBeCloseTo(0);
+    expect(positions[5]).toBeCloseTo(0);
+    expect(positions[6]).toBeCloseTo(0);
+    expect(positions[7]).toBeCloseTo(0);
+    expect(positions[8]).toBeCloseTo(2);
+  });
+
+  it('scale=1 is a no-op (no new allocations)', async () => {
+    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
+    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { capBuildingBottom } = await import('../../src/core/buildingCapper.js');
+
+    vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
+    vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
+    vi.mocked(capBuildingBottom).mockImplementation((mesh: RawMesh) => mesh);
+
+    let capturedBuildingMesh: RawMesh | null = null;
+    let capturedTerrainMesh: RawMesh | null = null;
+    vi.mocked(createManifoldFromMesh).mockImplementation(async (mesh: RawMesh) => {
+      if (!capturedBuildingMesh) {
+        capturedBuildingMesh = mesh;
+      } else {
+        capturedTerrainMesh = mesh;
+      }
+      return createFakeManifold();
+    });
+    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+
+    await buildPrintableModel(
+      { west: 0, south: 0, east: 1, north: 1 },
+      { terrainThickness: 5, flattenBottom: true, format: '3mf', scale: 1 },
+    );
+
+    expect(capturedBuildingMesh).toBe(buildingMesh);
+    expect(capturedTerrainMesh).toBe(terrainMesh);
+  });
 });

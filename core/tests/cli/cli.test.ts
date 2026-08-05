@@ -135,6 +135,7 @@ describe('CLI export command', () => {
         lod: 'lod1',
         includeTerrain: true,
         upAxis: 'z-up',
+        scale: 1,
       },
     );
   });
@@ -170,6 +171,33 @@ describe('CLI export command', () => {
         lod: 'lod2',
         includeTerrain: false,
       }),
+    );
+  });
+
+  it('honors --scale 2', async () => {
+    const outputPath = join(tempDir, 'out.3mf');
+    buildPrintableModel.mockResolvedValue({
+      buffer: Buffer.from('scaled-bytes'),
+      warnings: [],
+    });
+
+    await program.parseAsync([
+      'node',
+      'cli',
+      'export',
+      '--bounds',
+      '0,0,1,1',
+      '--terrain-thickness',
+      '5',
+      '--scale',
+      '2',
+      '--output',
+      outputPath,
+    ]);
+
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ scale: 2 }),
     );
   });
 });

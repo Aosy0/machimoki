@@ -87,6 +87,19 @@ function componentIntersectsBounds(mesh: RawMesh, bounds: Bounds, tolerance = 1e
   );
 }
 
+/**
+ * Scale a RawMesh by multiplying all position components by a uniform factor.
+ * Returns a new mesh with a fresh Float32Array; does NOT mutate the input.
+ */
+function scaleRawMesh(mesh: RawMesh, scale: number): RawMesh {
+  if (scale === 1) return mesh;
+  const scaled = new Float32Array(mesh.positions.length);
+  for (let i = 0; i < mesh.positions.length; i++) {
+    scaled[i] = mesh.positions[i] * scale;
+  }
+  return { positions: scaled, indices: mesh.indices };
+}
+
 async function buildPrintableModelUnsafe(
   bounds: Bounds,
   options: ExportOptions,
@@ -97,11 +110,12 @@ async function buildPrintableModelUnsafe(
   const buildingColor = options.buildingColor ?? '#ffffff';
   const terrainColor = options.terrainColor ?? '#ffffff';
   const upAxis = options.upAxis ?? 'z-up';
+  const scale = options.scale ?? 1;
   const warnings: string[] = [];
 
   const buildingMeshes = await buildBuildingMeshes(bounds, lod);
 
-  const terrainMesh = includeTerrain
+  let terrainMesh = includeTerrain
     ? await buildTerrainMesh(bounds, options.terrainThickness, options.flattenBottom)
     : null;
 
@@ -113,14 +127,20 @@ async function buildPrintableModelUnsafe(
       const comp = components[j];
       if (!componentIntersectsBounds(comp, bounds)) continue;
       const capped = capBuildingBottom(comp);
+      const scaled = scaleRawMesh(capped, scale);
       try {
-        const m = await createManifoldFromMesh(capped);
+        const m = await createManifoldFromMesh(scaled);
         buildingManifolds.push(m);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         warnings.push(`Building ${i + 1}.${j + 1} skipped (not printable): ${message}`);
       }
     }
+  }
+
+  // Scale terrain mesh after building manifolds (which used unscaled coords for filtering)
+  if (terrainMesh && scale !== 1) {
+    terrainMesh = scaleRawMesh(terrainMesh, scale);
   }
 
   if (format === 'stl') {

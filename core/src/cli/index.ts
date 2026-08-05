@@ -82,6 +82,13 @@ program
   .option('--up-axis <z-up|y-up>', 'which axis points up in the output', parseUpAxis, 'z-up')
   .option('--terrain', 'include terrain generation', true)
   .option('--no-terrain', 'skip terrain generation')
+  .option('--scale <number>', 'uniform scale factor (>0)', (value) => {
+    const num = Number(value);
+    if (Number.isNaN(num) || num <= 0) {
+      throw new Error(`Invalid scale: ${value}. Must be > 0`);
+    }
+    return num;
+  }, 1)
   .action(async (options) => {
     const exportOptions: ExportOptions = {
       terrainThickness: options.terrainThickness,
@@ -90,6 +97,7 @@ program
       lod: options.lod,
       includeTerrain: options.terrain,
       upAxis: options.upAxis,
+      scale: options.scale,
     };
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds);

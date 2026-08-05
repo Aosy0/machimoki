@@ -51,6 +51,8 @@ function App() {
     error: null,
   })
 
+  const [scale, setScale] = useState(1)
+
   const [manualCoords, setManualCoords] = useState({
     west: '139.8053',
     south: '35.7470',
@@ -64,6 +66,19 @@ function App() {
     errorMessage: selectionErrorMessage,
     clearError: clearSelectionError,
   } = useRectangleSelection(viewer)
+
+  useEffect(() => {
+    if (!selectionBounds) return
+    const centerLat = (selectionBounds.north + selectionBounds.south) / 2
+    const widthDeg = selectionBounds.east - selectionBounds.west
+    const heightDeg = selectionBounds.north - selectionBounds.south
+    const widthM = Math.abs(widthDeg) * (Math.PI / 180) * 6371000 * Math.cos((centerLat * Math.PI) / 180)
+    const depthM = Math.abs(heightDeg) * (Math.PI / 180) * 6371000
+    const maxDim = Math.max(widthM, depthM)
+    if (maxDim > 0) {
+      setScale(150 / maxDim)
+    }
+  }, [selectionBounds])
 
   const handleManualSelect = useCallback(() => {
     const w = parseFloat(manualCoords.west)
@@ -110,13 +125,14 @@ function App() {
         buildingColor: parameters.buildingColor,
         terrainColor: parameters.terrainColor,
         upAxis: parameters.upAxis,
+        scale,
       })
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
     } finally {
       setIsExporting(false)
     }
-  }, [parameters, selectionBounds])
+  }, [parameters, selectionBounds, scale])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
   const handleDismissError = () => {
@@ -398,6 +414,8 @@ function App() {
                 includeTerrain={parameters.includeTerrain}
                 buildingColor={parameters.buildingColor}
                 terrainColor={parameters.terrainColor}
+                scale={scale}
+                onScaleChange={setScale}
               />
               <LoadingOverlay
                 message={pipelineState.message}

@@ -22,6 +22,7 @@ import type { PipelineState } from '../types/pipeline'
 import { resolveMuniCode, findTilesetUrl } from '../lib/catalogApi'
 import { applyClippingToTileset, createGlobeClippingPlanes } from '../lib/clipping'
 import { createSolidTerrainPrimitive } from '../lib/solidTerrain'
+import ModelSizeOverlay from './ModelSizeOverlay'
 
 function clearGlobeClippingPlanes(
   globe: { clippingPlanes: ClippingPlaneCollection | undefined }
@@ -40,6 +41,8 @@ interface Preview3DProps {
   includeTerrain?: boolean
   buildingColor?: string
   terrainColor?: string
+  scale?: number
+  onScaleChange?: (newScale: number) => void
 }
 
 export default function Preview3D({
@@ -53,6 +56,8 @@ export default function Preview3D({
   includeTerrain = true,
   buildingColor = '#ffffff',
   terrainColor = '#ffffff',
+  scale = 1,
+  onScaleChange,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -424,11 +429,28 @@ export default function Preview3D({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terrainColor])
 
-  return <div ref={containerRef} style={containerStyle} />
+  return (
+    <div style={wrapperStyle}>
+      <div ref={containerRef} style={containerStyle} />
+      <ModelSizeOverlay
+        selectionBounds={selectionBounds}
+        scale={scale}
+        onScaleChange={onScaleChange ?? (() => {})}
+      />
+    </div>
+  )
+}
+
+const wrapperStyle: React.CSSProperties = {
+  width: '100%',
+  height: '100%',
+  position: 'relative',
 }
 
 const containerStyle: React.CSSProperties = {
   width: '100%',
   height: '100%',
-  position: 'relative',
+  position: 'absolute',
+  top: 0,
+  left: 0,
 }
