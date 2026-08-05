@@ -235,8 +235,8 @@ function matrix4FromMat4(elements: readonly number[]): Matrix4 {
 
 const GLTF_TO_ECEF_ROTATION = new Matrix4(
   1, 0, 0, 0,
-  0, 0, 1, 0,
-  0, -1, 0, 0,
+  0, 0, -1, 0,
+  0, 1, 0, 0,
   0, 0, 0, 1,
 );
 

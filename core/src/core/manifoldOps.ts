@@ -10,12 +10,30 @@ import { importManifold, cleanup as cleanupImportModel } from 'manifold-3d/lib/i
 import type { Manifold } from 'manifold-3d';
 import { strToU8, zipSync } from 'fflate';
 
-import { RawMesh } from './types.js';
+import { RawMesh, UpAxis } from './types.js';
 import { parseSTL } from './stlParser.js';
 import { writeBinarySTL } from './stlWriter.js';
 
 async function getWasm() {
   return getManifoldModule();
+}
+
+/**
+ * Convert positions from the internal engine frame (x=east, y=up, z=south)
+ * to the requested up-axis for export:
+ *  - 'y-up': identity (already Y-up)
+ *  - 'z-up': (x, y, z) -> (x, -z, y) — a right-handed rotation about X that
+ *    maps up (y) to z and south (z) to north (-y).
+ */
+export function transformForUpAxis(positions: Float32Array, upAxis: UpAxis): Float32Array {
+  if (upAxis === 'y-up') return positions;
+  const transformed = new Float32Array(positions.length);
+  for (let i = 0; i < positions.length; i += 3) {
+    transformed[i] = positions[i];
+    transformed[i + 1] = -positions[i + 2];
+    transformed[i + 2] = positions[i + 1];
+  }
+  return transformed;
 }
 
 function meshToRaw(manifoldMesh: {
@@ -90,9 +108,14 @@ function createId2Properties(
  *
  * @param manifold The manifold to export.
  * @param color Optional hex color string (e.g. "#ff0000") applied to all materials.
+ * @param upAxis Which axis points up in the exported model (default 'z-up').
  */
-export async function exportTo3MF(manifold: Manifold, color?: string): Promise<Buffer> {
-  return exportPartsTo3MF([{ manifold, color }]);
+export async function exportTo3MF(
+  manifold: Manifold,
+  color?: string,
+  upAxis: UpAxis = 'z-up',
+): Promise<Buffer> {
+  return exportPartsTo3MF([{ manifold, color }], upAxis);
 }
 
 /**
@@ -246,6 +269,7 @@ export async function exportPartsTo3MF(
     | { manifold: Manifold; color?: string }
     | { mesh: RawMesh; color?: string }
   >,
+  upAxis: UpAxis = 'z-up',
 ): Promise<Buffer> {
   if (parts.length === 0) {
     throw new Error('No parts to export');
@@ -261,7 +285,7 @@ export async function exportPartsTo3MF(
     const meshParts = parts.map((p) => {
       const mp = getMeshPart(p);
       return {
-        positions: mp.positions,
+        positions: transformForUpAxis(mp.positions, upAxis),
         indices: mp.indices,
         color: mp.color,
       };
@@ -274,6 +298,10 @@ export async function exportPartsTo3MF(
   const doc = new Document();
 
   for (const part of parts as Array<{ manifold: Manifold }>) {
+    // (x, y, z) -> (x, -z, y) as a column-major rotation about X (z-up).
+    if (upAxis === 'z-up') {
+      part.manifold.transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1]);
+    }
     const manifoldMesh = part.manifold.getMesh();
     const material = doc.createMaterial();
     const id2properties = createId2Properties(doc, manifoldMesh, material);
@@ -308,12 +336,13 @@ export function mergeRawMeshes(meshes: RawMesh[]): RawMesh {
   return { positions, indices };
 }
 
-export function exportMeshesToSTL(meshes: RawMesh[]): Buffer {
+export function exportMeshesToSTL(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Buffer {
   const merged = mergeRawMeshes(meshes);
+  merged.positions = transformForUpAxis(merged.positions, upAxis);
   return writeBinarySTL(merged);
 }
 
-export async function exportMeshesTo3MF(meshes: RawMesh[]): Promise<Buffer> {
+export async function exportMeshesTo3MF(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Promise<Buffer> {
   const doc = new Document();
   const buffer = doc.createBuffer();
   const scene = doc.createScene();
@@ -324,7 +353,7 @@ export async function exportMeshesTo3MF(meshes: RawMesh[]): Promise<Buffer> {
     const positionAccessor = doc
       .createAccessor()
       .setType('VEC3')
-      .setArray(mesh.positions)
+      .setArray(transformForUpAxis(mesh.positions, upAxis))
       .setBuffer(buffer);
 
     const indicesAccessor = doc
@@ -352,9 +381,10 @@ export async function exportMeshesTo3MF(meshes: RawMesh[]): Promise<Buffer> {
 /**
  * Export a Manifold to a binary STL buffer.
  */
-export function exportToSTL(manifold: Manifold): Buffer {
-  const mesh = manifold.getMesh();
-  return writeBinarySTL(meshToRaw(mesh));
+export function exportToSTL(manifold: Manifold, upAxis: UpAxis = 'z-up'): Buffer {
+  const raw = meshToRaw(manifold.getMesh());
+  raw.positions = transformForUpAxis(raw.positions, upAxis);
+  return writeBinarySTL(raw);
 }
 
 function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {

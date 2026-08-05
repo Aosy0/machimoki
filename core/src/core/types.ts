@@ -9,6 +9,8 @@ export interface Bounds {
   north: number;
 }
 
+export type UpAxis = 'z-up' | 'y-up';
+
 export interface ExportOptions {
   terrainThickness: number;
   flattenBottom: boolean;
@@ -17,6 +19,7 @@ export interface ExportOptions {
   includeTerrain?: boolean;
   buildingColor?: string;
   terrainColor?: string;
+  upAxis?: UpAxis;
 }
 
 export interface ExportRequest {

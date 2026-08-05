@@ -48,6 +48,14 @@ export function parseLod(value: string): 'lod1' | 'lod2' {
   return lower;
 }
 
+export function parseUpAxis(value: string): 'z-up' | 'y-up' {
+  const lower = value.toLowerCase();
+  if (lower !== 'z-up' && lower !== 'y-up') {
+    throw new Error(`Invalid up-axis: ${value}. Expected z-up or y-up`);
+  }
+  return lower;
+}
+
 export function detectMimeType(filePath: string): string {
   const lower = filePath.toLowerCase();
   if (lower.endsWith('.3mf')) return 'model/3mf';
@@ -71,6 +79,7 @@ program
   .option('--format <3mf|stl>', 'output format', parseFormat, '3mf')
   .requiredOption('--output <file>', 'output file path')
   .option('--lod <lod1|lod2>', 'building LOD', parseLod, 'lod1')
+  .option('--up-axis <z-up|y-up>', 'which axis points up in the output', parseUpAxis, 'z-up')
   .option('--terrain', 'include terrain generation', true)
   .option('--no-terrain', 'skip terrain generation')
   .action(async (options) => {
@@ -80,6 +89,7 @@ program
       format: options.format,
       lod: options.lod,
       includeTerrain: options.terrain,
+      upAxis: options.upAxis,
     };
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds);

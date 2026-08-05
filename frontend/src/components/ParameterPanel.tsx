@@ -9,6 +9,7 @@ export interface Parameters {
   exportFormat: '3mf' | 'stl'
   buildingColor: string
   terrainColor: string
+  upAxis: 'z-up' | 'y-up'
 }
 
 interface ParameterPanelProps {
@@ -99,6 +100,29 @@ function ParameterPanel({ parameters, onChange, onExport }: ParameterPanelProps)
         >
           <option value="3mf">3MF（推奨）</option>
           <option value="stl">STL</option>
+        </select>
+      </div>
+
+      {/* Up Axis */}
+      <div>
+        <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#aaa' }}>
+          上方向の軸
+        </label>
+        <select
+          value={parameters.upAxis}
+          onChange={(e) => handleChange('upAxis', e.target.value as Parameters['upAxis'])}
+          style={{
+            width: '100%',
+            padding: '8px',
+            background: '#333',
+            border: '1px solid #555',
+            color: '#fff',
+            borderRadius: '4px',
+            fontSize: '14px',
+          }}
+        >
+          <option value="z-up">Z軸上向き（推奨）</option>
+          <option value="y-up">Y軸上向き</option>
         </select>
       </div>
 

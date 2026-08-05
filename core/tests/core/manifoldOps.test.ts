@@ -5,10 +5,13 @@ import {
   unionMeshes,
   exportTo3MF,
   exportToSTL,
+  exportMeshesToSTL,
+  transformForUpAxis,
   importFrom3MF,
   importFromSTL,
   cleanupManifoldImports,
 } from '../../src/core/manifoldOps.js';
+import { parseSTL } from '../../src/core/stlParser.js';
 import { createCubeMesh } from './fixtures.js';
 
 describe('manifoldOps', () => {
@@ -92,5 +95,52 @@ describe('manifoldOps', () => {
       manifold.delete();
       cleanupManifoldImports();
     }
+  });
+
+  it('transformForUpAxis keeps y-up positions unchanged', () => {
+    const positions = new Float32Array([1, 2, 3, 4, 5, 6]);
+    const result = transformForUpAxis(positions, 'y-up');
+    expect(result).toBe(positions);
+    expect(Array.from(result)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('transformForUpAxis maps z-up as (x, y, z) -> (x, -z, y)', () => {
+    const positions = new Float32Array([1, 2, 3, 4, 5, 6]);
+    const result = transformForUpAxis(positions, 'z-up');
+    expect(Array.from(result)).toEqual([1, -3, 2, 4, -6, 5]);
+  });
+
+  it('exportMeshesToSTL writes z-up geometry by default', () => {
+    const mesh = createCubeMesh();
+    const stlBuffer = exportMeshesToSTL([mesh]);
+    const parsed = parseSTL(stlBuffer);
+
+    const minY = Math.min(...Array.from(parsed.positions).filter((_, i) => i % 3 === 1));
+    const maxY = Math.max(...Array.from(parsed.positions).filter((_, i) => i % 3 === 1));
+    const minZ = Math.min(...Array.from(parsed.positions).filter((_, i) => i % 3 === 2));
+    const maxZ = Math.max(...Array.from(parsed.positions).filter((_, i) => i % 3 === 2));
+
+    // Cube spans [0,1] on every engine axis. Z-up rotation maps
+    // (x, y, z) -> (x, -z, y): y now spans [-1, 0], z spans [0, 1].
+    expect(minY).toBeCloseTo(-1, 6);
+    expect(maxY).toBeCloseTo(0, 6);
+    expect(minZ).toBeCloseTo(0, 6);
+    expect(maxZ).toBeCloseTo(1, 6);
+  });
+
+  it('exportMeshesToSTL preserves y-up geometry when requested', () => {
+    const mesh = createCubeMesh();
+    const stlBuffer = exportMeshesToSTL([mesh], 'y-up');
+    const parsed = parseSTL(stlBuffer);
+
+    const minY = Math.min(...Array.from(parsed.positions).filter((_, i) => i % 3 === 1));
+    const maxY = Math.max(...Array.from(parsed.positions).filter((_, i) => i % 3 === 1));
+    const minZ = Math.min(...Array.from(parsed.positions).filter((_, i) => i % 3 === 2));
+    const maxZ = Math.max(...Array.from(parsed.positions).filter((_, i) => i % 3 === 2));
+
+    expect(minY).toBeCloseTo(0, 6);
+    expect(maxY).toBeCloseTo(1, 6);
+    expect(minZ).toBeCloseTo(0, 6);
+    expect(maxZ).toBeCloseTo(1, 6);
   });
 });

@@ -38,6 +38,7 @@ function App() {
     exportFormat: '3mf',
     buildingColor: '#ffffff',
     terrainColor: '#ffffff',
+    upAxis: 'z-up',
   })
 
   const cesiumContainer = useRef<HTMLDivElement>(null)
@@ -108,6 +109,7 @@ function App() {
         includeTerrain: parameters.includeTerrain,
         buildingColor: parameters.buildingColor,
         terrainColor: parameters.terrainColor,
+        upAxis: parameters.upAxis,
       })
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')

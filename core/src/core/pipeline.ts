@@ -37,6 +37,56 @@ export async function buildPrintableModel(
   }
 }
 
+/**
+ * Convert geographic bounds to the local engine coordinate frame
+ * (x = east, y = up, z = south) centered on the selection center.
+ * Matches the transform used by meshBuilder/terrain.
+ */
+function boundsToEngineXZ(bounds: Bounds): { minX: number; maxX: number; minZ: number; maxZ: number } {
+  const centerLon = (bounds.west + bounds.east) / 2;
+  const centerLat = (bounds.south + bounds.north) / 2;
+  const mPerDegLon = 111320 * Math.cos((centerLat * Math.PI) / 180);
+  const mPerDegLat = 111320;
+  return {
+    minX: (bounds.west - centerLon) * mPerDegLon,
+    maxX: (bounds.east - centerLon) * mPerDegLon,
+    minZ: -(bounds.north - centerLat) * mPerDegLat,
+    maxZ: -(bounds.south - centerLat) * mPerDegLat,
+  };
+}
+
+/**
+ * True if the mesh's 2D footprint (x/z) intersects the selection bounds.
+ *
+ * PLATEAU tilesets contain huge root tiles (kilometer-scale regions), so a
+ * tile-level intersection test keeps every building from all intersecting
+ * tiles. Each connected component is a single building; filtering at this
+ * level removes buildings far outside the requested bounds.
+ */
+function componentIntersectsBounds(mesh: RawMesh, bounds: Bounds, tolerance = 1e-2): boolean {
+  const { minX, maxX, minZ, maxZ } = boundsToEngineXZ(bounds);
+
+  let bMinX = Infinity;
+  let bMaxX = -Infinity;
+  let bMinZ = Infinity;
+  let bMaxZ = -Infinity;
+  for (let i = 0; i < mesh.positions.length; i += 3) {
+    const x = mesh.positions[i];
+    const z = mesh.positions[i + 2];
+    if (x < bMinX) bMinX = x;
+    if (x > bMaxX) bMaxX = x;
+    if (z < bMinZ) bMinZ = z;
+    if (z > bMaxZ) bMaxZ = z;
+  }
+
+  return !(
+    bMaxX < minX - tolerance ||
+    bMinX > maxX + tolerance ||
+    bMaxZ < minZ - tolerance ||
+    bMinZ > maxZ + tolerance
+  );
+}
+
 async function buildPrintableModelUnsafe(
   bounds: Bounds,
   options: ExportOptions,
@@ -46,6 +96,7 @@ async function buildPrintableModelUnsafe(
   const format = options.format;
   const buildingColor = options.buildingColor ?? '#ffffff';
   const terrainColor = options.terrainColor ?? '#ffffff';
+  const upAxis = options.upAxis ?? 'z-up';
   const warnings: string[] = [];
 
   const buildingMeshes = await buildBuildingMeshes(bounds, lod);
@@ -60,6 +111,7 @@ async function buildPrintableModelUnsafe(
     const components = splitConnectedComponents(welded);
     for (let j = 0; j < components.length; j++) {
       const comp = components[j];
+      if (!componentIntersectsBounds(comp, bounds)) continue;
       const capped = capBuildingBottom(comp);
       try {
         const m = await createManifoldFromMesh(capped);
@@ -82,7 +134,7 @@ async function buildPrintableModelUnsafe(
 
     const union = await unionMeshes(meshes);
     try {
-      return { buffer: exportMeshesToSTL([meshToRaw(union.getMesh())]), warnings };
+      return { buffer: exportMeshesToSTL([meshToRaw(union.getMesh())], upAxis), warnings };
     } finally {
       union.delete();
     }
@@ -101,7 +153,7 @@ async function buildPrintableModelUnsafe(
   }
 
   try {
-    return { buffer: await exportPartsTo3MF(parts), warnings };
+    return { buffer: await exportPartsTo3MF(parts, upAxis), warnings };
   } finally {
     for (const part of parts) {
       part.manifold.delete();

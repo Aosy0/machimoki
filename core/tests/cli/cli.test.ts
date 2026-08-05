@@ -9,6 +9,7 @@ import {
   parseBounds,
   parseFormat,
   parseLod,
+  parseUpAxis,
   detectMimeType,
 } from '../../src/cli/index.js';
 
@@ -64,6 +65,12 @@ describe('CLI argument parsers', () => {
     expect(parseLod('lod1')).toBe('lod1');
     expect(parseLod('LOD2')).toBe('lod2');
     expect(() => parseLod('lod3')).toThrow();
+  });
+
+  it('parseUpAxis accepts z-up and y-up', () => {
+    expect(parseUpAxis('z-up')).toBe('z-up');
+    expect(parseUpAxis('Y-UP')).toBe('y-up');
+    expect(() => parseUpAxis('x-up')).toThrow();
   });
 
   it('detectMimeType maps file extensions', () => {
@@ -127,6 +134,7 @@ describe('CLI export command', () => {
         format: '3mf',
         lod: 'lod1',
         includeTerrain: true,
+        upAxis: 'z-up',
       },
     );
   });

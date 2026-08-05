@@ -142,8 +142,6 @@ export function splitConnectedComponents(mesh: RawMesh): RawMesh[] {
   const numTriangles = mesh.indices.length / 3;
   if (numTriangles === 0) return [];
 
-  const vertexCount = mesh.positions.length / 3;
-
   const edgeToTriangles = new Map<string, number[]>();
   function addEdge(v0: number, v1: number, triIdx: number) {
     const key = v0 < v1 ? `${v0},${v1}` : `${v1},${v0}`;

@@ -125,6 +125,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     typeof record.includeTerrain === 'boolean' ? record.includeTerrain : true;
   const buildingColor = parseColor(record.buildingColor);
   const terrainColor = parseColor(record.terrainColor);
+  const upAxis = parseUpAxis(record.upAxis) ?? 'z-up';
 
   const options: ExportOptions = {
     terrainThickness,
@@ -134,6 +135,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     includeTerrain,
     buildingColor,
     terrainColor,
+    upAxis,
   };
 
   return { ok: true, value: { bounds, options } };
@@ -177,6 +179,13 @@ function parseLod(value: unknown): 'lod1' | 'lod2' | null {
   if (typeof value !== 'string') return null;
   const lower = value.toLowerCase();
   if (lower === 'lod1' || lower === 'lod2') return lower;
+  return null;
+}
+
+function parseUpAxis(value: unknown): 'z-up' | 'y-up' | null {
+  if (typeof value !== 'string') return null;
+  const lower = value.toLowerCase();
+  if (lower === 'z-up' || lower === 'y-up') return lower;
   return null;
 }
 
