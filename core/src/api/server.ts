@@ -128,6 +128,8 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
   const upAxis = parseUpAxis(record.upAxis) ?? 'z-up';
   const scaleParsed = parseNumber(record.scale);
   const scale = scaleParsed !== null && scaleParsed > 0 ? scaleParsed : 1;
+  const includeSpanningBuildings =
+    typeof record.includeSpanningBuildings === 'boolean' ? record.includeSpanningBuildings : false;
 
   const options: ExportOptions = {
     terrainThickness,
@@ -139,6 +141,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     terrainColor,
     upAxis,
     scale,
+    includeSpanningBuildings,
   };
 
   return { ok: true, value: { bounds, options } };

@@ -15,14 +15,113 @@ export interface SelectionBounds {
 
 let patched = false
 
+function parseNum(val: unknown): number | null {
+  if (typeof val === 'number') return val
+  if (typeof val === 'string') {
+    const n = parseFloat(val)
+    return isNaN(n) ? null : n
+  }
+  return null
+}
+
+function checkFeatureBounds(
+  feature: any,
+  bounds: SelectionBounds,
+  includeSpanning: boolean
+): boolean {
+  const xMinRaw = feature.getProperty('_xmin')
+  const xMaxRaw = feature.getProperty('_xmax')
+  const yMinRaw = feature.getProperty('_ymin')
+  const yMaxRaw = feature.getProperty('_ymax')
+
+  const xmin = parseNum(xMinRaw)
+  const xmax = parseNum(xMaxRaw)
+  const ymin = parseNum(yMinRaw)
+  const ymax = parseNum(yMaxRaw)
+
+  if (xmin !== null && xmax !== null && ymin !== null && ymax !== null) {
+    if (includeSpanning) {
+      return (
+        xmin <= bounds.east &&
+        xmax >= bounds.west &&
+        ymin <= bounds.north &&
+        ymax >= bounds.south
+      )
+    }
+    return (
+      xmin >= bounds.west &&
+      xmax <= bounds.east &&
+      ymin >= bounds.south &&
+      ymax <= bounds.north
+    )
+  }
+
+  // fallback: center point (_x, _y)
+  const cx = parseNum(feature.getProperty('_x'))
+  const cy = parseNum(feature.getProperty('_y'))
+  if (cx !== null && cy !== null) {
+    return (
+      cx >= bounds.west &&
+      cx <= bounds.east &&
+      cy >= bounds.south &&
+      cy <= bounds.north
+    )
+  }
+
+  return true
+}
+
+function filterTileFeatures(
+  tile: any,
+  bounds: SelectionBounds,
+  includeSpanning: boolean
+): void {
+  const content = tile?.content
+  if (!content || !content.featuresLength) return
+
+  for (let i = 0; i < content.featuresLength; i++) {
+    const feature = content.getFeature(i)
+    if (!feature) continue
+    feature.show = checkFeatureBounds(feature, bounds, includeSpanning)
+  }
+}
+
+function traverseTiles(
+  tile: any,
+  bounds: SelectionBounds,
+  includeSpanning: boolean
+): void {
+  if (!tile) return
+  filterTileFeatures(tile, bounds, includeSpanning)
+  if (tile.children) {
+    for (const child of tile.children) {
+      traverseTiles(child, bounds, includeSpanning)
+    }
+  }
+}
+
+export function refilterSpanning(tileset: any, includeSpanning?: boolean): void {
+  if (includeSpanning !== undefined) {
+    tileset._customIncludeSpanning = includeSpanning
+  }
+  const bounds: SelectionBounds | undefined = tileset._customSelectionBounds
+  if (!bounds) return
+  const is: boolean = tileset._customIncludeSpanning ?? false
+  if (tileset._root) {
+    traverseTiles(tileset._root, bounds, is)
+  }
+}
+
 export function applyClippingToTileset(
   tileset: any,
-  bounds: SelectionBounds
+  bounds: SelectionBounds,
+  includeSpanning = false
 ): void {
   tileset.clippingPlanes = undefined
   tileset.clippingPolygons = undefined
 
   tileset._customSelectionBounds = bounds
+  tileset._customIncludeSpanning = includeSpanning
 
   const Cesium3DTile = tileset._root?.constructor
   if (Cesium3DTile && !patched) {
@@ -49,47 +148,22 @@ export function applyClippingToTileset(
     }
   }
 
-  const filterFeatures = (tile: any) => {
-    const content = tile?.content
-    if (!content || !content.featuresLength) return
-
-    for (let i = 0; i < content.featuresLength; i++) {
-      const feature = content.getFeature(i)
-      if (!feature) continue
-
-      const xRaw = feature.getProperty('_x')
-      const yRaw = feature.getProperty('_y')
-
-      const x = typeof xRaw === 'string' ? parseFloat(xRaw) : xRaw
-      const y = typeof yRaw === 'string' ? parseFloat(yRaw) : yRaw
-
-      if (typeof x === 'number' && typeof y === 'number' && !isNaN(x) && !isNaN(y)) {
-        const inBounds =
-          x >= bounds.west &&
-          x <= bounds.east &&
-          y >= bounds.south &&
-          y <= bounds.north
-        feature.show = inBounds
-      }
-    }
+  const tileLoadHandler = (tile: any) => {
+    const b = tileset._customSelectionBounds
+    if (!b) return
+    const is = tileset._customIncludeSpanning ?? false
+    filterTileFeatures(tile, b, is)
   }
 
-  const traverseTiles = (tile: any) => {
-    if (!tile) return
-    filterFeatures(tile)
-    if (tile.children) {
-      for (const child of tile.children) {
-        traverseTiles(child)
-      }
+  if (!tileset._customFilterRegistered) {
+    tileset._customFilterRegistered = true
+    if (tileset.tileLoad) {
+      tileset.tileLoad.addEventListener(tileLoadHandler)
     }
-  }
-
-  if (tileset.tileLoad) {
-    tileset.tileLoad.addEventListener(filterFeatures)
   }
 
   if (tileset._root) {
-    traverseTiles(tileset._root)
+    traverseTiles(tileset._root, bounds, includeSpanning)
   }
 }
 

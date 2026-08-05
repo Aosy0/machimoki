@@ -279,4 +279,54 @@ describe('buildPrintableModel', () => {
     expect(capturedBuildingMesh).toBe(buildingMesh);
     expect(capturedTerrainMesh).toBe(terrainMesh);
   });
+
+  it('excludes buildings straddling bounds when includeSpanningBuildings is false', async () => {
+    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
+    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+
+    // bounds {west:-1, south:-1, east:1, north:1} → engine coords:
+    // centerLon=0, centerLat=0, mPerDegLon=111320, mPerDegLat=111320
+    // minX=-111320, maxX=111320, minZ=-111320, maxZ=111320
+    //
+    // A mesh spanning x from -120000 to 0 straddles the minX boundary:
+    // - With includeSpanning=true (default): intersects → included
+    // - With includeSpanning=false: not fully inside → excluded
+    const straddlingMesh: RawMesh = {
+      positions: new Float32Array([
+        -120000, 0, -100,
+        0, 0, -100,
+        0, 0, 100,
+      ]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+
+    vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
+    vi.mocked(buildBuildingMeshes).mockResolvedValue([straddlingMesh]);
+    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+
+    // Default (includeSpanningBuildings omitted → false): building EXCLUDED, only terrain remains
+    vi.mocked(createManifoldFromMesh).mockResolvedValue(createFakeManifold());
+    await buildPrintableModel(
+      { west: -1, south: -1, east: 1, north: 1 },
+      { terrainThickness: 5, flattenBottom: true, format: '3mf' },
+    );
+    // createManifoldFromMesh called only for terrain = 1 call
+    expect(createManifoldFromMesh).toHaveBeenCalledTimes(1);
+    expect(createManifoldFromMesh).toHaveBeenCalledWith(terrainMesh);
+
+    vi.clearAllMocks();
+    vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
+    vi.mocked(buildBuildingMeshes).mockResolvedValue([straddlingMesh]);
+    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(createManifoldFromMesh).mockResolvedValue(createFakeManifold());
+
+    // includeSpanningBuildings=true: building IS included
+    await buildPrintableModel(
+      { west: -1, south: -1, east: 1, north: 1 },
+      { terrainThickness: 5, flattenBottom: true, format: '3mf', includeSpanningBuildings: true },
+    );
+    // createManifoldFromMesh called for building + terrain = 2 calls
+    expect(createManifoldFromMesh).toHaveBeenCalledTimes(2);
+  });
 });

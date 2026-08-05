@@ -127,6 +127,27 @@ describe('API server', () => {
     );
   });
 
+  it('POST /api/export accepts includeSpanningBuildings parameter', async () => {
+    buildPrintableModel.mockResolvedValue({ buffer: Buffer.from('model'), warnings: [] });
+
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 0, south: 0, east: 1, north: 1 },
+        terrainThickness: 5,
+        format: '3mf',
+        includeSpanningBuildings: false,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ includeSpanningBuildings: false }),
+    );
+  });
+
   it('POST /api/export returns 400 for invalid body', async () => {
     const response = await fetch(`${baseUrl}/api/export`, {
       method: 'POST',

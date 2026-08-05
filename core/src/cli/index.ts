@@ -82,6 +82,7 @@ program
   .option('--up-axis <z-up|y-up>', 'which axis points up in the output', parseUpAxis, 'z-up')
   .option('--terrain', 'include terrain generation', true)
   .option('--no-terrain', 'skip terrain generation')
+  .option('--include-spanning-buildings', 'include buildings that span the selection boundary', false)
   .option('--scale <number>', 'uniform scale factor (>0)', (value) => {
     const num = Number(value);
     if (Number.isNaN(num) || num <= 0) {
@@ -98,6 +99,7 @@ program
       includeTerrain: options.terrain,
       upAxis: options.upAxis,
       scale: options.scale,
+      includeSpanningBuildings: options.includeSpanningBuildings,
     };
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds);

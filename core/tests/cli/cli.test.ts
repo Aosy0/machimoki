@@ -136,7 +136,34 @@ describe('CLI export command', () => {
         includeTerrain: true,
         upAxis: 'z-up',
         scale: 1,
+        includeSpanningBuildings: false,
       },
+    );
+  });
+
+  it('honors --include-spanning-buildings', async () => {
+    const outputPath = join(tempDir, 'out.3mf');
+    buildPrintableModel.mockResolvedValue({
+      buffer: Buffer.from('model-bytes'),
+      warnings: [],
+    });
+
+    await program.parseAsync([
+      'node',
+      'cli',
+      'export',
+      '--bounds',
+      '139.69,35.69,139.70,35.70',
+      '--terrain-thickness',
+      '10',
+      '--include-spanning-buildings',
+      '--output',
+      outputPath,
+    ]);
+
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ includeSpanningBuildings: true }),
     );
   });
 

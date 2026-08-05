@@ -63,7 +63,7 @@ function boundsToEngineXZ(bounds: Bounds): { minX: number; maxX: number; minZ: n
  * tiles. Each connected component is a single building; filtering at this
  * level removes buildings far outside the requested bounds.
  */
-function componentIntersectsBounds(mesh: RawMesh, bounds: Bounds, tolerance = 1e-2): boolean {
+function componentIntersectsBounds(mesh: RawMesh, bounds: Bounds, tolerance = 1e-2, includeSpanning = true): boolean {
   const { minX, maxX, minZ, maxZ } = boundsToEngineXZ(bounds);
 
   let bMinX = Infinity;
@@ -77,6 +77,15 @@ function componentIntersectsBounds(mesh: RawMesh, bounds: Bounds, tolerance = 1e
     if (x > bMaxX) bMaxX = x;
     if (z < bMinZ) bMinZ = z;
     if (z > bMaxZ) bMaxZ = z;
+  }
+
+  if (!includeSpanning) {
+    return (
+      bMinX >= minX - tolerance &&
+      bMaxX <= maxX + tolerance &&
+      bMinZ >= minZ - tolerance &&
+      bMaxZ <= maxZ + tolerance
+    );
   }
 
   return !(
@@ -111,6 +120,7 @@ async function buildPrintableModelUnsafe(
   const terrainColor = options.terrainColor ?? '#ffffff';
   const upAxis = options.upAxis ?? 'z-up';
   const scale = options.scale ?? 1;
+  const includeSpanning = options.includeSpanningBuildings ?? false;
   const warnings: string[] = [];
 
   const buildingMeshes = await buildBuildingMeshes(bounds, lod);
@@ -125,7 +135,7 @@ async function buildPrintableModelUnsafe(
     const components = splitConnectedComponents(welded);
     for (let j = 0; j < components.length; j++) {
       const comp = components[j];
-      if (!componentIntersectsBounds(comp, bounds)) continue;
+      if (!componentIntersectsBounds(comp, bounds, 1e-2, includeSpanning)) continue;
       const capped = capBuildingBottom(comp);
       const scaled = scaleRawMesh(capped, scale);
       try {

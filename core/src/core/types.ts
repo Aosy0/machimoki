@@ -21,6 +21,9 @@ export interface ExportOptions {
   terrainColor?: string;
   upAxis?: UpAxis;
   scale?: number;
+  // 選択範囲の境界をまたぐ建物を含めるか（デフォルト false）。
+  // true にすると、フットプリントが範囲に完全内包されない建物も含める。
+  includeSpanningBuildings?: boolean;
 }
 
 export interface ExportRequest {

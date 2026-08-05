@@ -17,6 +17,7 @@ export interface ExportOptions {
   terrainColor?: string;
   upAxis?: UpAxis;
   scale?: number;
+  includeSpanningBuildings?: boolean;
 }
 
 export interface ValidationResult {

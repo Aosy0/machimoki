@@ -10,6 +10,7 @@ export interface Parameters {
   buildingColor: string
   terrainColor: string
   upAxis: 'z-up' | 'y-up'
+  includeSpanningBuildings: boolean
 }
 
 interface ParameterPanelProps {
@@ -196,6 +197,23 @@ function ParameterPanel({ parameters, onChange, onExport }: ParameterPanelProps)
           />
           <span style={{ fontSize: '14px' }}>底面をフラット化</span>
         </label>
+      </div>
+
+      {/* Spanning Buildings Setting */}
+      <div style={{ borderTop: '1px solid #333', paddingTop: '16px' }}>
+        <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>建物フィルタ</h4>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '4px' }}>
+          <input
+            type="checkbox"
+            checked={parameters.includeSpanningBuildings}
+            onChange={(e) => handleChange('includeSpanningBuildings', e.target.checked)}
+          />
+          <span style={{ fontSize: '14px' }}>領域をまたぐ建物を含める</span>
+        </label>
+        <p style={{ fontSize: '11px', color: '#aaa', margin: '0 0 0 26px' }}>
+          オフにすると境界をまたぐ建物を除外し、地形からはみ出しません
+        </p>
       </div>
 
       <button

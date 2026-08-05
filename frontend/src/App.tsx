@@ -39,6 +39,7 @@ function App() {
     buildingColor: '#ffffff',
     terrainColor: '#ffffff',
     upAxis: 'z-up',
+    includeSpanningBuildings: false,
   })
 
   const cesiumContainer = useRef<HTMLDivElement>(null)
@@ -126,6 +127,7 @@ function App() {
         terrainColor: parameters.terrainColor,
         upAxis: parameters.upAxis,
         scale,
+        includeSpanningBuildings: parameters.includeSpanningBuildings,
       })
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
@@ -416,6 +418,7 @@ function App() {
                 terrainColor={parameters.terrainColor}
                 scale={scale}
                 onScaleChange={setScale}
+                includeSpanningBuildings={parameters.includeSpanningBuildings}
               />
               <LoadingOverlay
                 message={pipelineState.message}
