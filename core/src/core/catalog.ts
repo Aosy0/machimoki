@@ -83,6 +83,40 @@ export async function resolveMuniCode(lat: number, lon: number): Promise<string>
   return result.results.muniCd;
 }
 
+export async function resolveMuniCodes(bounds: {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+}): Promise<string[]> {
+  const centerLat = (bounds.south + bounds.north) / 2;
+  const centerLon = (bounds.west + bounds.east) / 2;
+
+  const points: Array<{ lat: number; lon: number }> = [
+    { lat: bounds.south, lon: bounds.west },
+    { lat: bounds.south, lon: bounds.east },
+    { lat: bounds.north, lon: bounds.west },
+    { lat: bounds.north, lon: bounds.east },
+    { lat: centerLat, lon: centerLon },
+  ];
+
+  const results = await Promise.all(
+    points.map(async ({ lat, lon }) => {
+      try {
+        return await resolveMuniCode(lat, lon);
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const unique = [...new Set(results.filter((code): code is string => code !== null))];
+  if (unique.length === 0) {
+    throw new Error('選択範囲の自治体コードが取得できません');
+  }
+  return unique;
+}
+
 export async function findTilesetUrl(muniCode: string, lod: 'lod1' | 'lod2'): Promise<string> {
   const datasets = await fetchCatalogDatasets();
   const prefCode = muniCode.slice(0, 2);

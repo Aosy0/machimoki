@@ -19,7 +19,7 @@ import type { BoundingSphere, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
-import { resolveMuniCode, findTilesetUrl } from '../lib/catalogApi'
+import { resolveMuniCodes, findTilesetUrl } from '../lib/catalogApi'
 import { applyClippingToTileset, createGlobeClippingPlanes, refilterSpanning } from '../lib/clipping'
 import { createSolidTerrainPrimitive } from '../lib/solidTerrain'
 import ModelSizeOverlay from './ModelSizeOverlay'
@@ -81,7 +81,7 @@ export default function Preview3D({
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
-  const tilesetRef = useRef<Cesium3DTileset | null>(null)
+  const tilesetsRef = useRef<Cesium3DTileset[]>([])
   const solidTerrainPrimitiveRef = useRef<Primitive | null>(null)
   const gridLayerRef = useRef<any>(null)
   const textureLayerRef = useRef<any>(null)
@@ -149,10 +149,14 @@ export default function Preview3D({
     loadTerrain()
 
     return () => {
-      if (tilesetRef.current) {
-        viewer.scene.primitives.remove(tilesetRef.current)
-        tilesetRef.current = null
+      for (const ts of tilesetsRef.current) {
+        try {
+          viewer.scene.primitives.remove(ts)
+        } catch {
+          void 0
+        }
       }
+      tilesetsRef.current = []
       if (solidTerrainPrimitiveRef.current) {
         viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
         solidTerrainPrimitiveRef.current = null
@@ -213,14 +217,14 @@ export default function Preview3D({
       return
     }
 
-    if (tilesetRef.current) {
+    for (const ts of tilesetsRef.current) {
       try {
-        viewer.scene.primitives.remove(tilesetRef.current)
+        viewer.scene.primitives.remove(ts)
       } catch {
         void 0
       }
-      tilesetRef.current = null
     }
+    tilesetsRef.current = []
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -269,10 +273,7 @@ export default function Preview3D({
           error: null,
         })
 
-        const centerLat = (bounds.north + bounds.south) / 2
-        const centerLon = (bounds.east + bounds.west) / 2
-
-        const muniCode = await resolveMuniCode(centerLat, centerLon)
+        const muniCodes = await resolveMuniCodes(bounds)
         if (cancelled) return
 
         onPipelineStateChange?.({
@@ -282,10 +283,26 @@ export default function Preview3D({
           error: null,
         })
 
-        const url = await findTilesetUrl(muniCode, lod)
+        let firstUrlError: Error | null = null
+        const urlPromises = muniCodes.map(async (code) => {
+          try {
+            const url = await findTilesetUrl(code, lod)
+            return url
+          } catch (err) {
+            if (!firstUrlError && err instanceof Error) firstUrlError = err
+            return null
+          }
+        })
+        const urls = (await Promise.all(urlPromises)).filter(
+          (u): u is string => u !== null
+        )
         if (cancelled) return
 
-        console.log('[Preview3D] Resolved tileset URL:', url)
+        if (urls.length === 0) {
+          throw firstUrlError ?? new Error('該当する3D Tilesデータセットが見つかりません')
+        }
+
+        console.log('[Preview3D] Resolved tileset URLs:', urls)
 
         onPipelineStateChange?.({
           phase: 'acquiring',
@@ -294,22 +311,64 @@ export default function Preview3D({
           error: null,
         })
 
-        const tileset = await Cesium3DTileset.fromUrl(url)
+        const loadedTilesets: Cesium3DTileset[] = []
+        for (const url of urls) {
+          if (cancelled) {
+            for (const ts of loadedTilesets) {
+              try {
+                viewer!.scene.primitives.remove(ts)
+              } catch {
+                void 0
+              }
+            }
+            return
+          }
+          try {
+            const tileset = await Cesium3DTileset.fromUrl(url)
+            if (cancelled) {
+              for (const ts of loadedTilesets) {
+                try {
+                  viewer!.scene.primitives.remove(ts)
+                } catch {
+                  void 0
+                }
+              }
+              tileset.destroy()
+              return
+            }
+
+            viewer!.scene.primitives.add(tileset)
+            loadedTilesets.push(tileset)
+
+            applyClippingToTileset(tileset, bounds, includeSpanningBuildings)
+
+            const showExpr = buildShowExpr(bounds, includeSpanningBuildings)
+            tileset.style = new Cesium3DTileStyle({
+              color: `color("${buildingColor}")`,
+              show: showExpr,
+            })
+          } catch (err) {
+            console.warn('[Preview3D] Failed to load tileset:', url, err)
+          }
+        }
+
         if (cancelled) {
-          tileset.destroy()
+          for (const ts of loadedTilesets) {
+            try {
+              viewer!.scene.primitives.remove(ts)
+            } catch {
+              void 0
+            }
+          }
           return
         }
 
-        viewer!.scene.primitives.add(tileset)
-        tilesetRef.current = tileset
+        if (loadedTilesets.length === 0) {
+          throw new Error('3Dタイルの読み込みに失敗しました')
+        }
 
-        applyClippingToTileset(tileset, bounds, includeSpanningBuildings)
-
-        const showExpr = buildShowExpr(bounds, includeSpanningBuildings)
-        tileset.style = new Cesium3DTileStyle({
-          color: `color("${buildingColor}")`,
-          show: showExpr,
-        })
+        tilesetsRef.current = loadedTilesets
+        console.log('[Preview3D] Loaded tilesets:', loadedTilesets.length)
 
         let terrainBoundingSphere: BoundingSphere | null = null
 
@@ -406,18 +465,20 @@ export default function Preview3D({
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, includeTerrain, terrainThickness, flattenBottom])
 
   useEffect(() => {
-    if (tilesetRef.current && selectionBounds) {
+    if (tilesetsRef.current.length && selectionBounds) {
       const showExpr = buildShowExpr(selectionBounds, includeSpanningBuildings)
-      tilesetRef.current.style = new Cesium3DTileStyle({
-        color: `color("${buildingColor}")`,
-        show: showExpr,
-      })
+      for (const tileset of tilesetsRef.current) {
+        tileset.style = new Cesium3DTileStyle({
+          color: `color("${buildingColor}")`,
+          show: showExpr,
+        })
+      }
     }
   }, [buildingColor, selectionBounds, includeSpanningBuildings])
 
   useEffect(() => {
-    if (tilesetRef.current) {
-      refilterSpanning(tilesetRef.current, includeSpanningBuildings)
+    for (const tileset of tilesetsRef.current) {
+      refilterSpanning(tileset, includeSpanningBuildings)
     }
   }, [includeSpanningBuildings])
 

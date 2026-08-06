@@ -128,4 +128,102 @@ describe('catalog', () => {
       '該当する3D Tilesデータセットが見つかりません',
     );
   });
+
+  it('resolveMuniCodes returns unique codes from 5 sample points across municipalities', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ results: { muniCd: '13101', lv01Nm: '千代田区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ results: { muniCd: '13102', lv01Nm: '中央区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ results: { muniCd: '13101', lv01Nm: '千代田区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ results: { muniCd: '13102', lv01Nm: '中央区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ results: { muniCd: '13102', lv01Nm: '中央区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+    const { resolveMuniCodes } = await import('../../src/core/catalog');
+    const result = await resolveMuniCodes({
+      west: 139.6903,
+      south: 35.6997,
+      east: 139.6906,
+      north: 35.7000,
+    });
+
+    expect(result).toEqual(['13101', '13102']);
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
+  });
+
+  it('resolveMuniCodes returns codes from successful points even when some fail', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response('error', { status: 500 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ results: { muniCd: '13102', lv01Nm: '中央区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(new Response('error', { status: 500 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ results: { muniCd: '13102', lv01Nm: '中央区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ results: { muniCd: '13101', lv01Nm: '千代田区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+    const { resolveMuniCodes } = await import('../../src/core/catalog');
+    const result = await resolveMuniCodes({
+      west: 139.6903,
+      south: 35.6997,
+      east: 139.6906,
+      north: 35.7000,
+    });
+
+    expect(result).toEqual(['13102', '13101']);
+  });
+
+  it('resolveMuniCodes throws when all points fail', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response('error', { status: 500 }))
+      .mockResolvedValueOnce(new Response('error', { status: 500 }))
+      .mockResolvedValueOnce(new Response('error', { status: 500 }))
+      .mockResolvedValueOnce(new Response('error', { status: 500 }))
+      .mockResolvedValueOnce(new Response('error', { status: 500 }));
+
+    const { resolveMuniCodes } = await import('../../src/core/catalog');
+    await expect(
+      resolveMuniCodes({
+        west: 139.6903,
+        south: 35.6997,
+        east: 139.6906,
+        north: 35.7000,
+      }),
+    ).rejects.toThrow('選択範囲の自治体コードが取得できません');
+  });
 });

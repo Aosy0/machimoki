@@ -60,6 +60,7 @@ vi.mock('cesium', () => {
 
 vi.mock('../../src/core/catalog', () => ({
   resolveMuniCode: vi.fn(),
+  resolveMuniCodes: vi.fn(),
   findTilesetUrl: vi.fn(),
 }));
 
@@ -145,11 +146,11 @@ describe('meshBuilder', () => {
 
   beforeEach(async () => {
     const { Cesium3DTileset } = await import('cesium');
-    const { resolveMuniCode, findTilesetUrl } = await import('../../src/core/catalog');
+    const { resolveMuniCodes, findTilesetUrl } = await import('../../src/core/catalog');
 
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockReset();
     (Cesium3DTileset.fromUrl as unknown as MockInstance).mockReset();
-    (resolveMuniCode as unknown as MockInstance).mockReset().mockResolvedValue('13101');
+    (resolveMuniCodes as unknown as MockInstance).mockReset().mockResolvedValue(['13101']);
     (findTilesetUrl as unknown as MockInstance).mockReset().mockResolvedValue('https://example.com/tileset.json');
   });
 
@@ -188,14 +189,11 @@ describe('meshBuilder', () => {
       },
     });
 
-    const { resolveMuniCode, findTilesetUrl } = await import('../../src/core/catalog');
+    const { resolveMuniCodes, findTilesetUrl } = await import('../../src/core/catalog');
 
     const meshes = await buildBuildingMeshes(bounds, 'lod1');
 
-    expect(resolveMuniCode).toHaveBeenCalledWith(
-      (bounds.south + bounds.north) / 2,
-      (bounds.west + bounds.east) / 2,
-    );
+    expect(resolveMuniCodes).toHaveBeenCalledWith(bounds);
     expect(findTilesetUrl).toHaveBeenCalledWith('13101', 'lod1');
     expect(Cesium3DTileset.fromUrl).toHaveBeenCalledWith('https://example.com/tileset.json');
     expect(fetchSpy).toHaveBeenCalledWith('https://example.com/buildings.b3dm');

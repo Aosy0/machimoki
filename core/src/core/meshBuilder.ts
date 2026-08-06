@@ -13,7 +13,7 @@ import { NodeIO } from '@gltf-transform/core';
 import { KHRDracoMeshCompression } from '@gltf-transform/extensions';
 import type { Accessor, Primitive } from '@gltf-transform/core';
 import type { Bounds, RawMesh } from './types.js';
-import { findTilesetUrl, resolveMuniCode } from './catalog.js';
+import { findTilesetUrl, resolveMuniCodes } from './catalog.js';
 import draco3dgltf from 'draco3dgltf';
 
 let dracoDecoderPromise: Promise<unknown> | null = null;
@@ -338,11 +338,7 @@ export async function buildBuildingMeshes(
   const centerLon = (bounds.west + bounds.east) / 2;
   const centerLat = (bounds.south + bounds.north) / 2;
 
-  const muniCode = await resolveMuniCode(centerLat, centerLon);
-  const tilesetUrl = await findTilesetUrl(muniCode, lod);
-
-  const tileset = await Cesium3DTileset.fromUrl(tilesetUrl);
-  const rootTile = tileset.root as unknown as TileLike;
+  const muniCodes = await resolveMuniCodes(bounds);
 
   const centerCartesian = Cartesian3.fromDegrees(centerLon, centerLat, 0);
   const centerMatrix = Transforms.eastNorthUpToFixedFrame(centerCartesian);
@@ -351,39 +347,61 @@ export async function buildBuildingMeshes(
   const resultMeshes: RawMesh[] = [];
   const tilePromises: Promise<void>[] = [];
 
-  traverseTiles(rootTile, (tile) => {
-    if (!tileIntersectsBounds(tile, bounds)) return;
+  for (const muniCode of muniCodes) {
+    let tilesetUrl: string;
+    try {
+      tilesetUrl = await findTilesetUrl(muniCode, lod);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[meshBuilder] Failed to find tileset for muniCode=${muniCode}: ${message}`);
+      continue;
+    }
 
-    const contentUrl = getTileContentUrl(tile);
-    if (!contentUrl) return;
+    let tileset: Cesium3DTileset;
+    try {
+      tileset = await Cesium3DTileset.fromUrl(tilesetUrl);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[meshBuilder] Failed to load tileset ${tilesetUrl}: ${message}`);
+      continue;
+    }
 
+    const rootTile = tileset.root as unknown as TileLike;
     const tilesetMatrix = (tileset as any).modelMatrix ?? Matrix4.IDENTITY;
-    const tileLocalMatrix = tile.computedTransform ?? Matrix4.IDENTITY;
-    const tileMatrix = Matrix4.multiply(tilesetMatrix, tileLocalMatrix, new Matrix4());
 
-    const promise = (async () => {
-      try {
-        const response = await fetch(contentUrl);
-        if (!response.ok) {
-          console.warn(`[meshBuilder] Failed to fetch tile: ${contentUrl} (${response.status})`);
-          return;
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        const glbBuffer = extractGltfFromB3dm(arrayBuffer);
-        if (!glbBuffer) {
-          console.warn(`[meshBuilder] Could not extract GLB from b3dm: ${contentUrl}`);
-          return;
-        }
-        const meshes = await parseGlbToRawMeshes(glbBuffer, tileMatrix, invCenterMatrix);
-        resultMeshes.push(...meshes);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[meshBuilder] Failed to load tile ${contentUrl}: ${message}`);
-      }
-    })();
+    traverseTiles(rootTile, (tile) => {
+      if (!tileIntersectsBounds(tile, bounds)) return;
 
-    tilePromises.push(promise);
-  });
+      const contentUrl = getTileContentUrl(tile);
+      if (!contentUrl) return;
+
+      const tileLocalMatrix = tile.computedTransform ?? Matrix4.IDENTITY;
+      const tileMatrix = Matrix4.multiply(tilesetMatrix, tileLocalMatrix, new Matrix4());
+
+      const promise = (async () => {
+        try {
+          const response = await fetch(contentUrl);
+          if (!response.ok) {
+            console.warn(`[meshBuilder] Failed to fetch tile: ${contentUrl} (${response.status})`);
+            return;
+          }
+          const arrayBuffer = await response.arrayBuffer();
+          const glbBuffer = extractGltfFromB3dm(arrayBuffer);
+          if (!glbBuffer) {
+            console.warn(`[meshBuilder] Could not extract GLB from b3dm: ${contentUrl}`);
+            return;
+          }
+          const meshes = await parseGlbToRawMeshes(glbBuffer, tileMatrix, invCenterMatrix);
+          resultMeshes.push(...meshes);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[meshBuilder] Failed to load tile ${contentUrl}: ${message}`);
+        }
+      })();
+
+      tilePromises.push(promise);
+    });
+  }
 
   await Promise.all(tilePromises);
   return resultMeshes;

@@ -58,6 +58,37 @@ export async function resolveMuniCode(lat: number, lon: number): Promise<string>
   return data.results.muniCd
 }
 
+export async function resolveMuniCodes(
+  bounds: { west: number; south: number; east: number; north: number }
+): Promise<string[]> {
+  const points = [
+    { lat: bounds.south, lon: bounds.west },
+    { lat: bounds.south, lon: bounds.east },
+    { lat: bounds.north, lon: bounds.west },
+    { lat: bounds.north, lon: bounds.east },
+    { lat: (bounds.north + bounds.south) / 2, lon: (bounds.east + bounds.west) / 2 },
+  ]
+
+  const results = await Promise.allSettled(
+    points.map((p) => resolveMuniCode(p.lat, p.lon))
+  )
+
+  const codes = new Set<string>()
+  let anySuccess = false
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      codes.add(result.value)
+      anySuccess = true
+    }
+  }
+
+  if (!anySuccess) {
+    throw new Error('選択範囲の自治体コードが取得できません')
+  }
+
+  return Array.from(codes)
+}
+
 export async function findTilesetUrl(
   muniCode: string,
   lod: 'lod1' | 'lod2'
