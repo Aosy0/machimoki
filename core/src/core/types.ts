@@ -11,11 +11,13 @@ export interface Bounds {
 
 export type UpAxis = 'z-up' | 'y-up';
 
+export type Lod = 'lod1' | 'lod2' | 'lod3' | 'lod4';
+
 export interface ExportOptions {
   terrainThickness: number;
   flattenBottom: boolean;
   format: '3mf' | 'stl';
-  lod?: 'lod1' | 'lod2';
+  lod?: Lod;
   includeTerrain?: boolean;
   buildingColor?: string;
   terrainColor?: string;

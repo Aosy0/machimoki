@@ -2,6 +2,8 @@
  * GSI reverse geocoding + PLATEAU catalog API client.
  */
 
+import type { Lod } from './types.js';
+
 const GSI_REVERSE_GEOCODER_URL = 'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress';
 const PLATEAU_CATALOG_URL = 'https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets';
 
@@ -117,12 +119,12 @@ export async function resolveMuniCodes(bounds: {
   return unique;
 }
 
-export async function findTilesetUrl(muniCode: string, lod: 'lod1' | 'lod2'): Promise<string> {
+export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string> {
   const datasets = await fetchCatalogDatasets();
   const prefCode = muniCode.slice(0, 2);
-  const targetLod = lod === 'lod1' ? '1' : '2';
+  const targetLod = lod.replace('lod', '');
 
-  const candidate = datasets.find((d) => {
+  const candidates = datasets.filter((d) => {
     if (d.pref_code !== prefCode) return false;
     if (d.format !== '3D Tiles') return false;
     if (d.type !== '建築物モデル') return false;
@@ -131,6 +133,8 @@ export async function findTilesetUrl(muniCode: string, lod: 'lod1' | 'lod2'): Pr
     if (d.city_code === muniCode) return true;
     return false;
   });
+
+  const candidate = candidates.find((d) => !d.texture) ?? candidates[0];
 
   if (!candidate) {
     throw new Error(

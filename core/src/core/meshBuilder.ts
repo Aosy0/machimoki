@@ -12,7 +12,7 @@ import {
 import { NodeIO } from '@gltf-transform/core';
 import { KHRDracoMeshCompression } from '@gltf-transform/extensions';
 import type { Accessor, Primitive } from '@gltf-transform/core';
-import type { Bounds, RawMesh } from './types.js';
+import type { Bounds, Lod, RawMesh } from './types.js';
 import { findTilesetUrl, resolveMuniCodes } from './catalog.js';
 import draco3dgltf from 'draco3dgltf';
 
@@ -333,7 +333,7 @@ function primitiveToRawMesh(
 
 export async function buildBuildingMeshes(
   bounds: Bounds,
-  lod: 'lod1' | 'lod2',
+  lod: Lod,
 ): Promise<RawMesh[]> {
   const centerLon = (bounds.west + bounds.east) / 2;
   const centerLat = (bounds.south + bounds.north) / 2;

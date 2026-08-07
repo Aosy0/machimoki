@@ -1,6 +1,8 @@
 const GSI_REVERSE_GEOCODER_URL = 'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress'
 const PLATEAU_CATALOG_URL = 'https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets'
 
+export type Lod = 'lod1' | 'lod2' | 'lod3' | 'lod4'
+
 interface GsiReverseGeocodeResult {
   results: {
     muniCd: string
@@ -91,13 +93,14 @@ export async function resolveMuniCodes(
 
 export async function findTilesetUrl(
   muniCode: string,
-  lod: 'lod1' | 'lod2'
+  lod: Lod
 ): Promise<string> {
   const datasets = await fetchCatalogDatasets()
   const prefCode = muniCode.slice(0, 2)
-  const targetLod = lod === 'lod1' ? '1' : '2'
+  const targetLod = lod.replace('lod', '')
 
-  const candidate = datasets.find((d) => {
+  // texture: false を優先し、無い場合のみ texture: true を許容
+  const candidates = datasets.filter((d) => {
     if (d.pref_code !== prefCode) return false
     if (d.format !== '3D Tiles') return false
     if (d.type !== '建築物モデル') return false
@@ -107,11 +110,47 @@ export async function findTilesetUrl(
     return false
   })
 
-  if (!candidate) {
+  if (candidates.length === 0) {
     throw new Error(
       `該当する3D Tilesデータセットが見つかりません: muniCode=${muniCode}, lod=${lod}`
     )
   }
 
+  // texture: false を優先
+  const noTextureCandidate = candidates.find((d) => !d.texture)
+  const candidate = noTextureCandidate ?? candidates[0]
+
   return candidate.url
+}
+
+export async function getAvailableLods(
+  bounds: { west: number; south: number; east: number; north: number }
+): Promise<Lod[]> {
+  const muniCodes = await resolveMuniCodes(bounds)
+  const datasets = await fetchCatalogDatasets()
+
+  const availableLods = new Set<string>()
+
+  for (const muniCode of muniCodes) {
+    const prefCode = muniCode.slice(0, 2)
+
+    for (const d of datasets) {
+      if (d.pref_code !== prefCode) continue
+      if (d.format !== '3D Tiles') continue
+      if (d.type !== '建築物モデル') continue
+
+      const matchesWard = d.ward_code && d.ward_code === muniCode
+      const matchesCity = d.city_code === muniCode
+
+      if (matchesWard || matchesCity) {
+        const lodNumber = d.lod
+        if (['1', '2', '3', '4'].includes(lodNumber)) {
+          availableLods.add(`lod${lodNumber}`)
+        }
+      }
+    }
+  }
+
+  const lodOrder: Lod[] = ['lod1', 'lod2', 'lod3', 'lod4']
+  return lodOrder.filter((lod) => availableLods.has(lod))
 }

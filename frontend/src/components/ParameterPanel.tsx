@@ -1,11 +1,12 @@
 import React from 'react'
+import type { Lod } from '../lib/catalogApi'
 
 export interface Parameters {
   terrainThickness: number
   flattenBottom: boolean
   includeTerrain: boolean
   showTerrainImagery: boolean
-  lod: 'lod1' | 'lod2'
+  lod: Lod
   exportFormat: '3mf' | 'stl'
   buildingColor: string
   terrainColor: string
@@ -17,12 +18,21 @@ interface ParameterPanelProps {
   parameters: Parameters
   onChange: (params: Parameters) => void
   onExport: () => void
+  availableLods?: Lod[]
 }
 
-function ParameterPanel({ parameters, onChange, onExport }: ParameterPanelProps) {
+function ParameterPanel({ parameters, onChange, onExport, availableLods = ['lod1', 'lod2'] }: ParameterPanelProps) {
   const handleChange = <K extends keyof Parameters>(key: K, value: Parameters[K]) => {
     onChange({ ...parameters, [key]: value })
   }
+
+  const lodLabels: Record<Lod, string> = {
+    lod1: 'LOD1（シンプル）',
+    lod2: 'LOD2（詳細）',
+    lod3: 'LOD3（高詳細）',
+    lod4: 'LOD4（最高詳細）',
+  }
+  const LOD_ORDER: Lod[] = ['lod1', 'lod2', 'lod3', 'lod4']
 
   return (
     <div
@@ -145,12 +155,33 @@ function ParameterPanel({ parameters, onChange, onExport }: ParameterPanelProps)
             fontSize: '14px',
           }}
         >
-          <option value="lod1">LOD1（シンプル）</option>
-          <option value="lod2">LOD2（詳細）</option>
+          {LOD_ORDER.map((lod) => {
+            const available = availableLods.includes(lod)
+            return (
+              <option
+                key={lod}
+                value={lod}
+                disabled={!available}
+                title={
+                  available
+                    ? undefined
+                    : `この選択範囲では${lodLabels[lod]}は提供されていません`
+                }
+                style={available ? undefined : { color: '#888' }}
+              >
+                {lodLabels[lod]}
+              </option>
+            )
+          })}
         </select>
-        {parameters.lod === 'lod2' && (
+        {parameters.lod !== 'lod1' && (
           <p style={{ fontSize: '11px', color: '#f0a000', marginTop: '6px' }}>
-            LOD2を選択すると、中庭などの開口部が正しく造形できない場合があります。
+            LOD2以上を選択すると、中庭などの開口部が正しく造形できない場合があります。
+          </p>
+        )}
+        {availableLods.length < LOD_ORDER.length && (
+          <p style={{ fontSize: '11px', color: '#aaa', marginTop: '4px' }}>
+            グレー表示のLODはこの選択範囲では提供されていません。
           </p>
         )}
       </div>

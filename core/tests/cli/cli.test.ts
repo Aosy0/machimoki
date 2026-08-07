@@ -61,10 +61,12 @@ describe('CLI argument parsers', () => {
     expect(() => parseFormat('obj')).toThrow();
   });
 
-  it('parseLod accepts lod1 and lod2', () => {
+  it('parseLod accepts lod1 through lod4', () => {
     expect(parseLod('lod1')).toBe('lod1');
     expect(parseLod('LOD2')).toBe('lod2');
-    expect(() => parseLod('lod3')).toThrow();
+    expect(parseLod('lod3')).toBe('lod3');
+    expect(parseLod('lod4')).toBe('lod4');
+    expect(() => parseLod('lod5')).toThrow();
   });
 
   it('parseUpAxis accepts z-up and y-up', () => {

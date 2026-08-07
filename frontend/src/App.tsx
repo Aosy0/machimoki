@@ -19,6 +19,7 @@ import HelpPanel from './components/HelpPanel'
 import { exportModel } from './lib/apiClient'
 import { useRectangleSelection } from './hooks/useRectangleSelection'
 import type { PipelineState } from './types/pipeline'
+import { getAvailableLods, type Lod } from './lib/catalogApi'
 
 type Tab = 'map' | 'preview' | 'viewer'
 
@@ -53,6 +54,7 @@ function App() {
   })
 
   const [scale, setScale] = useState(1)
+  const [availableLods, setAvailableLods] = useState<Lod[]>(['lod1', 'lod2'])
 
   const [manualCoords, setManualCoords] = useState({
     west: '139.8053',
@@ -80,6 +82,29 @@ function App() {
       setScale(150 / maxDim)
     }
   }, [selectionBounds])
+
+  useEffect(() => {
+    if (!selectionBounds) return
+
+    getAvailableLods(selectionBounds)
+      .then((lods) => {
+        if (lods.length > 0) {
+          setAvailableLods(lods)
+        } else {
+          setAvailableLods(['lod1', 'lod2'])
+        }
+      })
+      .catch(() => {
+        setAvailableLods(['lod1', 'lod2'])
+      })
+  }, [selectionBounds])
+
+  useEffect(() => {
+    if (!availableLods.includes(parameters.lod)) {
+      const maxAvailableLod = availableLods[availableLods.length - 1]
+      setParameters((prev) => ({ ...prev, lod: maxAvailableLod }))
+    }
+  }, [availableLods, parameters.lod])
 
   const handleManualSelect = useCallback(() => {
     const w = parseFloat(manualCoords.west)
@@ -436,6 +461,7 @@ function App() {
                 }
               }}
               onExport={handleExport}
+              availableLods={availableLods}
             />
           </div>
         )}

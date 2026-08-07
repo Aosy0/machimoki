@@ -226,4 +226,86 @@ describe('catalog', () => {
       }),
     ).rejects.toThrow('選択範囲の自治体コードが取得できません');
   });
+
+  it('findTilesetUrl prefers texture:false over texture:true', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          datasets: [
+            {
+              id: '1',
+              name: '東京都千代田区建築物モデル',
+              pref: '東京都',
+              pref_code: '13',
+              city: '千代田区',
+              city_code: '13101',
+              ward: null,
+              ward_code: null,
+              type: '建築物モデル',
+              type_en: 'building',
+              url: 'https://example.com/tileset-textured.json',
+              format: '3D Tiles',
+              lod: '2',
+              texture: true,
+            },
+            {
+              id: '2',
+              name: '東京都千代田区建築物モデル',
+              pref: '東京都',
+              pref_code: '13',
+              city: '千代田区',
+              city_code: '13101',
+              ward: null,
+              ward_code: null,
+              type: '建築物モデル',
+              type_en: 'building',
+              url: 'https://example.com/tileset-notextured.json',
+              format: '3D Tiles',
+              lod: '2',
+              texture: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const { findTilesetUrl } = await import('../../src/core/catalog');
+    const url = await findTilesetUrl('13101', 'lod2');
+
+    expect(url).toBe('https://example.com/tileset-notextured.json');
+  });
+
+  it('findTilesetUrl falls back to texture:true for lod3 when texture:false is absent', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          datasets: [
+            {
+              id: '1',
+              name: '東京都港区建築物モデル LOD3',
+              pref: '東京都',
+              pref_code: '13',
+              city: '港区',
+              city_code: '13103',
+              ward: null,
+              ward_code: null,
+              type: '建築物モデル',
+              type_en: 'building',
+              url: 'https://example.com/tileset-lod3.json',
+              format: '3D Tiles',
+              lod: '3',
+              texture: true,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const { findTilesetUrl } = await import('../../src/core/catalog');
+    const url = await findTilesetUrl('13103', 'lod3');
+
+    expect(url).toBe('https://example.com/tileset-lod3.json');
+  });
 });

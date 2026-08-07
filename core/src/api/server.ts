@@ -12,7 +12,7 @@ import { serve, ServerType } from '@hono/node-server';
 import { pathToFileURL } from 'node:url';
 import { buildPrintableModel } from '../core/pipeline.js';
 import { validateMesh } from '../core/validate.js';
-import { Bounds, ExportOptions } from '../core/types.js';
+import { Bounds, ExportOptions, Lod } from '../core/types.js';
 
 const app = new Hono();
 
@@ -181,10 +181,10 @@ function parseFormat(value: unknown): '3mf' | 'stl' | null {
   return null;
 }
 
-function parseLod(value: unknown): 'lod1' | 'lod2' | null {
+function parseLod(value: unknown): Lod | null {
   if (typeof value !== 'string') return null;
   const lower = value.toLowerCase();
-  if (lower === 'lod1' || lower === 'lod2') return lower;
+  if (lower === 'lod1' || lower === 'lod2' || lower === 'lod3' || lower === 'lod4') return lower;
   return null;
 }
 

@@ -14,7 +14,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { buildPrintableModel } from '../core/pipeline.js';
 import { validateMesh } from '../core/validate.js';
-import { Bounds, ExportOptions } from '../core/types.js';
+import { Bounds, ExportOptions, Lod } from '../core/types.js';
 
 export const program = new Command();
 
@@ -40,10 +40,10 @@ export function parseFormat(value: string): '3mf' | 'stl' {
   return lower;
 }
 
-export function parseLod(value: string): 'lod1' | 'lod2' {
+export function parseLod(value: string): Lod {
   const lower = value.toLowerCase();
-  if (lower !== 'lod1' && lower !== 'lod2') {
-    throw new Error(`Invalid LOD: ${value}. Expected lod1 or lod2`);
+  if (lower !== 'lod1' && lower !== 'lod2' && lower !== 'lod3' && lower !== 'lod4') {
+    throw new Error(`Invalid LOD: ${value}. Expected lod1, lod2, lod3 or lod4`);
   }
   return lower;
 }
@@ -78,7 +78,7 @@ program
   .option('--no-flatten-bottom', 'do not flatten the bottom surface')
   .option('--format <3mf|stl>', 'output format', parseFormat, '3mf')
   .requiredOption('--output <file>', 'output file path')
-  .option('--lod <lod1|lod2>', 'building LOD', parseLod, 'lod1')
+  .option('--lod <lod1|lod2|lod3|lod4>', 'building LOD', parseLod, 'lod1')
   .option('--up-axis <z-up|y-up>', 'which axis points up in the output', parseUpAxis, 'z-up')
   .option('--terrain', 'include terrain generation', true)
   .option('--no-terrain', 'skip terrain generation')
