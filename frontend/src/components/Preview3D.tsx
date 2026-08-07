@@ -19,15 +19,23 @@ import type { BoundingSphere, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
-import { resolveMuniCodes, findTilesetUrl } from '../lib/catalogApi'
+import { resolveMuniCodes, findTilesetUrl, type Lod } from '../lib/catalogApi'
 import { applyClippingToTileset, createGlobeClippingPlanes, refilterSpanning } from '../lib/clipping'
-import { createSolidTerrainPrimitive } from '../lib/solidTerrain'
+import {
+  sampleTerrainData,
+  buildSolidTerrainPrimitive,
+  type TerrainSampleData,
+} from '../lib/solidTerrain'
 import ModelSizeOverlay from './ModelSizeOverlay'
 
 function clearGlobeClippingPlanes(
   globe: { clippingPlanes: ClippingPlaneCollection | undefined }
 ): void {
   globe.clippingPlanes = undefined
+}
+
+function sameBounds(a: SelectionBounds, b: SelectionBounds): boolean {
+  return a.west === b.west && a.south === b.south && a.east === b.east && a.north === b.north
 }
 
 /**
@@ -50,7 +58,7 @@ function buildShowExpr(bounds: SelectionBounds, includeSpanning: boolean): strin
 
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
-  lod: 'lod1' | 'lod2'
+  lod: Lod
   manifoldRef?: React.MutableRefObject<any>
   onPipelineStateChange?: (state: PipelineState) => void
   showTerrainImagery?: boolean
@@ -85,8 +93,13 @@ export default function Preview3D({
   const solidTerrainPrimitiveRef = useRef<Primitive | null>(null)
   const gridLayerRef = useRef<any>(null)
   const textureLayerRef = useRef<any>(null)
-  const appliedTerrainColorRef = useRef<string | undefined>()
+  const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
+  const appliedTerrainParamsRef = useRef<{ terrainThickness: number; flattenBottom: boolean; terrainColor: string } | null>(null)
+  const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [terrainProvider, setTerrainProvider] = useState<TerrainProvider | null>(null)
+
+  const latestTerrainParamsRef = useRef({ terrainThickness, flattenBottom, terrainColor })
+  latestTerrainParamsRef.current = { terrainThickness, flattenBottom, terrainColor }
 
   useEffect(() => {
     console.log('[Preview3D] Viewer useEffect fired')
@@ -235,6 +248,9 @@ export default function Preview3D({
       solidTerrainPrimitiveRef.current = null
     }
 
+    terrainSampleCacheRef.current = null
+    appliedTerrainParamsRef.current = null
+
     viewer.scene.globe.show = true
 
     if (!selectionBounds) {
@@ -380,10 +396,17 @@ export default function Preview3D({
             error: null,
           })
 
-          const solidTerrain = await createSolidTerrainPrimitive(bounds, terrainProvider!, {
-            terrainThickness,
-            flattenBottom,
-            terrainColor,
+          let sample = terrainSampleCacheRef.current
+          if (!sample || !sameBounds(sample.bounds, bounds)) {
+            sample = await sampleTerrainData(bounds, terrainProvider!)
+            if (cancelled) return
+            terrainSampleCacheRef.current = sample
+          }
+          const params = latestTerrainParamsRef.current
+          const solidTerrain = buildSolidTerrainPrimitive(sample, {
+            terrainThickness: params.terrainThickness,
+            flattenBottom: params.flattenBottom,
+            terrainColor: params.terrainColor,
           })
           if (cancelled) {
             solidTerrain.primitive.destroy()
@@ -392,7 +415,7 @@ export default function Preview3D({
 
           viewer!.scene.primitives.add(solidTerrain.primitive)
           solidTerrainPrimitiveRef.current = solidTerrain.primitive
-          appliedTerrainColorRef.current = terrainColor
+          appliedTerrainParamsRef.current = { ...params }
           terrainBoundingSphere = solidTerrain.boundingSphere
           clearGlobeClippingPlanes(viewer!.scene.globe)
           viewer!.scene.globe.show = false
@@ -413,25 +436,33 @@ export default function Preview3D({
         const maxDim = Math.max(widthMeters, heightMeters)
         const cameraHeight = Math.max(maxDim * 2, 300)
 
-        if (terrainBoundingSphere) {
-          viewer!.camera.viewBoundingSphere(
-            terrainBoundingSphere,
-            new HeadingPitchRange(
-              CesiumMath.toRadians(35),
-              CesiumMath.toRadians(-45),
-              Math.max(maxDim * 2.4, 300)
+        // 同じ選択範囲に対する再読み込み（LOD切替など）では視点を維持する
+        const alreadyFramed =
+          cameraFramedForRef.current !== null &&
+          sameBounds(cameraFramedForRef.current, bounds)
+
+        if (!alreadyFramed) {
+          if (terrainBoundingSphere) {
+            viewer!.camera.viewBoundingSphere(
+              terrainBoundingSphere,
+              new HeadingPitchRange(
+                CesiumMath.toRadians(35),
+                CesiumMath.toRadians(-45),
+                Math.max(maxDim * 2.4, 300)
+              )
             )
-          )
-          viewer!.camera.lookAtTransform(Matrix4.IDENTITY)
-        } else {
-          viewer!.camera.setView({
-            destination: Cartesian3.fromDegrees(flyLon, flyLat, cameraHeight),
-            orientation: {
-              heading: 0,
-              pitch: CesiumMath.toRadians(-90),
-              roll: 0,
-            },
-          })
+            viewer!.camera.lookAtTransform(Matrix4.IDENTITY)
+          } else {
+            viewer!.camera.setView({
+              destination: Cartesian3.fromDegrees(flyLon, flyLat, cameraHeight),
+              orientation: {
+                heading: 0,
+                pitch: CesiumMath.toRadians(-90),
+                roll: 0,
+              },
+            })
+          }
+          cameraFramedForRef.current = bounds
         }
 
         onPipelineStateChange?.({
@@ -462,7 +493,7 @@ export default function Preview3D({
       cancelled = true
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, includeTerrain, terrainThickness, flattenBottom])
+  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, includeTerrain])
 
   useEffect(() => {
     if (tilesetsRef.current.length && selectionBounds) {
@@ -485,8 +516,12 @@ export default function Preview3D({
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer || !selectionBounds || !terrainProvider || !includeTerrain) return
-    if (!solidTerrainPrimitiveRef.current) return
-    if (appliedTerrainColorRef.current === terrainColor) return
+    const sample = terrainSampleCacheRef.current
+    if (!sample || !solidTerrainPrimitiveRef.current) return
+    if (!sameBounds(sample.bounds, selectionBounds)) return
+    const current = { terrainThickness, flattenBottom, terrainColor }
+    const applied = appliedTerrainParamsRef.current
+    if (applied && applied.terrainThickness === current.terrainThickness && applied.flattenBottom === current.flattenBottom && applied.terrainColor === current.terrainColor) return
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -497,24 +532,18 @@ export default function Preview3D({
       solidTerrainPrimitiveRef.current = null
     }
 
-    ;(async () => {
-      try {
-        const solidTerrain = await createSolidTerrainPrimitive(selectionBounds, terrainProvider, {
-          terrainThickness,
-          flattenBottom,
-          terrainColor,
-        })
-        viewer.scene.primitives.add(solidTerrain.primitive)
-        solidTerrainPrimitiveRef.current = solidTerrain.primitive
-        appliedTerrainColorRef.current = terrainColor
-        clearGlobeClippingPlanes(viewer.scene.globe)
-        viewer.scene.globe.show = false
-      } catch (err) {
-        console.error('[Preview3D] Terrain color update failed:', err)
-      }
-    })()
+    try {
+      const solidTerrain = buildSolidTerrainPrimitive(sample, current)
+      viewer.scene.primitives.add(solidTerrain.primitive)
+      solidTerrainPrimitiveRef.current = solidTerrain.primitive
+      appliedTerrainParamsRef.current = current
+      clearGlobeClippingPlanes(viewer.scene.globe)
+      viewer.scene.globe.show = false
+    } catch (err) {
+      console.error('[Preview3D] Terrain update failed:', err)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terrainColor])
+  }, [terrainThickness, flattenBottom, terrainColor])
 
   return (
     <div style={wrapperStyle}>

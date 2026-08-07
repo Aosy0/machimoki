@@ -224,22 +224,33 @@ function buildTerrainNormals(positions: Float64Array, indices: Uint32Array): Flo
   return normals
 }
 
-export async function createSolidTerrainPrimitive(
+export interface TerrainSampleData {
+  bounds: TerrainBounds
+  gridSize: number
+  centerMatrix: Matrix4
+  inverseCenterMatrix: Matrix4
+  topLocalPositions: Cartesian3[]
+  topEcefValues: Float64Array
+  minTopHeight: number
+  indices: Uint32Array
+}
+
+export async function sampleTerrainData(
   bounds: TerrainBounds,
   terrainProvider: TerrainProvider,
-  options: SolidTerrainOptions
-): Promise<SolidTerrainPrimitiveResult> {
-  const gridSize = Math.max(2, Math.floor(options.gridSize ?? DEFAULT_GRID_SIZE))
+  gridSize?: number
+): Promise<TerrainSampleData> {
+  const resolvedGridSize = Math.max(2, Math.floor(gridSize ?? DEFAULT_GRID_SIZE))
   const widthDeg = bounds.east - bounds.west
   const heightDeg = bounds.north - bounds.south
   const centerLon = (bounds.west + bounds.east) / 2
   const centerLat = (bounds.south + bounds.north) / 2
 
   const samplePositions: Cartographic[] = []
-  for (let y = 0; y < gridSize; y++) {
-    for (let x = 0; x < gridSize; x++) {
-      const lon = bounds.west + (widthDeg * x) / (gridSize - 1)
-      const lat = bounds.south + (heightDeg * y) / (gridSize - 1)
+  for (let y = 0; y < resolvedGridSize; y++) {
+    for (let x = 0; x < resolvedGridSize; x++) {
+      const lon = bounds.west + (widthDeg * x) / (resolvedGridSize - 1)
+      const lat = bounds.south + (heightDeg * y) / (resolvedGridSize - 1)
       samplePositions.push(Cartographic.fromDegrees(lon, lat))
     }
   }
@@ -249,13 +260,11 @@ export async function createSolidTerrainPrimitive(
   const centerCartesian = Cartesian3.fromDegrees(centerLon, centerLat, 0)
   const centerMatrix = Transforms.eastNorthUpToFixedFrame(centerCartesian)
   const inverseCenterMatrix = Matrix4.inverse(centerMatrix, new Matrix4())
-  const topVertexCount = gridSize * gridSize
-  const vertexCount = topVertexCount * 2
-  const positionValues = new Float64Array(vertexCount * 3)
+  const topVertexCount = resolvedGridSize * resolvedGridSize
+  const topEcefValues = new Float64Array(topVertexCount * 3)
   const topLocalPositions: Cartesian3[] = []
 
   let minTopHeight = Number.POSITIVE_INFINITY
-  let maxTopHeight = Number.NEGATIVE_INFINITY
 
   for (let i = 0; i < sampledPositions.length; i++) {
     const sample = sampledPositions[i]
@@ -265,24 +274,48 @@ export async function createSolidTerrainPrimitive(
 
     topLocalPositions.push(local)
     minTopHeight = Math.min(minTopHeight, local.z)
-    maxTopHeight = Math.max(maxTopHeight, local.z)
 
-    positionValues[i * 3] = ecef.x
-    positionValues[i * 3 + 1] = ecef.y
-    positionValues[i * 3 + 2] = ecef.z
+    topEcefValues[i * 3] = ecef.x
+    topEcefValues[i * 3 + 1] = ecef.y
+    topEcefValues[i * 3 + 2] = ecef.z
   }
 
-  const thickness = Math.max(MIN_TERRAIN_THICKNESS, options.terrainThickness)
-  const flatBottomHeight = minTopHeight - thickness
+  const indices = buildTerrainIndices(resolvedGridSize)
 
-  for (let i = 0; i < topLocalPositions.length; i++) {
-    const topLocal = topLocalPositions[i]
+  return {
+    bounds,
+    gridSize: resolvedGridSize,
+    centerMatrix,
+    inverseCenterMatrix,
+    topLocalPositions,
+    topEcefValues,
+    minTopHeight,
+    indices,
+  }
+}
+
+export function buildSolidTerrainPrimitive(
+  sample: TerrainSampleData,
+  options: SolidTerrainOptions
+): SolidTerrainPrimitiveResult {
+  const gridSize = sample.gridSize
+  const topVertexCount = gridSize * gridSize
+  const vertexCount = topVertexCount * 2
+  const positionValues = new Float64Array(vertexCount * 3)
+
+  positionValues.set(sample.topEcefValues)
+
+  const thickness = Math.max(MIN_TERRAIN_THICKNESS, options.terrainThickness)
+  const flatBottomHeight = sample.minTopHeight - thickness
+
+  for (let i = 0; i < sample.topLocalPositions.length; i++) {
+    const topLocal = sample.topLocalPositions[i]
     const bottomLocal = new Cartesian3(
       topLocal.x,
       topLocal.y,
       options.flattenBottom ? flatBottomHeight : topLocal.z - thickness
     )
-    const bottomEcef = Matrix4.multiplyByPoint(centerMatrix, bottomLocal, new Cartesian3())
+    const bottomEcef = Matrix4.multiplyByPoint(sample.centerMatrix, bottomLocal, new Cartesian3())
     const vertexIndex = topVertexCount + i
 
     positionValues[vertexIndex * 3] = bottomEcef.x
@@ -290,7 +323,7 @@ export async function createSolidTerrainPrimitive(
     positionValues[vertexIndex * 3 + 2] = bottomEcef.z
   }
 
-  const indices = buildTerrainIndices(gridSize)
+  const indices = sample.indices
   const normalValues = buildTerrainNormals(positionValues, indices)
   const boundingSphere = BoundingSphere.fromVertices(positionValues)
   const attributes = new GeometryAttributes()
@@ -339,4 +372,13 @@ export async function createSolidTerrainPrimitive(
     primitive,
     boundingSphere,
   }
+}
+
+export async function createSolidTerrainPrimitive(
+  bounds: TerrainBounds,
+  terrainProvider: TerrainProvider,
+  options: SolidTerrainOptions
+): Promise<SolidTerrainPrimitiveResult> {
+  const sample = await sampleTerrainData(bounds, terrainProvider, options.gridSize)
+  return buildSolidTerrainPrimitive(sample, options)
 }
