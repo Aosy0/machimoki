@@ -20,7 +20,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
 import { resolveMuniCodes, findTilesetUrl, type Lod } from '../lib/catalogApi'
-import { applyClippingToTileset, createGlobeClippingPlanes, refilterSpanning } from '../lib/clipping'
+import { applyClippingToTileset, createGlobeClippingPlanes, refilterPickPoints, refilterSpanning } from '../lib/clipping'
 import {
   sampleTerrainData,
   buildSolidTerrainPrimitive,
@@ -48,7 +48,20 @@ function sameBounds(a: SelectionBounds, b: SelectionBounds): boolean {
  * - includeSpanning=true: フットプリントが範囲と交差する建物を表示
  * - includeSpanning=false: フットプリントが範囲に完全内包される建物のみ表示
  */
-function buildShowExpr(bounds: SelectionBounds, includeSpanning: boolean): string {
+function buildShowExpr(
+  bounds: SelectionBounds,
+  includeSpanning: boolean,
+  pickPoints?: Array<{ lon: number; lat: number }>
+): string {
+  if (pickPoints && pickPoints.length > 0) {
+    const eps = 1e-4
+    const terms = pickPoints.map(
+      (p) =>
+        `((\${_xmin} !== undefined && \${_xmin} <= ${p.lon} && \${_xmax} >= ${p.lon} && \${_ymin} <= ${p.lat} && \${_ymax} >= ${p.lat}) || ` +
+        `(\${_xmin} === undefined && \${_x} >= ${p.lon - eps} && \${_x} <= ${p.lon + eps} && \${_y} >= ${p.lat - eps} && \${_y} <= ${p.lat + eps}))`
+    )
+    return terms.join(' || ')
+  }
   const centerExpr = `\${_x} >= ${bounds.west} && \${_x} <= ${bounds.east} && \${_y} >= ${bounds.south} && \${_y} <= ${bounds.north}`
   const footprintExpr = includeSpanning
     ? `\${_xmin} <= ${bounds.east} && \${_xmax} >= ${bounds.west} && \${_ymin} <= ${bounds.north} && \${_ymax} >= ${bounds.south}`
@@ -70,6 +83,7 @@ interface Preview3DProps {
   scale?: number
   onScaleChange?: (newScale: number) => void
   includeSpanningBuildings?: boolean
+  pickPoints?: Array<{ lon: number; lat: number }>
 }
 
 export default function Preview3D({
@@ -86,6 +100,7 @@ export default function Preview3D({
   scale = 1,
   onScaleChange,
   includeSpanningBuildings = false,
+  pickPoints,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -356,9 +371,9 @@ export default function Preview3D({
             viewer!.scene.primitives.add(tileset)
             loadedTilesets.push(tileset)
 
-            applyClippingToTileset(tileset, bounds, includeSpanningBuildings)
+            applyClippingToTileset(tileset, bounds, includeSpanningBuildings, pickPoints)
 
-            const showExpr = buildShowExpr(bounds, includeSpanningBuildings)
+            const showExpr = buildShowExpr(bounds, includeSpanningBuildings, pickPoints)
             tileset.style = new Cesium3DTileStyle({
               color: `color("${buildingColor}")`,
               show: showExpr,
@@ -497,7 +512,7 @@ export default function Preview3D({
 
   useEffect(() => {
     if (tilesetsRef.current.length && selectionBounds) {
-      const showExpr = buildShowExpr(selectionBounds, includeSpanningBuildings)
+      const showExpr = buildShowExpr(selectionBounds, includeSpanningBuildings, pickPoints)
       for (const tileset of tilesetsRef.current) {
         tileset.style = new Cesium3DTileStyle({
           color: `color("${buildingColor}")`,
@@ -505,13 +520,19 @@ export default function Preview3D({
         })
       }
     }
-  }, [buildingColor, selectionBounds, includeSpanningBuildings])
+  }, [buildingColor, selectionBounds, includeSpanningBuildings, pickPoints])
 
   useEffect(() => {
     for (const tileset of tilesetsRef.current) {
       refilterSpanning(tileset, includeSpanningBuildings)
     }
   }, [includeSpanningBuildings])
+
+  useEffect(() => {
+    for (const tileset of tilesetsRef.current) {
+      refilterPickPoints(tileset, pickPoints)
+    }
+  }, [pickPoints])
 
   useEffect(() => {
     const viewer = viewerRef.current

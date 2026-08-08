@@ -19,6 +19,7 @@ export interface ExportOptions {
   upAxis?: UpAxis;
   scale?: number;
   includeSpanningBuildings?: boolean;
+  pickPoints?: Array<{ lon: number; lat: number }>
 }
 
 export interface ValidationResult {

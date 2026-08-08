@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   Viewer,
   Cartesian3,
+  Color,
+  type Entity,
   Math as CesiumMath,
   UrlTemplateImageryProvider,
   SceneMode,
@@ -18,6 +20,7 @@ import ErrorToast from './components/ErrorToast'
 import HelpPanel from './components/HelpPanel'
 import { exportModel } from './lib/apiClient'
 import { useRectangleSelection } from './hooks/useRectangleSelection'
+import { usePointPicking, type PickPoint } from './hooks/usePointPicking'
 import type { PipelineState } from './types/pipeline'
 import { getAvailableLods, type Lod } from './lib/catalogApi'
 
@@ -46,6 +49,9 @@ function App() {
   const cesiumContainer = useRef<HTMLDivElement>(null)
   const [viewer, setViewer] = useState<Viewer | null>(null)
   const manifoldRef = useRef<any>(null)
+  const pickMarkerEntitiesRef = useRef<Entity[]>([])
+  const [pickPoints, setPickPoints] = useState<PickPoint[]>([])
+  const [isPickMode, setIsPickMode] = useState(false)
   const [pipelineState, setPipelineState] = useState<PipelineState>({
     phase: 'idle',
     progress: 0,
@@ -69,6 +75,36 @@ function App() {
     errorMessage: selectionErrorMessage,
     clearError: clearSelectionError,
   } = useRectangleSelection(viewer)
+
+  const handlePickPoint = useCallback((point: PickPoint) => {
+    setPickPoints((prev) => [...prev, point])
+  }, [])
+
+  const clearPickPoints = useCallback(() => {
+    setPickPoints([])
+  }, [])
+
+  usePointPicking(viewer, isPickMode, handlePickPoint)
+
+  useEffect(() => {
+    if (!viewer || activeTab !== 'map') return
+    for (const entity of pickMarkerEntitiesRef.current) {
+      viewer.entities.remove(entity)
+    }
+    pickMarkerEntitiesRef.current = []
+    for (const p of pickPoints) {
+      const entity = viewer.entities.add({
+        position: Cartesian3.fromDegrees(p.lon, p.lat, 0),
+        point: {
+          pixelSize: 12,
+          color: Color.RED,
+          outlineColor: Color.WHITE,
+          outlineWidth: 2,
+        },
+      })
+      pickMarkerEntitiesRef.current.push(entity)
+    }
+  }, [viewer, activeTab, pickPoints])
 
   useEffect(() => {
     if (!selectionBounds) return
@@ -153,6 +189,7 @@ function App() {
         upAxis: parameters.upAxis,
         scale,
         includeSpanningBuildings: parameters.includeSpanningBuildings,
+        pickPoints,
       })
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
@@ -342,16 +379,89 @@ function App() {
                 position: 'absolute',
                 bottom: '16px',
                 left: '16px',
-                background: 'rgba(0, 0, 0, 0.6)',
-                color: '#ccc',
-                padding: '6px 12px',
-                borderRadius: '4px',
-                fontSize: '11px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: '6px',
                 zIndex: 100,
-                pointerEvents: 'none',
               }}
             >
-              Shift + ドラッグ で範囲選択
+              <div
+                style={{
+                  background: 'rgba(0, 0, 0, 0.6)',
+                  color: '#ccc',
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  pointerEvents: 'none',
+                }}
+              >
+                Shift + ドラッグ で範囲選択
+              </div>
+              <button
+                onClick={() => setIsPickMode((prev) => !prev)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  background: isPickMode ? '#00bcd4' : 'rgba(0, 0, 0, 0.7)',
+                  color: '#fff',
+                  border: isPickMode ? '1px solid #00bcd4' : '1px solid #555',
+                }}
+              >
+                {isPickMode ? '建物ピック中（地図をクリック）' : '建物をピックする'}
+              </button>
+              {isPickMode && (
+                <div
+                  style={{
+                    background: 'rgba(0, 0, 0, 0.6)',
+                    color: '#ccc',
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  クリックした位置の建物だけをエクスポートします
+                </div>
+              )}
+              {pickPoints.length > 0 && (
+                <div
+                  style={{
+                    background: 'rgba(0, 0, 0, 0.75)',
+                    color: '#fff',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    maxWidth: '260px',
+                  }}
+                >
+                  <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>
+                    ピック: {pickPoints.length}件
+                  </div>
+                  {pickPoints.map((p, idx) => (
+                    <div key={idx} style={{ color: '#ccc', whiteSpace: 'nowrap' }}>
+                      {idx + 1}. lon {p.lon.toFixed(5)}, lat {p.lat.toFixed(5)}
+                    </div>
+                  ))}
+                  <button
+                    onClick={clearPickPoints}
+                    style={{
+                      marginTop: '6px',
+                      padding: '4px 10px',
+                      fontSize: '11px',
+                      background: '#444',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    クリア
+                  </button>
+                </div>
+              )}
             </div>
             <div
               style={{
@@ -444,6 +554,7 @@ function App() {
                 scale={scale}
                 onScaleChange={setScale}
                 includeSpanningBuildings={parameters.includeSpanningBuildings}
+                pickPoints={pickPoints}
               />
               <LoadingOverlay
                 message={pipelineState.message}

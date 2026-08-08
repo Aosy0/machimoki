@@ -63,6 +63,27 @@ export function detectMimeType(filePath: string): string {
   throw new Error(`Unsupported file extension: ${filePath}. Expected .3mf or .stl`);
 }
 
+export interface PickPoint {
+  lon: number;
+  lat: number;
+}
+
+export function parsePickPoint(value: string): PickPoint {
+  const parts = value.split(',').map((part) => Number(part.trim()));
+  if (parts.length !== 2 || parts.some(Number.isNaN)) {
+    throw new Error(`Invalid pick-point format: ${value}. Expected lon,lat`);
+  }
+  const [lon, lat] = parts;
+  if (lon < -180 || lon > 180 || lat < -90 || lat > 90) {
+    throw new Error(`Invalid pick-point: lon=${lon}, lat=${lat}`);
+  }
+  return { lon, lat };
+}
+
+function collectPickPoint(value: string, previous: PickPoint[]): PickPoint[] {
+  return [...previous, parsePickPoint(value)];
+}
+
 program
   .command('export')
   .description('Export a printable 3D model')
@@ -83,6 +104,7 @@ program
   .option('--terrain', 'include terrain generation', true)
   .option('--no-terrain', 'skip terrain generation')
   .option('--include-spanning-buildings', 'include buildings that span the selection boundary', false)
+  .option('--pick-point <lon,lat>', 'keep only buildings whose footprint contains the point (repeatable)', collectPickPoint, [])
   .option('--scale <number>', 'uniform scale factor (>0)', (value) => {
     const num = Number(value);
     if (Number.isNaN(num) || num <= 0) {
@@ -100,6 +122,7 @@ program
       upAxis: options.upAxis,
       scale: options.scale,
       includeSpanningBuildings: options.includeSpanningBuildings,
+      pickPoints: options.pickPoint.length > 0 ? options.pickPoint : undefined,
     };
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds);

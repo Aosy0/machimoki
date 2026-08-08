@@ -26,6 +26,10 @@ export interface ExportOptions {
   // 選択範囲の境界をまたぐ建物を含めるか（デフォルト false）。
   // true にすると、フットプリントが範囲に完全内包されない建物も含める。
   includeSpanningBuildings?: boolean;
+  // 指定した緯度経度のうち少なくとも1点をフットプリント内に含む建物のみを
+  // エクスポートする。bounds はタイル取得・地形生成の範囲としてのみ使われる。
+  // 未指定・空配列の場合は従来どおり bounds による矩形選択となる。
+  pickPoints?: Array<{ lon: number; lat: number }>;
 }
 
 export interface ExportRequest {

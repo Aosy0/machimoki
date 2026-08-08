@@ -148,6 +148,42 @@ describe('API server', () => {
     );
   });
 
+  it('POST /api/export accepts pickPoints parameter', async () => {
+    buildPrintableModel.mockResolvedValue({ buffer: Buffer.from('model'), warnings: [] });
+
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 139.76, south: 35.68, east: 139.77, north: 35.69 },
+        terrainThickness: 5,
+        format: '3mf',
+        pickPoints: [{ lon: 139.767, lat: 35.6812 }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ pickPoints: [{ lon: 139.767, lat: 35.6812 }] }),
+    );
+  });
+
+  it('POST /api/export rejects invalid pickPoints', async () => {
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 0, south: 0, east: 1, north: 1 },
+        terrainThickness: 5,
+        format: '3mf',
+        pickPoints: [{ lon: 999, lat: 35.68 }],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
   it('POST /api/export returns 400 for invalid body', async () => {
     const response = await fetch(`${baseUrl}/api/export`, {
       method: 'POST',

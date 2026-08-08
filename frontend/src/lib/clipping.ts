@@ -27,7 +27,8 @@ function parseNum(val: unknown): number | null {
 function checkFeatureBounds(
   feature: any,
   bounds: SelectionBounds,
-  includeSpanning: boolean
+  includeSpanning: boolean,
+  pickPoints?: Array<{ lon: number; lat: number }>
 ): boolean {
   const xMinRaw = feature.getProperty('_xmin')
   const xMaxRaw = feature.getProperty('_xmax')
@@ -38,6 +39,23 @@ function checkFeatureBounds(
   const xmax = parseNum(xMaxRaw)
   const ymin = parseNum(yMinRaw)
   const ymax = parseNum(yMaxRaw)
+
+  if (pickPoints && pickPoints.length > 0) {
+    if (xmin !== null && xmax !== null && ymin !== null && ymax !== null) {
+      return pickPoints.some(
+        (p) => p.lon >= xmin && p.lon <= xmax && p.lat >= ymin && p.lat <= ymax
+      )
+    }
+    const cx = parseNum(feature.getProperty('_x'))
+    const cy = parseNum(feature.getProperty('_y'))
+    if (cx !== null && cy !== null) {
+      return pickPoints.some(
+        (p) =>
+          Math.abs(p.lon - cx) <= 1e-4 && Math.abs(p.lat - cy) <= 1e-4
+      )
+    }
+    return true
+  }
 
   if (xmin !== null && xmax !== null && ymin !== null && ymax !== null) {
     if (includeSpanning) {
@@ -74,7 +92,8 @@ function checkFeatureBounds(
 function filterTileFeatures(
   tile: any,
   bounds: SelectionBounds,
-  includeSpanning: boolean
+  includeSpanning: boolean,
+  pickPoints?: Array<{ lon: number; lat: number }>
 ): void {
   const content = tile?.content
   if (!content || !content.featuresLength) return
@@ -82,20 +101,21 @@ function filterTileFeatures(
   for (let i = 0; i < content.featuresLength; i++) {
     const feature = content.getFeature(i)
     if (!feature) continue
-    feature.show = checkFeatureBounds(feature, bounds, includeSpanning)
+    feature.show = checkFeatureBounds(feature, bounds, includeSpanning, pickPoints)
   }
 }
 
 function traverseTiles(
   tile: any,
   bounds: SelectionBounds,
-  includeSpanning: boolean
+  includeSpanning: boolean,
+  pickPoints?: Array<{ lon: number; lat: number }>
 ): void {
   if (!tile) return
-  filterTileFeatures(tile, bounds, includeSpanning)
+  filterTileFeatures(tile, bounds, includeSpanning, pickPoints)
   if (tile.children) {
     for (const child of tile.children) {
-      traverseTiles(child, bounds, includeSpanning)
+      traverseTiles(child, bounds, includeSpanning, pickPoints)
     }
   }
 }
@@ -107,21 +127,37 @@ export function refilterSpanning(tileset: any, includeSpanning?: boolean): void 
   const bounds: SelectionBounds | undefined = tileset._customSelectionBounds
   if (!bounds) return
   const is: boolean = tileset._customIncludeSpanning ?? false
+  const pickPoints: Array<{ lon: number; lat: number }> | undefined = tileset._customPickPoints
   if (tileset._root) {
-    traverseTiles(tileset._root, bounds, is)
+    traverseTiles(tileset._root, bounds, is, pickPoints)
+  }
+}
+
+export function refilterPickPoints(
+  tileset: any,
+  pickPoints?: Array<{ lon: number; lat: number }>
+): void {
+  tileset._customPickPoints = pickPoints
+  const bounds: SelectionBounds | undefined = tileset._customSelectionBounds
+  if (!bounds) return
+  const is: boolean = tileset._customIncludeSpanning ?? false
+  if (tileset._root) {
+    traverseTiles(tileset._root, bounds, is, pickPoints)
   }
 }
 
 export function applyClippingToTileset(
   tileset: any,
   bounds: SelectionBounds,
-  includeSpanning = false
+  includeSpanning = false,
+  pickPoints?: Array<{ lon: number; lat: number }>
 ): void {
   tileset.clippingPlanes = undefined
   tileset.clippingPolygons = undefined
 
   tileset._customSelectionBounds = bounds
   tileset._customIncludeSpanning = includeSpanning
+  tileset._customPickPoints = pickPoints
 
   const Cesium3DTile = tileset._root?.constructor
   if (Cesium3DTile && !patched) {
@@ -152,7 +188,8 @@ export function applyClippingToTileset(
     const b = tileset._customSelectionBounds
     if (!b) return
     const is = tileset._customIncludeSpanning ?? false
-    filterTileFeatures(tile, b, is)
+    const pp: Array<{ lon: number; lat: number }> | undefined = tileset._customPickPoints
+    filterTileFeatures(tile, b, is, pp)
   }
 
   if (!tileset._customFilterRegistered) {
@@ -163,7 +200,7 @@ export function applyClippingToTileset(
   }
 
   if (tileset._root) {
-    traverseTiles(tileset._root, bounds, includeSpanning)
+    traverseTiles(tileset._root, bounds, includeSpanning, pickPoints)
   }
 }
 

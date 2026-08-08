@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildPrintableModel } from '../../src/core/pipeline.js';
+import { buildPrintableModel, componentContainsPoint, dedupeComponents } from '../../src/core/pipeline.js';
 import type { RawMesh } from '../../src/core/types';
 
 const fakeBuffer = Buffer.from('fake-model');
@@ -178,8 +178,14 @@ describe('buildPrintableModel', () => {
     const terrainFake = createFakeManifold();
     const buildingFake = createFakeManifold();
 
+    // 2 distinct footprints so dedupeComponents keeps both
+    const secondBuilding: RawMesh = {
+      positions: new Float32Array([10, 0, 10, 11, 0, 10, 10, 0, 11]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
-    vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh, buildingMesh]);
+    vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh, secondBuilding]);
     vi.mocked(createManifoldFromMesh)
       .mockResolvedValueOnce(buildingFake)
       .mockRejectedValueOnce(new Error('Not manifold'))
@@ -192,7 +198,7 @@ describe('buildPrintableModel', () => {
     );
 
     expect(result.warnings.length).toBe(1);
-    expect(result.warnings[0]).toContain('Building 2.1 skipped');
+    expect(result.warnings[0]).toContain('Building 2 skipped');
     expect(exportPartsTo3MF).toHaveBeenCalledTimes(1);
     const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
     expect(parts).toHaveLength(2);
@@ -328,5 +334,130 @@ describe('buildPrintableModel', () => {
     );
     // createManifoldFromMesh called for building + terrain = 2 calls
     expect(createManifoldFromMesh).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('componentContainsPoint', () => {
+  // bounds centered at (0,0): engine x = lon * mPerDegLon, z = -lat * mPerDegLat
+  const bounds = { west: -1, south: -1, east: 1, north: 1 };
+
+  const triangleMesh: RawMesh = {
+    positions: new Float32Array([-10, 0, -10, 10, 0, -10, 0, 0, 10]),
+    indices: new Uint32Array([0, 1, 2]),
+  };
+
+  it('returns true when the point is inside the triangle footprint', () => {
+    expect(componentContainsPoint(triangleMesh, 0, 0, bounds)).toBe(true);
+  });
+
+  it('returns true when the point is on a triangle edge', () => {
+    const lon = 5 / 111320;
+    expect(componentContainsPoint(triangleMesh, lon, 0, bounds)).toBe(true);
+  });
+
+  it('returns false when the point is outside the triangle footprint', () => {
+    expect(componentContainsPoint(triangleMesh, 0.01, 0.01, bounds)).toBe(false);
+  });
+
+  it('returns false for a point inside the bounds but outside the mesh bbox', () => {
+    const farMesh: RawMesh = {
+      positions: new Float32Array([-100, 0, -100, -90, 0, -100, -95, 0, -90]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    expect(componentContainsPoint(farMesh, 0, 0, bounds)).toBe(false);
+  });
+});
+
+describe('dedupeComponents', () => {
+  it('collapses components with identical footprints, keeping the finest', () => {
+    const coarse: RawMesh = {
+      positions: new Float32Array([0, 0, 0, 10, 0, 0, 0, 0, 10]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    const fine: RawMesh = {
+      positions: new Float32Array([0, 0, 0, 10, 0, 0, 0, 0, 10, 5, 0, 5]),
+      indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+    };
+    const result = dedupeComponents([coarse, fine]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(fine);
+  });
+
+  it('keeps components with distinct footprints', () => {
+    const a: RawMesh = {
+      positions: new Float32Array([0, 0, 0, 10, 0, 0, 0, 0, 10]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    const b: RawMesh = {
+      positions: new Float32Array([100, 0, 0, 110, 0, 0, 100, 0, 10]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    const result = dedupeComponents([a, b]);
+    expect(result).toHaveLength(2);
+    expect(result).toContain(a);
+    expect(result).toContain(b);
+  });
+});
+
+describe('buildPrintableModel with pickPoints', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('keeps only buildings whose footprint contains a pick point', async () => {
+    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
+    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+
+    const hitMesh: RawMesh = {
+      positions: new Float32Array([-10, 0, -10, 10, 0, -10, 0, 0, 10]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    const missMesh: RawMesh = {
+      positions: new Float32Array([-10, 0, -100, -5, 0, -100, -7.5, 0, -90]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+
+    vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
+    vi.mocked(buildBuildingMeshes).mockResolvedValue([hitMesh, missMesh]);
+    vi.mocked(createManifoldFromMesh).mockResolvedValue(createFakeManifold());
+    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+
+    await buildPrintableModel(
+      { west: -1, south: -1, east: 1, north: 1 },
+      { terrainThickness: 5, flattenBottom: true, format: '3mf', pickPoints: [{ lon: 0, lat: 0 }] },
+    );
+
+    expect(createManifoldFromMesh).toHaveBeenCalledWith(hitMesh);
+    expect(createManifoldFromMesh).not.toHaveBeenCalledWith(missMesh);
+    const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
+    expect(parts).toHaveLength(2);
+  });
+
+  it('warns when no building matches the pick points', async () => {
+    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
+    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+
+    const farMesh: RawMesh = {
+      positions: new Float32Array([-100, 0, -100, -90, 0, -100, -95, 0, -90]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    const terrainFake = createFakeManifold();
+
+    vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
+    vi.mocked(buildBuildingMeshes).mockResolvedValue([farMesh]);
+    vi.mocked(createManifoldFromMesh).mockResolvedValue(terrainFake);
+    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+
+    const result = await buildPrintableModel(
+      { west: -1, south: -1, east: 1, north: 1 },
+      { terrainThickness: 5, flattenBottom: true, format: '3mf', pickPoints: [{ lon: 0, lat: 0 }] },
+    );
+
+    expect(result.warnings).toContain('No buildings matched the pick points');
+    const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
+    expect(parts).toHaveLength(1);
+    expect(parts[0].manifold).toBe(terrainFake);
   });
 });

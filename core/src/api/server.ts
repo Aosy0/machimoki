@@ -131,6 +131,15 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
   const includeSpanningBuildings =
     typeof record.includeSpanningBuildings === 'boolean' ? record.includeSpanningBuildings : false;
 
+  let pickPoints: Array<{ lon: number; lat: number }> | undefined;
+  if (record.pickPoints !== undefined) {
+    const parsed = parsePickPoints(record.pickPoints);
+    if (!parsed) {
+      return { ok: false, error: 'Invalid pickPoints' };
+    }
+    pickPoints = parsed.length > 0 ? parsed : undefined;
+  }
+
   const options: ExportOptions = {
     terrainThickness,
     flattenBottom,
@@ -142,6 +151,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     upAxis,
     scale,
     includeSpanningBuildings,
+    pickPoints,
   };
 
   return { ok: true, value: { bounds, options } };
@@ -199,6 +209,21 @@ function parseColor(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   if (!/^#[0-9a-fA-F]{6}$/.test(value)) return undefined;
   return value;
+}
+
+function parsePickPoints(value: unknown): Array<{ lon: number; lat: number }> | null {
+  if (!Array.isArray(value)) return null;
+  const points: Array<{ lon: number; lat: number }> = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) return null;
+    const record = item as Record<string, unknown>;
+    const lon = parseNumber(record.lon);
+    const lat = parseNumber(record.lat);
+    if (lon === null || lat === null) return null;
+    if (lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
+    points.push({ lon, lat });
+  }
+  return points;
 }
 
 function detectMimeType(fileName: string): string | null {

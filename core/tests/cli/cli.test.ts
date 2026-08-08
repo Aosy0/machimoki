@@ -11,6 +11,7 @@ import {
   parseLod,
   parseUpAxis,
   detectMimeType,
+  parsePickPoint,
 } from '../../src/cli/index.js';
 
 vi.mock('../../src/core/pipeline.js', () => ({
@@ -80,6 +81,17 @@ describe('CLI argument parsers', () => {
     expect(detectMimeType('model.stl')).toBe('model/stl');
     expect(() => detectMimeType('model.obj')).toThrow();
   });
+
+  it('parsePickPoint accepts lon,lat', () => {
+    expect(parsePickPoint('139.7670,35.6812')).toEqual({ lon: 139.767, lat: 35.6812 });
+  });
+
+  it('parsePickPoint rejects malformed input', () => {
+    expect(() => parsePickPoint('139.7670')).toThrow();
+    expect(() => parsePickPoint('abc,35.6812')).toThrow();
+    expect(() => parsePickPoint('200,35.6812')).toThrow();
+    expect(() => parsePickPoint('139.7670,95')).toThrow();
+  });
 });
 
 describe('CLI export command', () => {
@@ -139,6 +151,7 @@ describe('CLI export command', () => {
         upAxis: 'z-up',
         scale: 1,
         includeSpanningBuildings: false,
+        pickPoints: undefined,
       },
     );
   });
@@ -227,6 +240,40 @@ describe('CLI export command', () => {
     expect(buildPrintableModel).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ scale: 2 }),
+    );
+  });
+
+  it('passes repeated --pick-point options to the pipeline', async () => {
+    const outputPath = join(tempDir, 'out.3mf');
+    buildPrintableModel.mockResolvedValue({
+      buffer: Buffer.from('picked-bytes'),
+      warnings: [],
+    });
+
+    await program.parseAsync([
+      'node',
+      'cli',
+      'export',
+      '--bounds',
+      '139.76,35.68,139.77,35.69',
+      '--terrain-thickness',
+      '5',
+      '--pick-point',
+      '139.7670,35.6812',
+      '--pick-point',
+      '139.7650,35.6815',
+      '--output',
+      outputPath,
+    ]);
+
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        pickPoints: [
+          { lon: 139.767, lat: 35.6812 },
+          { lon: 139.765, lat: 35.6815 },
+        ],
+      }),
     );
   });
 });
