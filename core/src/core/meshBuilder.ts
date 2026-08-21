@@ -155,10 +155,23 @@ function rebuildGlbJson(
   return result.buffer;
 }
 
-/**
- * Extract glb buffer from a Batched 3D Model (.b3dm) ArrayBuffer.
- */
-export function extractGltfFromB3dm(arrayBuffer: ArrayBuffer): ArrayBuffer | null {
+const B3DM_HEADER_LENGTH = 28;
+
+interface B3dmHeader {
+  version: number;
+  totalByteLength: number;
+  featureTableJSONByteOffset: number;
+  featureTableJSONByteLength: number;
+  featureTableBinaryByteOffset: number;
+  featureTableBinaryByteLength: number;
+  batchTableJSONByteOffset: number;
+  batchTableJSONByteLength: number;
+  batchTableBinaryByteOffset: number;
+  batchTableBinaryByteLength: number;
+  glbByteOffset: number;
+}
+
+function readB3dmHeader(arrayBuffer: ArrayBuffer): B3dmHeader | null {
   const dataView = new DataView(arrayBuffer);
   const byteLength = arrayBuffer.byteLength;
   if (byteLength < 4) return null;
@@ -171,7 +184,7 @@ export function extractGltfFromB3dm(arrayBuffer: ArrayBuffer): ArrayBuffer | nul
   );
   if (magic !== 'b3dm') return null;
 
-  if (byteLength < 28) return null;
+  if (byteLength < B3DM_HEADER_LENGTH) return null;
   const version = dataView.getUint32(4, true);
   if (version !== 1) return null;
 
@@ -181,16 +194,183 @@ export function extractGltfFromB3dm(arrayBuffer: ArrayBuffer): ArrayBuffer | nul
   const batchTableJSONByteLength = dataView.getUint32(20, true);
   const batchTableBinaryByteLength = dataView.getUint32(24, true);
 
-  const headerLength = 28;
-  const featureTableJSONByteOffset = headerLength;
+  const featureTableJSONByteOffset = B3DM_HEADER_LENGTH;
   const featureTableBinaryByteOffset = featureTableJSONByteOffset + featureTableJSONByteLength;
   const batchTableJSONByteOffset = featureTableBinaryByteOffset + featureTableBinaryByteLength;
   const batchTableBinaryByteOffset = batchTableJSONByteOffset + batchTableJSONByteLength;
   const glbByteOffset = batchTableBinaryByteOffset + batchTableBinaryByteLength;
 
-  if (glbByteOffset >= totalByteLength) return null;
+  if (glbByteOffset > totalByteLength) return null;
 
-  return arrayBuffer.slice(glbByteOffset);
+  return {
+    version,
+    totalByteLength,
+    featureTableJSONByteOffset,
+    featureTableJSONByteLength,
+    featureTableBinaryByteOffset,
+    featureTableBinaryByteLength,
+    batchTableJSONByteOffset,
+    batchTableJSONByteLength,
+    batchTableBinaryByteOffset,
+    batchTableBinaryByteLength,
+    glbByteOffset,
+  };
+}
+
+/**
+ * Extract glb buffer from a Batched 3D Model (.b3dm) ArrayBuffer.
+ */
+export function extractGltfFromB3dm(arrayBuffer: ArrayBuffer): ArrayBuffer | null {
+  const header = readB3dmHeader(arrayBuffer);
+  if (!header) return null;
+  if (header.glbByteOffset >= header.totalByteLength) return null;
+  return arrayBuffer.slice(header.glbByteOffset);
+}
+
+/**
+ * Parse the b3dm batch table JSON.
+ */
+export function parseB3dmBatchTable(arrayBuffer: ArrayBuffer): unknown | null {
+  const header = readB3dmHeader(arrayBuffer);
+  if (!header || header.batchTableJSONByteLength === 0) return null;
+
+  const jsonBytes = new Uint8Array(
+    arrayBuffer,
+    header.batchTableJSONByteOffset,
+    header.batchTableJSONByteLength,
+  );
+  try {
+    return JSON.parse(new TextDecoder().decode(jsonBytes).replace(/\0/g, ''));
+  } catch {
+    return null;
+  }
+}
+
+function parseB3dmFeatureTableJSON(arrayBuffer: ArrayBuffer): unknown | null {
+  const header = readB3dmHeader(arrayBuffer);
+  if (!header || header.featureTableJSONByteLength === 0) return null;
+
+  const jsonBytes = new Uint8Array(
+    arrayBuffer,
+    header.featureTableJSONByteOffset,
+    header.featureTableJSONByteLength,
+  );
+  try {
+    return JSON.parse(new TextDecoder().decode(jsonBytes).replace(/\0/g, ''));
+  } catch {
+    return null;
+  }
+}
+
+function getBatchLength(featureTable: unknown): number {
+  if (!featureTable || typeof featureTable !== 'object') return 0;
+  const value = (featureTable as Record<string, unknown>).BATCH_LENGTH;
+  return typeof value === 'number' ? value : 0;
+}
+
+const GMLID_KEYS = ['gmlid', 'gml_id', '_gmlid'] as const;
+
+export function getGmlidArray(batchTable: unknown, batchLength: number): string[] | null {
+  if (!batchTable || typeof batchTable !== 'object') return null;
+
+  const record = batchTable as Record<string, unknown>;
+  const raw = GMLID_KEYS.map((key) => record[key]).find((value) => value !== undefined);
+  if (raw === undefined) return null;
+
+  if (Array.isArray(raw)) {
+    if (!raw.every((value): value is string => typeof value === 'string')) return null;
+    return raw;
+  }
+
+  if (typeof raw === 'string') {
+    return Array.from({ length: batchLength }, () => raw);
+  }
+
+  return null;
+}
+
+export function resolveExcludedBatchIds(gmlids: string[], excludedGmlIds: string[]): Set<number> {
+  const excluded = new Set(excludedGmlIds);
+  const result = new Set<number>();
+  for (let i = 0; i < gmlids.length; i++) {
+    if (excluded.has(gmlids[i])) {
+      result.add(i);
+    }
+  }
+  return result;
+}
+
+function resolveExcludedBatchIdsForB3dm(
+  arrayBuffer: ArrayBuffer,
+  excludedGmlIds?: string[],
+): Set<number> | undefined {
+  if (!excludedGmlIds || excludedGmlIds.length === 0) return undefined;
+
+  const batchTable = parseB3dmBatchTable(arrayBuffer);
+  const featureTable = parseB3dmFeatureTableJSON(arrayBuffer);
+  const batchLength = getBatchLength(featureTable);
+  const gmlids = getGmlidArray(batchTable, batchLength);
+  if (!gmlids || gmlids.length === 0) return undefined;
+
+  const excluded = resolveExcludedBatchIds(gmlids, excludedGmlIds);
+  return excluded.size > 0 ? excluded : undefined;
+}
+
+/**
+ * Remove triangles whose _BATCHID maps to an excluded batch index.
+ * The returned mesh repacks only the vertices still referenced by kept triangles.
+ */
+export function filterTrianglesByBatchIds(
+  positions: Float32Array,
+  indices: Uint32Array,
+  batchIds: Uint32Array,
+  excludedBatchIds: Set<number>,
+): RawMesh {
+  if (excludedBatchIds.size === 0 || indices.length === 0) {
+    return { positions, indices };
+  }
+
+  const vertexCount = positions.length / 3;
+  const triangleCount = indices.length / 3;
+  const keptIndices: number[] = [];
+  const oldToNew = new Int32Array(vertexCount).fill(-1);
+  let usedVertexCount = 0;
+
+  for (let t = 0; t < triangleCount; t++) {
+    const i0 = indices[t * 3];
+    const i1 = indices[t * 3 + 1];
+    const i2 = indices[t * 3 + 2];
+
+    if (
+      excludedBatchIds.has(batchIds[i0]) ||
+      excludedBatchIds.has(batchIds[i1]) ||
+      excludedBatchIds.has(batchIds[i2])
+    ) {
+      continue;
+    }
+
+    for (const oldIndex of [i0, i1, i2]) {
+      if (oldToNew[oldIndex] === -1) {
+        oldToNew[oldIndex] = usedVertexCount++;
+      }
+      keptIndices.push(oldToNew[oldIndex]);
+    }
+  }
+
+  if (keptIndices.length === 0) {
+    return { positions: new Float32Array(0), indices: new Uint32Array(0) };
+  }
+
+  const newPositions = new Float32Array(usedVertexCount * 3);
+  for (let oldIndex = 0; oldIndex < vertexCount; oldIndex++) {
+    const newIndex = oldToNew[oldIndex];
+    if (newIndex === -1) continue;
+    newPositions[newIndex * 3] = positions[oldIndex * 3];
+    newPositions[newIndex * 3 + 1] = positions[oldIndex * 3 + 1];
+    newPositions[newIndex * 3 + 2] = positions[oldIndex * 3 + 2];
+  }
+
+  return { positions: newPositions, indices: new Uint32Array(keptIndices) };
 }
 
 function readUint32Array(accessor: Accessor): Uint32Array {
@@ -264,6 +444,7 @@ async function parseGlbToRawMeshes(
   glbBuffer: ArrayBuffer,
   tileMatrix: Matrix4,
   invCenterMatrix: Matrix4,
+  excludedBatchIds?: Set<number>,
 ): Promise<RawMesh[]> {
   const { buffer: processedBuffer, rtcCenter } = preprocessGlbForNodeIO(glbBuffer);
   const decoder = await getDracoDecoder();
@@ -287,7 +468,14 @@ async function parseGlbToRawMeshes(
       const worldMatrix = matrix4FromMat4(node.getWorldMatrix());
 
       for (const primitive of mesh.listPrimitives()) {
-        const raw = primitiveToRawMesh(primitive, worldMatrix, tileMatrix, invCenterMatrix, rtcCenter);
+        const raw = primitiveToRawMesh(
+          primitive,
+          worldMatrix,
+          tileMatrix,
+          invCenterMatrix,
+          rtcCenter,
+          excludedBatchIds,
+        );
         if (raw.positions.length > 0 && raw.indices.length > 0) {
           result.push(raw);
         }
@@ -304,6 +492,7 @@ function primitiveToRawMesh(
   tileMatrix: Matrix4,
   invCenterMatrix: Matrix4,
   rtcCenter?: Cartesian3,
+  excludedBatchIds?: Set<number>,
 ): RawMesh {
   const positionAccessor = primitive.getAttribute('POSITION');
   const indexAccessor = primitive.getIndices();
@@ -315,25 +504,48 @@ function primitiveToRawMesh(
   const positions = readFloat32Array(positionAccessor);
   const indices = indexAccessor ? readUint32Array(indexAccessor) : new Uint32Array(0);
 
-  const vertexCount = positions.length / 3;
-  const transformedPositions = new Float32Array(positions.length);
+  let filteredPositions = positions;
+  let filteredIndices = indices;
+
+  if (excludedBatchIds && excludedBatchIds.size > 0 && indices.length > 0) {
+    const batchIdAccessor = primitive.getAttribute('_BATCHID');
+    if (batchIdAccessor) {
+      const batchIds = readUint32Array(batchIdAccessor);
+      if (batchIds.length > 0) {
+        ({ positions: filteredPositions, indices: filteredIndices } = filterTrianglesByBatchIds(
+          positions,
+          indices,
+          batchIds,
+          excludedBatchIds,
+        ));
+      }
+    }
+  }
+
+  if (filteredIndices.length === 0) {
+    return { positions: new Float32Array(0), indices: new Uint32Array(0) };
+  }
+
+  const vertexCount = filteredPositions.length / 3;
+  const transformedPositions = new Float32Array(filteredPositions.length);
 
   for (let i = 0; i < vertexCount; i++) {
-    const x = positions[i * 3];
-    const y = positions[i * 3 + 1];
-    const z = positions[i * 3 + 2];
+    const x = filteredPositions[i * 3];
+    const y = filteredPositions[i * 3 + 1];
+    const z = filteredPositions[i * 3 + 2];
     const t = transformPosition(x, y, z, nodeMatrix, tileMatrix, invCenterMatrix, rtcCenter);
     transformedPositions[i * 3] = t.x;
     transformedPositions[i * 3 + 1] = t.y;
     transformedPositions[i * 3 + 2] = t.z;
   }
 
-  return { positions: transformedPositions, indices };
+  return { positions: transformedPositions, indices: filteredIndices };
 }
 
 export async function buildBuildingMeshes(
   bounds: Bounds,
   lod: Lod,
+  excludedGmlIds?: string[],
 ): Promise<RawMesh[]> {
   const centerLon = (bounds.west + bounds.east) / 2;
   const centerLat = (bounds.south + bounds.north) / 2;
@@ -386,12 +598,18 @@ export async function buildBuildingMeshes(
             return;
           }
           const arrayBuffer = await response.arrayBuffer();
+          const excludedBatchIds = resolveExcludedBatchIdsForB3dm(arrayBuffer, excludedGmlIds);
           const glbBuffer = extractGltfFromB3dm(arrayBuffer);
           if (!glbBuffer) {
             console.warn(`[meshBuilder] Could not extract GLB from b3dm: ${contentUrl}`);
             return;
           }
-          const meshes = await parseGlbToRawMeshes(glbBuffer, tileMatrix, invCenterMatrix);
+          const meshes = await parseGlbToRawMeshes(
+            glbBuffer,
+            tileMatrix,
+            invCenterMatrix,
+            excludedBatchIds,
+          );
           resultMeshes.push(...meshes);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { Document, NodeIO } from '@gltf-transform/core';
-import { buildBuildingMeshes, extractGltfFromB3dm } from '../../src/core/meshBuilder';
+import {
+  buildBuildingMeshes,
+  extractGltfFromB3dm,
+  parseB3dmBatchTable,
+  getGmlidArray,
+  resolveExcludedBatchIds,
+  filterTrianglesByBatchIds,
+} from '../../src/core/meshBuilder';
 import type { Bounds } from '../../src/core/types';
 
 vi.mock('cesium', () => {
@@ -230,3 +237,149 @@ describe('meshBuilder', () => {
     expect(meshes.length).toBe(0);
   });
 });
+
+function wrapGlbInB3dmWithBatchTable(
+  glb: Uint8Array,
+  batchTable: Record<string, unknown>,
+  featureTable: Record<string, unknown> = { BATCH_LENGTH: 2 },
+): ArrayBuffer {
+  const headerLength = 28;
+  const featureTableJSON = JSON.stringify(featureTable);
+  const batchTableJSON = JSON.stringify(batchTable);
+  const featureTableJSONByteLength = align(featureTableJSON.length, 8);
+  const featureTableBinaryByteLength = 0;
+  const batchTableJSONByteLength = align(batchTableJSON.length, 8);
+  const batchTableBinaryByteLength = 0;
+  const glbByteOffset =
+    headerLength +
+    featureTableJSONByteLength +
+    featureTableBinaryByteLength +
+    batchTableJSONByteLength +
+    batchTableBinaryByteLength;
+  const totalByteLength = glbByteOffset + glb.byteLength;
+
+  const arrayBuffer = new ArrayBuffer(totalByteLength);
+  const dataView = new DataView(arrayBuffer);
+  const encoder = new TextEncoder();
+
+  dataView.setUint8(0, 0x62); // 'b'
+  dataView.setUint8(1, 0x33); // '3'
+  dataView.setUint8(2, 0x64); // 'd'
+  dataView.setUint8(3, 0x6d); // 'm'
+  dataView.setUint32(4, 1, true);
+  dataView.setUint32(8, totalByteLength, true);
+  dataView.setUint32(12, featureTableJSONByteLength, true);
+  dataView.setUint32(16, featureTableBinaryByteLength, true);
+  dataView.setUint32(20, batchTableJSONByteLength, true);
+  dataView.setUint32(24, batchTableBinaryByteLength, true);
+
+  const featureTableBytes = encoder.encode(featureTableJSON);
+  const featureTableArray = new Uint8Array(arrayBuffer, headerLength, featureTableJSONByteLength);
+  featureTableArray.set(featureTableBytes);
+
+  const batchTableBytes = encoder.encode(batchTableJSON);
+  const batchTableArray = new Uint8Array(
+    arrayBuffer,
+    headerLength + featureTableJSONByteLength + featureTableBinaryByteLength,
+    batchTableJSONByteLength,
+  );
+  batchTableArray.set(batchTableBytes);
+
+  const glbArray = new Uint8Array(arrayBuffer, glbByteOffset, glb.byteLength);
+  glbArray.set(glb);
+
+  return arrayBuffer;
+}
+
+describe('parseB3dmBatchTable', () => {
+  it('parses batch table JSON from b3dm', async () => {
+    const glb = await createTestGlb();
+    const b3dm = wrapGlbInB3dmWithBatchTable(glb, { gmlid: ['A', 'B'] });
+    const batchTable = parseB3dmBatchTable(b3dm);
+    expect(batchTable).toEqual({ gmlid: ['A', 'B'] });
+  });
+
+  it('returns null when batch table is absent', async () => {
+    const glb = await createTestGlb();
+    const b3dm = wrapGlbInB3dm(glb);
+    const batchTable = parseB3dmBatchTable(b3dm);
+    expect(batchTable).toBeNull();
+  });
+});
+
+describe('getGmlidArray', () => {
+  it('resolves gmlid array from batch table', () => {
+    expect(getGmlidArray({ gmlid: ['A', 'B'] }, 2)).toEqual(['A', 'B']);
+  });
+
+  it('falls back to gml_id key', () => {
+    expect(getGmlidArray({ gml_id: ['X', 'Y'] }, 2)).toEqual(['X', 'Y']);
+  });
+
+  it('falls back to _gmlid key', () => {
+    expect(getGmlidArray({ _gmlid: ['M', 'N'] }, 2)).toEqual(['M', 'N']);
+  });
+
+  it('expands a single string to array of given batch length', () => {
+    expect(getGmlidArray({ gmlid: 'SAME' }, 3)).toEqual(['SAME', 'SAME', 'SAME']);
+  });
+
+  it('returns null when no known key is present', () => {
+    expect(getGmlidArray({ other: ['A'] }, 1)).toBeNull();
+  });
+
+  it('returns null when array contains non-strings', () => {
+    expect(getGmlidArray({ gmlid: ['A', 1] }, 2)).toBeNull();
+  });
+});
+
+describe('resolveExcludedBatchIds', () => {
+  it('returns batch indices matching excluded gmlids', () => {
+    const gmlids = ['A', 'B', 'C', 'B'];
+    const excluded = resolveExcludedBatchIds(gmlids, ['B']);
+    expect(excluded).toEqual(new Set([1, 3]));
+  });
+
+  it('returns empty set when no matches', () => {
+    const gmlids = ['A', 'C'];
+    const excluded = resolveExcludedBatchIds(gmlids, ['Z']);
+    expect(excluded).toEqual(new Set());
+  });
+});
+
+describe('filterTrianglesByBatchIds', () => {
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+    2, 0, 0,
+    3, 0, 0,
+    2, 1, 0,
+  ]);
+  const indices = new Uint32Array([
+    0, 1, 2,
+    3, 4, 5,
+  ]);
+  const batchIds = new Uint32Array([
+    0, 0, 0, 1, 1, 1,
+  ]);
+
+  it('removes triangles with any vertex matching excluded batch id', () => {
+    const result = filterTrianglesByBatchIds(positions, indices, batchIds, new Set([1]));
+    expect(result.indices).toEqual(new Uint32Array([0, 1, 2]));
+    expect(result.positions.length).toBe(9);
+  });
+
+  it('removes all triangles when every batch id is excluded', () => {
+    const result = filterTrianglesByBatchIds(positions, indices, batchIds, new Set([0, 1]));
+    expect(result.indices).toEqual(new Uint32Array([]));
+    expect(result.positions).toEqual(new Float32Array([]));
+  });
+
+  it('keeps all triangles when excluded set is empty', () => {
+    const result = filterTrianglesByBatchIds(positions, indices, batchIds, new Set());
+    expect(result.indices).toEqual(indices);
+    expect(result.positions).toEqual(positions);
+  });
+});
+

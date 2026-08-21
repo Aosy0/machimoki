@@ -84,6 +84,10 @@ function collectPickPoint(value: string, previous: PickPoint[]): PickPoint[] {
   return [...previous, parsePickPoint(value)];
 }
 
+function collectExcludeGmlId(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 program
   .command('export')
   .description('Export a printable 3D model')
@@ -105,6 +109,7 @@ program
   .option('--no-terrain', 'skip terrain generation')
   .option('--include-spanning-buildings', 'include buildings that span the selection boundary', false)
   .option('--pick-point <lon,lat>', 'keep only buildings whose footprint contains the point (repeatable)', collectPickPoint, [])
+  .option('--exclude-gmlid <id>', 'exclude a building by gmlid (repeatable)', collectExcludeGmlId, [])
   .option('--scale <number>', 'uniform scale factor (>0)', (value) => {
     const num = Number(value);
     if (Number.isNaN(num) || num <= 0) {
@@ -123,6 +128,7 @@ program
       scale: options.scale,
       includeSpanningBuildings: options.includeSpanningBuildings,
       pickPoints: options.pickPoint.length > 0 ? options.pickPoint : undefined,
+      excludedGmlIds: options.excludeGmlid.length > 0 ? options.excludeGmlid : undefined,
     };
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds);

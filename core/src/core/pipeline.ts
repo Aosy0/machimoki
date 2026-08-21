@@ -234,7 +234,7 @@ async function buildPrintableModelUnsafe(
   const pickPoints = options.pickPoints ?? [];
   const warnings: string[] = [];
 
-  const buildingMeshes = await buildBuildingMeshes(bounds, lod);
+  const buildingMeshes = await buildBuildingMeshes(bounds, lod, options.excludedGmlIds);
 
   let terrainMesh = includeTerrain
     ? await buildTerrainMesh(bounds, options.terrainThickness, options.flattenBottom)

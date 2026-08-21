@@ -30,6 +30,9 @@ export interface ExportOptions {
   // エクスポートする。bounds はタイル取得・地形生成の範囲としてのみ使われる。
   // 未指定・空配列の場合は従来どおり bounds による矩形選択となる。
   pickPoints?: Array<{ lon: number; lat: number }>;
+  // b3dm batch table の gmlid 属性で指定した建物をエクスポートから除外する。
+  // 未指定・空配列の場合はすべての建物を含める。
+  excludedGmlIds?: string[];
 }
 
 export interface ExportRequest {

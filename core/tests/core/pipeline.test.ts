@@ -82,7 +82,7 @@ describe('buildPrintableModel', () => {
     const result = await buildPrintableModel(bounds, options);
 
     expect(buildTerrainMesh).toHaveBeenCalledWith(bounds, 10, true);
-    expect(buildBuildingMeshes).toHaveBeenCalledWith(bounds, 'lod1');
+    expect(buildBuildingMeshes).toHaveBeenCalledWith(bounds, 'lod1', undefined);
     expect(createManifoldFromMesh).toHaveBeenCalledWith(terrainMesh);
     expect(createManifoldFromMesh).toHaveBeenCalledWith(buildingMesh);
     expect(exportPartsTo3MF).toHaveBeenCalledTimes(1);
@@ -163,7 +163,7 @@ describe('buildPrintableModel', () => {
       { terrainThickness: 5, flattenBottom: true, format: '3mf', lod: 'lod2', includeTerrain: false },
     );
 
-    expect(buildBuildingMeshes).toHaveBeenCalledWith(expect.any(Object), 'lod2');
+    expect(buildBuildingMeshes).toHaveBeenCalledWith(expect.any(Object), 'lod2', undefined);
     expect(exportPartsTo3MF).toHaveBeenCalledTimes(1);
     const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
     expect(parts).toHaveLength(1);

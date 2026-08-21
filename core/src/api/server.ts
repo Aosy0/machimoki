@@ -140,6 +140,15 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     pickPoints = parsed.length > 0 ? parsed : undefined;
   }
 
+  let excludedGmlIds: string[] | undefined;
+  if (record.excludedGmlIds !== undefined) {
+    const parsed = parseExcludedGmlIds(record.excludedGmlIds);
+    if (parsed === null) {
+      return { ok: false, error: 'Invalid excludedGmlIds' };
+    }
+    excludedGmlIds = parsed;
+  }
+
   const options: ExportOptions = {
     terrainThickness,
     flattenBottom,
@@ -152,6 +161,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     scale,
     includeSpanningBuildings,
     pickPoints,
+    excludedGmlIds,
   };
 
   return { ok: true, value: { bounds, options } };
@@ -224,6 +234,17 @@ function parsePickPoints(value: unknown): Array<{ lon: number; lat: number }> | 
     points.push({ lon, lat });
   }
   return points;
+}
+
+const MAX_EXCLUDED_GMLIDS = 10000;
+
+function parseExcludedGmlIds(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return null;
+  if (value.length === 0) return undefined;
+  if (value.length > MAX_EXCLUDED_GMLIDS) return null;
+  if (!value.every((item) => typeof item === 'string')) return null;
+  return value as string[];
 }
 
 function detectMimeType(fileName: string): string | null {
