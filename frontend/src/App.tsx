@@ -52,6 +52,7 @@ function App() {
   const pickMarkerEntitiesRef = useRef<Entity[]>([])
   const [pickPoints, setPickPoints] = useState<PickPoint[]>([])
   const [isPickMode, setIsPickMode] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [pipelineState, setPipelineState] = useState<PipelineState>({
     phase: 'idle',
     progress: 0,
@@ -148,11 +149,11 @@ function App() {
     const e = parseFloat(manualCoords.east)
     const n = parseFloat(manualCoords.north)
     if ([w, s, e, n].some(isNaN)) {
-      setErrorMessage('座標値が無効です')
+      setErrorMessage('座標値が無効です。数値を入力してください')
       return
     }
     if (w >= e || s >= n) {
-      setErrorMessage('無効な選択範囲です (west < east, south < north)')
+      setErrorMessage('西端は東端より、南端は北端より小さい値を指定してください')
       return
     }
     setSelectionBounds({ west: w, south: s, east: e, north: n })
@@ -196,7 +197,7 @@ function App() {
     } finally {
       setIsExporting(false)
     }
-  }, [parameters, selectionBounds, scale])
+  }, [parameters, selectionBounds, scale, pickPoints])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
   const handleDismissError = () => {
@@ -286,74 +287,87 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      {/* Tab bar with app name */}
       <div
         style={{
           display: 'flex',
-          gap: 0,
-          borderBottom: '1px solid #333',
-          background: '#1a1a1a',
+          alignItems: 'center',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg)',
         }}
       >
-        <button
-          onClick={() => setActiveTab('map')}
+        <div
           style={{
-            flex: 1,
-            padding: '12px',
-            background: activeTab === 'map' ? '#333' : '#1a1a1a',
-            color: '#fff',
-            border: 'none',
-            borderBottom: activeTab === 'map' ? '2px solid #00bcd4' : 'none',
-            cursor: 'pointer',
+            padding: '12px 20px',
             fontSize: '14px',
-            fontWeight: activeTab === 'map' ? 'bold' : 'normal',
+            fontWeight: 700,
+            color: 'var(--accent)',
+            letterSpacing: '0.04em',
           }}
         >
-          地図で選ぶ
-        </button>
+          Machimoki
+        </div>
+        <div style={{ display: 'flex' }}>
+          {([
+            ['map', '範囲選択'],
+            ['preview', '3Dプレビュー'],
+            ['viewer', 'モデルビューワー'],
+          ] as const).map(([tab, label]) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              style={{
+                padding: '12px 20px',
+                background: 'transparent',
+                color: activeTab === tab ? 'var(--text)' : 'var(--text-dim)',
+                border: 'none',
+                borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: activeTab === tab ? 600 : 400,
+                transition: 'color 150ms ease, border-color 150ms ease',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <button
-          onClick={() => setActiveTab('preview')}
+          onClick={() => setHelpOpen((v) => !v)}
+          title={helpOpen ? '操作方法を閉じる' : '操作方法'}
           style={{
-            flex: 1,
-            padding: '12px',
-            background: activeTab === 'preview' ? '#333' : '#1a1a1a',
-            color: '#fff',
-            border: 'none',
-            borderBottom: activeTab === 'preview' ? '2px solid #00bcd4' : 'none',
+            marginLeft: 'auto',
+            marginRight: '12px',
+            width: '24px',
+            height: '24px',
+            borderRadius: '50%',
+            background: helpOpen ? 'var(--accent)' : 'transparent',
+            color: helpOpen ? 'var(--text)' : 'var(--text-dim)',
+            border: helpOpen ? 'none' : '1px solid var(--border-strong)',
             cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: activeTab === 'preview' ? 'bold' : 'normal',
+            fontSize: '12px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            transition: 'background 150ms ease, color 150ms ease',
           }}
         >
-          3Dで確認する
-        </button>
-        <button
-          onClick={() => setActiveTab('viewer')}
-          style={{
-            flex: 1,
-            padding: '12px',
-            background: activeTab === 'viewer' ? '#333' : '#1a1a1a',
-            color: '#fff',
-            border: 'none',
-            borderBottom: activeTab === 'viewer' ? '2px solid #00bcd4' : 'none',
-            cursor: 'pointer',
-            fontSize: '14px',
-            fontWeight: activeTab === 'viewer' ? 'bold' : 'normal',
-          }}
-        >
-          モデルビューワー
+          ?
         </button>
       </div>
 
-
-
+      {/* Selection bounds bar */}
       {selectionBounds && activeTab === 'map' && (
         <div
           style={{
             padding: '8px 12px',
-            background: '#222',
-            color: '#fff',
+            background: 'var(--surface-solid)',
+            color: 'var(--text-dim)',
             fontSize: '12px',
-            borderBottom: '1px solid #333',
+            borderBottom: '1px solid var(--border)',
+            fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
           }}
         >
           選択範囲: W{selectionBounds.west.toFixed(4)} S{selectionBounds.south.toFixed(4)} E
@@ -361,6 +375,7 @@ function App() {
         </div>
       )}
 
+      {/* Content area */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {activeTab === 'map' && (
           <div
@@ -374,10 +389,11 @@ function App() {
             }}
           >
             <LoadingOverlay message="PLATEAUデータを読み込み中..." visible={isMapLoading} />
+            {/* Left cluster: raised above Cesium attribution */}
             <div
               style={{
                 position: 'absolute',
-                bottom: '16px',
+                bottom: '36px',
                 left: '16px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -388,12 +404,13 @@ function App() {
             >
               <div
                 style={{
-                  background: 'rgba(0, 0, 0, 0.6)',
-                  color: '#ccc',
+                  background: 'var(--surface)',
+                  color: 'var(--text-dim)',
                   padding: '6px 12px',
                   borderRadius: '4px',
                   fontSize: '11px',
                   pointerEvents: 'none',
+                  backdropFilter: 'blur(4px)',
                 }}
               >
                 Shift + ドラッグ で範囲選択
@@ -405,9 +422,10 @@ function App() {
                   borderRadius: '4px',
                   fontSize: '11px',
                   cursor: 'pointer',
-                  background: isPickMode ? '#00bcd4' : 'rgba(0, 0, 0, 0.7)',
-                  color: '#fff',
-                  border: isPickMode ? '1px solid #00bcd4' : '1px solid #555',
+                  background: isPickMode ? 'var(--accent)' : 'var(--surface)',
+                  color: 'var(--text)',
+                  border: isPickMode ? '1px solid var(--accent)' : '1px solid var(--border-strong)',
+                  backdropFilter: 'blur(4px)',
                 }}
               >
                 {isPickMode ? '建物ピック中（地図をクリック）' : '建物をピックする'}
@@ -415,12 +433,13 @@ function App() {
               {isPickMode && (
                 <div
                   style={{
-                    background: 'rgba(0, 0, 0, 0.6)',
-                    color: '#ccc',
+                    background: 'var(--surface)',
+                    color: 'var(--text-dim)',
                     padding: '6px 12px',
                     borderRadius: '4px',
                     fontSize: '11px',
                     pointerEvents: 'none',
+                    backdropFilter: 'blur(4px)',
                   }}
                 >
                   クリックした位置の建物だけをエクスポートします
@@ -429,19 +448,20 @@ function App() {
               {pickPoints.length > 0 && (
                 <div
                   style={{
-                    background: 'rgba(0, 0, 0, 0.75)',
-                    color: '#fff',
+                    background: 'var(--surface)',
+                    color: 'var(--text)',
                     padding: '8px 12px',
                     borderRadius: '6px',
                     fontSize: '11px',
                     maxWidth: '260px',
+                    backdropFilter: 'blur(4px)',
                   }}
                 >
                   <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>
                     ピック: {pickPoints.length}件
                   </div>
                   {pickPoints.map((p, idx) => (
-                    <div key={idx} style={{ color: '#ccc', whiteSpace: 'nowrap' }}>
+                    <div key={idx} style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                       {idx + 1}. lon {p.lon.toFixed(5)}, lat {p.lat.toFixed(5)}
                     </div>
                   ))}
@@ -451,8 +471,8 @@ function App() {
                       marginTop: '6px',
                       padding: '4px 10px',
                       fontSize: '11px',
-                      background: '#444',
-                      color: '#fff',
+                      background: 'var(--border)',
+                      color: 'var(--text)',
                       border: 'none',
                       borderRadius: '3px',
                       cursor: 'pointer',
@@ -463,13 +483,16 @@ function App() {
                 </div>
               )}
             </div>
+            {/* Coordinate panel */}
             <div
               style={{
                 position: 'absolute',
-                bottom: '16px',
+                bottom: '44px',
                 right: '16px',
-                background: 'rgba(0, 0, 0, 0.75)',
-                color: '#fff',
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                backdropFilter: 'blur(4px)',
                 padding: '10px',
                 borderRadius: '6px',
                 fontSize: '12px',
@@ -478,59 +501,102 @@ function App() {
               }}
             >
               <div style={{ marginBottom: '6px', fontWeight: 'bold' }}>座標で選択</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginBottom: '6px' }}>
-                <input
-                  type="text"
-                  placeholder="W"
-                  value={manualCoords.west}
-                  onChange={(e) => setManualCoords((prev) => ({ ...prev, west: e.target.value }))}
-                  style={{ width: '100%', padding: '4px', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px' }}
-                />
-                <input
-                  type="text"
-                  placeholder="E"
-                  value={manualCoords.east}
-                  onChange={(e) => setManualCoords((prev) => ({ ...prev, east: e.target.value }))}
-                  style={{ width: '100%', padding: '4px', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px' }}
-                />
-                <input
-                  type="text"
-                  placeholder="S"
-                  value={manualCoords.south}
-                  onChange={(e) => setManualCoords((prev) => ({ ...prev, south: e.target.value }))}
-                  style={{ width: '100%', padding: '4px', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px' }}
-                />
-                <input
-                  type="text"
-                  placeholder="N"
-                  value={manualCoords.north}
-                  onChange={(e) => setManualCoords((prev) => ({ ...prev, north: e.target.value }))}
-                  style={{ width: '100%', padding: '4px', fontSize: '11px', background: '#333', color: '#fff', border: '1px solid #555', borderRadius: '3px' }}
-                />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '6px' }}>
+                {([
+                  ['west', '西'],
+                  ['east', '東'],
+                  ['south', '南'],
+                  ['north', '北'],
+                ] as const).map(([key, label]) => (
+                  <div key={key}>
+                    <div
+                      style={{
+                        fontSize: '9px',
+                        color: 'var(--text-muted)',
+                        marginBottom: '2px',
+                        letterSpacing: '0.05em',
+                      }}
+                    >
+                      {label}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder={key === 'west' ? '139.805' : key === 'east' ? '139.808' : key === 'south' ? '35.747' : '35.749'}
+                      value={manualCoords[key]}
+                      onChange={(e) => setManualCoords((prev) => ({ ...prev, [key]: e.target.value }))}
+                      style={{
+                        width: '100%',
+                        padding: '4px',
+                        fontSize: '11px',
+                        background: 'var(--border)',
+                        color: 'var(--text)',
+                        border: '1px solid var(--border-strong)',
+                        borderRadius: '3px',
+                      }}
+                    />
+                  </div>
+                ))}
               </div>
               <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
                 <button
                   onClick={() => applyPreset({ west: 139.8053, south: 35.7470, east: 139.8080, north: 35.7495 })}
-                  style={{ flex: 1, padding: '4px', fontSize: '10px', background: '#444', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                  style={{
+                    flex: 1,
+                    padding: '4px',
+                    fontSize: '10px',
+                    background: 'var(--border)',
+                    color: 'var(--text)',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                  }}
                 >
                   足立区
                 </button>
                 <button
                   onClick={() => applyPreset({ west: 139.6899, south: 35.7029, east: 139.6932, north: 35.7070 })}
-                  style={{ flex: 1, padding: '4px', fontSize: '10px', background: '#444', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                  style={{
+                    flex: 1,
+                    padding: '4px',
+                    fontSize: '10px',
+                    background: 'var(--border)',
+                    color: 'var(--text)',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                  }}
                 >
                   新宿
                 </button>
                 <button
                   onClick={() => applyPreset({ west: 139.7639, south: 35.6764, east: 139.7708, north: 35.6855 })}
-                  style={{ flex: 1, padding: '4px', fontSize: '10px', background: '#444', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                  style={{
+                    flex: 1,
+                    padding: '4px',
+                    fontSize: '10px',
+                    background: 'var(--border)',
+                    color: 'var(--text)',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: 'pointer',
+                  }}
                 >
                   東京駅
                 </button>
               </div>
               <button
                 onClick={handleManualSelect}
-                style={{ width: '100%', padding: '6px', fontSize: '11px', background: '#00bcd4', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                style={{
+                  width: '100%',
+                  padding: '6px',
+                  fontSize: '11px',
+                  background: 'var(--accent)',
+                  color: 'var(--text)',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
               >
                 適用
               </button>
@@ -540,6 +606,58 @@ function App() {
         {activeTab === 'preview' && (
           <div style={{ display: 'flex', width: '100%', height: '100%' }}>
             <div style={{ flex: 1, position: 'relative' }}>
+              {!selectionBounds && !isMapLoading && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '16px',
+                    color: 'var(--text-dim)',
+                    zIndex: 10,
+                    background: 'var(--bg)',
+                  }}
+                >
+                  <svg
+                    width="48"
+                    height="48"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <path d="M9 3v18M3 9h18" />
+                  </svg>
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ margin: 0, fontSize: '14px', fontWeight: 500, color: 'var(--text)' }}>
+                      範囲が選択されていません
+                    </p>
+                    <p style={{ margin: '8px 0 0', fontSize: '13px' }}>
+                      「範囲選択」タブで地図上の範囲を指定してください
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('map')}
+                    style={{
+                      marginTop: '4px',
+                      padding: '8px 20px',
+                      background: 'var(--accent)',
+                      color: 'var(--text)',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    範囲選択へ移動
+                  </button>
+                </div>
+              )}
               <Preview3D
                 selectionBounds={selectionBounds}
                 lod={parameters.lod}
@@ -581,7 +699,7 @@ function App() {
             <ModelViewer manifoldRef={manifoldRef} />
           </div>
         )}
-        <HelpPanel mode={activeTab} />
+        <HelpPanel mode={activeTab} isOpen={helpOpen} />
       </div>
 
       <LoadingOverlay message="WASMを初期化中..." visible={isWasmLoading && activeTab === 'map'} />
@@ -596,4 +714,3 @@ function App() {
 }
 
 export default App
-

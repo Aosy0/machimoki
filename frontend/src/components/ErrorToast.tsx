@@ -16,8 +16,8 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
         top: '60px',
         left: '50%',
         transform: 'translateX(-50%)',
-        background: '#d32f2f',
-        color: '#fff',
+        background: 'var(--error)',
+        color: 'var(--text)',
         padding: '12px 20px',
         borderRadius: '6px',
         display: 'flex',
@@ -35,8 +35,8 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
           onClick={onRetry}
           style={{
             background: 'transparent',
-            border: '1px solid #fff',
-            color: '#fff',
+            border: '1px solid var(--text)',
+            color: 'var(--text)',
             padding: '4px 12px',
             borderRadius: '4px',
             cursor: 'pointer',
@@ -52,7 +52,7 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
           style={{
             background: 'transparent',
             border: 'none',
-            color: '#fff',
+            color: 'var(--text)',
             cursor: 'pointer',
             fontSize: '18px',
             lineHeight: 1,

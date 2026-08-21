@@ -17,32 +17,23 @@ function LoadingOverlay({ message, visible, progress }: LoadingOverlayProps) {
         left: 0,
         right: 0,
         bottom: 0,
-        background: 'rgba(0, 0, 0, 0.7)',
+        background: 'var(--surface)',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 1000,
-        color: '#fff',
+        color: 'var(--text)',
       }}
     >
-      <div
-        style={{
-          width: '40px',
-          height: '40px',
-          border: '4px solid #333',
-          borderTop: '4px solid #00bcd4',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite',
-        }}
-      />
+      <div className="machimoki-spinner" />
       <p style={{ marginTop: '16px', fontSize: '14px' }}>{message}</p>
       {progress !== undefined && (
         <div
           style={{
             width: '200px',
             height: '6px',
-            background: '#333',
+            background: 'var(--border)',
             borderRadius: '3px',
             marginTop: '12px',
             overflow: 'hidden',
@@ -52,14 +43,27 @@ function LoadingOverlay({ message, visible, progress }: LoadingOverlayProps) {
             style={{
               width: `${Math.max(0, Math.min(100, progress))}%`,
               height: '100%',
-              background: '#00bcd4',
+              background: 'var(--accent)',
               borderRadius: '3px',
               transition: 'width 0.2s ease',
             }}
           />
         </div>
       )}
-      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        .machimoki-spinner {
+          width: 40px;
+          height: 40px;
+          border: 4px solid var(--border);
+          border-top-color: var(--accent);
+          border-radius: 50%;
+          animation: machimoki-spin 1s linear infinite;
+        }
+        @keyframes machimoki-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   )
 }

@@ -133,8 +133,10 @@ interface SceneData {
 
 export default function ModelViewer({ manifoldRef }: ModelViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const sceneDataRef = useRef<SceneData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [hasModel, setHasModel] = useState(false)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -307,6 +309,7 @@ export default function ModelViewer({ manifoldRef }: ModelViewerProps) {
         data.scene.add(mesh)
         data.mesh = mesh
         data.manifold = manifold
+        setHasModel(true)
 
         fitCameraToMesh(mesh)
       } catch (err) {
@@ -320,31 +323,89 @@ export default function ModelViewer({ manifoldRef }: ModelViewerProps) {
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* Empty state */}
+      {!hasModel && !error && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '16px',
+            color: 'var(--text-dim)',
+            zIndex: 5,
+            pointerEvents: 'none',
+          }}
+        >
+          <svg
+            width="48"
+            height="48"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+            <line x1="12" y1="22.08" x2="12" y2="12" />
+          </svg>
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ margin: 0, fontSize: '14px', fontWeight: 500, color: 'var(--text)' }}>
+              モデルが読み込まれていません
+            </p>
+            <p style={{ margin: '8px 0 0', fontSize: '13px' }}>
+              上のパネルから3MFまたはSTLファイルを読み込んでください
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* File input panel */}
       <div
         style={{
           position: 'absolute',
           top: '16px',
           left: '16px',
           zIndex: 10,
-          background: 'rgba(0, 0, 0, 0.7)',
+          background: 'var(--surface)',
           padding: '12px',
           borderRadius: '6px',
-          color: '#fff',
+          color: 'var(--text)',
           fontSize: '13px',
           maxWidth: '320px',
+          backdropFilter: 'blur(8px)',
+          border: '1px solid var(--border)',
         }}
       >
-        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+        <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', fontSize: '13px' }}>
           3Dモデルを読み込む
         </label>
         <input
+          ref={fileInputRef}
           type="file"
           accept=".3mf,.stl"
           onChange={handleFileChange}
-          style={{ color: '#fff', fontSize: '12px' }}
+          style={{ display: 'none' }}
         />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          style={{
+            padding: '6px 14px',
+            background: 'var(--border)',
+            color: 'var(--text)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: '4px',
+            fontSize: '12px',
+            cursor: 'pointer',
+          }}
+        >
+          ファイルを選択
+        </button>
         {error && (
-          <div style={{ marginTop: '8px', color: '#ff6b6b', fontSize: '12px' }}>{error}</div>
+          <div style={{ marginTop: '8px', color: 'var(--error)', fontSize: '12px' }}>{error}</div>
         )}
       </div>
     </div>

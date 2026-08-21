@@ -1,56 +1,68 @@
-import React from 'react';
+import React from 'react'
 
 interface HelpPanelProps {
-  mode: 'map' | 'preview' | 'viewer';
+  mode: 'map' | 'preview' | 'viewer'
+  isOpen: boolean
 }
 
-const HelpPanel: React.FC<HelpPanelProps> = ({ mode }) => {
-const mapControls = [
-    '🖱 左ドラッグ: 地図移動',
-    '🖱 中ボタン: 視点回転',
-    '🖱 ホイール: ズーム',
-    '⌨ Shift + 左ドラッグ: 範囲選択',
-  ];
+const HelpPanel: React.FC<HelpPanelProps> = ({ mode, isOpen }) => {
+  const mapControls = [
+    '左ドラッグ: 地図移動',
+    'ホイール: ズーム',
+    'Shift + 左ドラッグ: 範囲選択',
+  ]
 
   const previewControls = [
-    '🖱 左ドラッグ: 視点回転',
-    '🖱 右ドラッグ: 平行移動',
-    '🖱 スクロール: ズーム',
-  ];
+    '左ドラッグ: 視点回転',
+    '右ドラッグ: 平行移動',
+    'スクロール: ズーム',
+  ]
 
   const viewerControls = [
-    '🖱 左ドラッグ: 視点回転',
-    '🖱 右ドラッグ: 平行移動',
-    '🖱 スクロール: ズーム',
-  ];
+    '左ドラッグ: 視点回転',
+    '右ドラッグ: 平行移動',
+    'スクロール: ズーム',
+  ]
 
-  const controls = mode === 'map' ? mapControls : mode === 'viewer' ? viewerControls : previewControls;
+  const controls = mode === 'map' ? mapControls : mode === 'viewer' ? viewerControls : previewControls
+
+  if (!isOpen) return null
 
   return (
     <div
       style={{
         position: 'absolute',
-        bottom: '16px',
+        top: '12px',
         right: '16px',
-        background: 'rgba(0, 0, 0, 0.7)',
-        color: '#fff',
+        zIndex: 300,
+        background: 'var(--surface)',
+        color: 'var(--text)',
         padding: '12px 16px',
         borderRadius: '8px',
         fontSize: '12px',
         lineHeight: '1.8',
-        zIndex: 100,
         maxWidth: '220px',
-        backdropFilter: 'blur(4px)',
+        backdropFilter: 'blur(8px)',
+        border: '1px solid var(--border)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
       }}
     >
-      <div style={{ fontWeight: 'bold', marginBottom: '6px', fontSize: '13px' }}>
-        🎮 操作方法
+      <div
+        style={{
+          fontWeight: 600,
+          marginBottom: '6px',
+          fontSize: '12px',
+          color: 'var(--text-dim)',
+          letterSpacing: '0.04em',
+        }}
+      >
+        操作方法
       </div>
       {controls.map((text, i) => (
         <div key={i}>{text}</div>
       ))}
     </div>
-  );
-};
+  )
+}
 
-export default HelpPanel;
+export default HelpPanel
