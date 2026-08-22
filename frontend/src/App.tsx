@@ -51,6 +51,7 @@ function App() {
   const manifoldRef = useRef<any>(null)
   const pickMarkerEntitiesRef = useRef<Entity[]>([])
   const [pickPoints, setPickPoints] = useState<PickPoint[]>([])
+  const [excludedBuildingIds, setExcludedBuildingIds] = useState<string[]>([])
   const [isPickMode, setIsPickMode] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [pipelineState, setPipelineState] = useState<PipelineState>({
@@ -88,6 +89,10 @@ function App() {
   usePointPicking(viewer, isPickMode, handlePickPoint)
 
   useEffect(() => {
+    setExcludedBuildingIds([])
+  }, [selectionBounds])
+
+  useEffect(() => {
     if (!viewer || activeTab !== 'map') return
     for (const entity of pickMarkerEntitiesRef.current) {
       viewer.entities.remove(entity)
@@ -104,6 +109,12 @@ function App() {
         },
       })
       pickMarkerEntitiesRef.current.push(entity)
+    }
+    return () => {
+      for (const entity of pickMarkerEntitiesRef.current) {
+        viewer?.entities?.remove(entity)
+      }
+      pickMarkerEntitiesRef.current = []
     }
   }, [viewer, activeTab, pickPoints])
 
@@ -191,13 +202,14 @@ function App() {
         scale,
         includeSpanningBuildings: parameters.includeSpanningBuildings,
         pickPoints,
+        excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
       })
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
     } finally {
       setIsExporting(false)
     }
-  }, [parameters, selectionBounds, scale, pickPoints])
+  }, [parameters, selectionBounds, scale, pickPoints, excludedBuildingIds])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
   const handleDismissError = () => {
@@ -673,6 +685,8 @@ function App() {
                 onScaleChange={setScale}
                 includeSpanningBuildings={parameters.includeSpanningBuildings}
                 pickPoints={pickPoints}
+                excludedBuildingIds={excludedBuildingIds}
+                onExcludedBuildingIdsChange={setExcludedBuildingIds}
               />
               <LoadingOverlay
                 message={pipelineState.message}

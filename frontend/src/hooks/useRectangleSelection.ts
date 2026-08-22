@@ -24,8 +24,19 @@ export function useRectangleSelection(viewer: Viewer | null) {
 
   const startCartographic = useRef<Cartographic | null>(null)
   const currentCartographic = useRef<Cartographic | null>(null)
-  const rectangleEntity = useRef<Entity | null>(null)
+  const draftRectangleEntity = useRef<Entity | null>(null)
+  const confirmedRectangleEntity = useRef<Entity | null>(null)
   const isDrawingRef = useRef(false)
+
+  // viewer.destroy() 後も isDestroyed() 自体は安全に呼べる
+  const isViewerAlive = (v: Viewer | null): v is Viewer => {
+    if (!v) return false
+    try {
+      return !v.isDestroyed()
+    } catch {
+      return false
+    }
+  }
 
   const validateSelection = useCallback(
     (west: number, south: number, east: number, north: number): string | null => {
@@ -45,10 +56,16 @@ export function useRectangleSelection(viewer: Viewer | null) {
   }, [])
 
   const reset = useCallback(() => {
-    if (viewer && rectangleEntity.current) {
-      viewer.entities.remove(rectangleEntity.current)
+    if (isViewerAlive(viewer)) {
+      if (draftRectangleEntity.current) {
+        viewer.entities.remove(draftRectangleEntity.current)
+      }
+      if (confirmedRectangleEntity.current) {
+        viewer.entities.remove(confirmedRectangleEntity.current)
+      }
     }
-    rectangleEntity.current = null
+    draftRectangleEntity.current = null
+    confirmedRectangleEntity.current = null
     startCartographic.current = null
     currentCartographic.current = null
     isDrawingRef.current = false
@@ -57,8 +74,43 @@ export function useRectangleSelection(viewer: Viewer | null) {
     setErrorMessage(null)
   }, [viewer])
 
+  // selectionBounds に同期して確定矩形を更新
   useEffect(() => {
-    if (!viewer) return
+    if (!isViewerAlive(viewer)) return
+
+    if (confirmedRectangleEntity.current) {
+      viewer.entities.remove(confirmedRectangleEntity.current)
+      confirmedRectangleEntity.current = null
+    }
+
+    if (selectionBounds) {
+      confirmedRectangleEntity.current = viewer.entities.add({
+        rectangle: {
+          coordinates: Rectangle.fromDegrees(
+            selectionBounds.west,
+            selectionBounds.south,
+            selectionBounds.east,
+            selectionBounds.north
+          ),
+          material: Color.CYAN.withAlpha(0.15),
+          outline: true,
+          outlineColor: Color.CYAN,
+        },
+      })
+    }
+
+    return () => {
+      if (confirmedRectangleEntity.current) {
+        if (isViewerAlive(viewer)) {
+          viewer.entities.remove(confirmedRectangleEntity.current)
+        }
+        confirmedRectangleEntity.current = null
+      }
+    }
+  }, [viewer, selectionBounds])
+
+  useEffect(() => {
+    if (!isViewerAlive(viewer)) return
 
     const canvas = viewer.scene.canvas
 
@@ -71,7 +123,12 @@ export function useRectangleSelection(viewer: Viewer | null) {
       isDrawingRef.current = true
       setIsDrawing(true)
 
-      rectangleEntity.current = viewer.entities.add({
+      // 確定矩形を一時的に非表示
+      if (confirmedRectangleEntity.current) {
+        confirmedRectangleEntity.current.show = false
+      }
+
+      draftRectangleEntity.current = viewer.entities.add({
         rectangle: {
           coordinates: new CallbackProperty(() => {
             if (!startCartographic.current) return Rectangle.fromDegrees(0, 0, 0, 0)
@@ -117,16 +174,20 @@ export function useRectangleSelection(viewer: Viewer | null) {
     }
 
     const finishSelection = () => {
-      if (!isDrawingRef.current || !startCartographic.current || !rectangleEntity.current) return
+      if (!isDrawingRef.current || !startCartographic.current || !draftRectangleEntity.current) return
       isDrawingRef.current = false
       setIsDrawing(false)
 
       const current = currentCartographic.current
       if (!current) {
-        viewer.entities.remove(rectangleEntity.current)
-        rectangleEntity.current = null
+        viewer.entities.remove(draftRectangleEntity.current)
+        draftRectangleEntity.current = null
         startCartographic.current = null
         currentCartographic.current = null
+        // クリックのみでキャンセルされた場合は確定矩形を復帰
+        if (confirmedRectangleEntity.current) {
+          confirmedRectangleEntity.current.show = true
+        }
         return
       }
 
@@ -146,20 +207,25 @@ export function useRectangleSelection(viewer: Viewer | null) {
       const validationError = validateSelection(west, south, east, north)
       if (validationError) {
         setErrorMessage(validationError)
-        viewer.entities.remove(rectangleEntity.current)
-        rectangleEntity.current = null
+        viewer.entities.remove(draftRectangleEntity.current)
+        draftRectangleEntity.current = null
         startCartographic.current = null
         currentCartographic.current = null
+        // 検証エラーの場合も確定矩形を復帰
+        if (confirmedRectangleEntity.current) {
+          confirmedRectangleEntity.current.show = true
+        }
         return
       }
 
       setErrorMessage(null)
       setSelectionBounds({ west, south, east, north })
 
-      viewer.entities.remove(rectangleEntity.current)
-      rectangleEntity.current = null
+      viewer.entities.remove(draftRectangleEntity.current)
+      draftRectangleEntity.current = null
       startCartographic.current = null
       currentCartographic.current = null
+      // 確定矩形は selectionBounds useEffect で再作成されるため、ここでは show を戻さなくてよい
     }
 
     const handlePointerDown = (e: PointerEvent) => {
@@ -188,14 +254,18 @@ export function useRectangleSelection(viewer: Viewer | null) {
 
     const handlePointerLeave = () => {
       if (isDrawingRef.current) {
-        if (rectangleEntity.current) {
-          viewer.entities.remove(rectangleEntity.current)
-          rectangleEntity.current = null
+        if (draftRectangleEntity.current) {
+          viewer.entities.remove(draftRectangleEntity.current)
+          draftRectangleEntity.current = null
         }
         startCartographic.current = null
         currentCartographic.current = null
         isDrawingRef.current = false
         setIsDrawing(false)
+        // キャンバス離脱時も確定矩形を復帰
+        if (confirmedRectangleEntity.current) {
+          confirmedRectangleEntity.current.show = true
+        }
       }
     }
 

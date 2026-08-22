@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Viewer,
   Cesium3DTileset,
-  Cesium3DTileStyle,
   Color,
   Cartesian3,
   Math as CesiumMath,
@@ -14,8 +13,11 @@ import {
   UrlTemplateImageryProvider,
   HeadingPitchRange,
   Matrix4,
+  ScreenSpaceEventHandler,
+  ScreenSpaceEventType,
+  Cesium3DTileFeature,
 } from 'cesium'
-import type { BoundingSphere, Primitive, TerrainProvider } from 'cesium'
+import type { BoundingSphere, Cartesian2, Cesium3DTile, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
@@ -38,37 +40,6 @@ function sameBounds(a: SelectionBounds, b: SelectionBounds): boolean {
   return a.west === b.west && a.south === b.south && a.east === b.east && a.north === b.north
 }
 
-/**
- * Cesium3DTileStyleのshow式を組み立てる。
- *
- * PLATEAUタイルは `_xmin/_xmax/_ymin/_ymax`（フットプリントbbox）を持つが、
- * 一部データセットでは存在しない可能性がある。`\${_xmin} === undefined` の
- * ランタイム判定でフォールバック（中心点 `_x`/`_y`）に切り替える。
- *
- * - includeSpanning=true: フットプリントが範囲と交差する建物を表示
- * - includeSpanning=false: フットプリントが範囲に完全内包される建物のみ表示
- */
-function buildShowExpr(
-  bounds: SelectionBounds,
-  includeSpanning: boolean,
-  pickPoints?: Array<{ lon: number; lat: number }>
-): string {
-  if (pickPoints && pickPoints.length > 0) {
-    const eps = 1e-4
-    const terms = pickPoints.map(
-      (p) =>
-        `((\${_xmin} !== undefined && \${_xmin} <= ${p.lon} && \${_xmax} >= ${p.lon} && \${_ymin} <= ${p.lat} && \${_ymax} >= ${p.lat}) || ` +
-        `(\${_xmin} === undefined && \${_x} >= ${p.lon - eps} && \${_x} <= ${p.lon + eps} && \${_y} >= ${p.lat - eps} && \${_y} <= ${p.lat + eps}))`
-    )
-    return terms.join(' || ')
-  }
-  const centerExpr = `\${_x} >= ${bounds.west} && \${_x} <= ${bounds.east} && \${_y} >= ${bounds.south} && \${_y} <= ${bounds.north}`
-  const footprintExpr = includeSpanning
-    ? `\${_xmin} <= ${bounds.east} && \${_xmax} >= ${bounds.west} && \${_ymin} <= ${bounds.north} && \${_ymax} >= ${bounds.south}`
-    : `\${_xmin} >= ${bounds.west} && \${_xmax} <= ${bounds.east} && \${_ymin} >= ${bounds.south} && \${_ymax} <= ${bounds.north}`
-  return `\${_xmin} === undefined ? (${centerExpr}) : (${footprintExpr})`
-}
-
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
   lod: Lod
@@ -84,6 +55,8 @@ interface Preview3DProps {
   onScaleChange?: (newScale: number) => void
   includeSpanningBuildings?: boolean
   pickPoints?: Array<{ lon: number; lat: number }>
+  excludedBuildingIds?: string[]
+  onExcludedBuildingIdsChange?: (ids: string[]) => void
 }
 
 export default function Preview3D({
@@ -101,6 +74,8 @@ export default function Preview3D({
   onScaleChange,
   includeSpanningBuildings = false,
   pickPoints,
+  excludedBuildingIds,
+  onExcludedBuildingIdsChange,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -112,6 +87,111 @@ export default function Preview3D({
   const appliedTerrainParamsRef = useRef<{ terrainThickness: number; flattenBottom: boolean; terrainColor: string } | null>(null)
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [terrainProvider, setTerrainProvider] = useState<TerrainProvider | null>(null)
+
+  const excludedIdsRef = useRef<Set<string>>(new Set())
+  const undoStackRef = useRef<string[]>([])
+  const gmlidPropNameRef = useRef<string | null>(null)
+  const hoveredFeatureRef = useRef<Cesium3DTileFeature | null>(null)
+  const handlerRef = useRef<ScreenSpaceEventHandler | null>(null)
+  const tileLoadHandlerRef = useRef<((tile: any) => void) | null>(null)
+  const onExcludedChangeRef = useRef(onExcludedBuildingIdsChange)
+  const buildingColorRef = useRef(buildingColor)
+  const [excludedCount, setExcludedCount] = useState(0)
+
+  buildingColorRef.current = buildingColor
+  onExcludedChangeRef.current = onExcludedBuildingIdsChange
+
+  const baseBuildingColor = (): Color => Color.fromCssColorString(buildingColorRef.current)
+
+  const resolveGmlidProp = (feature: Cesium3DTileFeature): string | null => {
+    if (gmlidPropNameRef.current) return gmlidPropNameRef.current
+    const candidates = ['gmlid', 'gml_id', '_gmlid']
+    for (const candidate of candidates) {
+      let value: unknown
+      try {
+        value = feature.getProperty(candidate)
+      } catch {
+        continue
+      }
+      if (typeof value === 'string' && value.length > 0) {
+        gmlidPropNameRef.current = candidate
+        return candidate
+      }
+    }
+    return null
+  }
+
+  const getBuildingId = (feature: Cesium3DTileFeature): string | null => {
+    const prop = resolveGmlidProp(feature)
+    if (!prop) return null
+    const value: unknown = feature.getProperty(prop)
+    return typeof value === 'string' && value.length > 0 ? value : null
+  }
+
+  // scene.pick() は Cesium バージョンにより feature 自体または { id: feature } を返す
+  const asTileFeature = (
+    picked: unknown
+  ): Cesium3DTileFeature | null => {
+    if (!picked || typeof picked !== 'object') return null
+    const obj = picked as { id?: unknown }
+    const candidate =
+      obj.id instanceof Cesium3DTileFeature ? obj.id : (picked as Cesium3DTileFeature)
+    if (
+      candidate instanceof Cesium3DTileFeature &&
+      typeof candidate.getProperty === 'function'
+    ) {
+      return candidate
+    }
+    return null
+  }
+
+  const forEachContentFeature = (
+    tile: Cesium3DTile | undefined,
+    cb: (feature: Cesium3DTileFeature) => void
+  ): void => {
+    if (!tile) return
+    const content = tile.content as any
+    if (content && content.featuresLength > 0) {
+      for (let i = 0; i < content.featuresLength; i++) {
+        const feature = content.getFeature(i)
+        if (feature) cb(feature as Cesium3DTileFeature)
+      }
+    }
+    const children = (tile.children ?? []) as Cesium3DTile[]
+    for (const child of children) {
+      forEachContentFeature(child, cb)
+    }
+  }
+
+  const forEachBuildingFeature = (
+    cb: (feature: Cesium3DTileFeature) => void
+  ): void => {
+    for (const ts of tilesetsRef.current) {
+      forEachContentFeature(ts.root, cb)
+    }
+  }
+
+  const applyStateToFeature = (feature: Cesium3DTileFeature): void => {
+    const id = getBuildingId(feature)
+    if (id && excludedIdsRef.current.has(id)) {
+      feature.show = false
+    } else {
+      feature.color = baseBuildingColor()
+    }
+  }
+
+  const restoreFiltersAndColors = (): void => {
+    for (const ts of tilesetsRef.current) {
+      refilterSpanning(ts)
+    }
+    forEachBuildingFeature(applyStateToFeature)
+  }
+
+  if (!tileLoadHandlerRef.current) {
+    tileLoadHandlerRef.current = (tile: any) => {
+      forEachContentFeature(tile, applyStateToFeature)
+    }
+  }
 
   const latestTerrainParamsRef = useRef({ terrainThickness, flattenBottom, terrainColor })
   latestTerrainParamsRef.current = { terrainThickness, flattenBottom, terrainColor }
@@ -178,6 +258,13 @@ export default function Preview3D({
 
     return () => {
       for (const ts of tilesetsRef.current) {
+        if (tileLoadHandlerRef.current) {
+          try {
+            ts.tileLoad.removeEventListener(tileLoadHandlerRef.current)
+          } catch {
+            void 0
+          }
+        }
         try {
           viewer.scene.primitives.remove(ts)
         } catch {
@@ -246,6 +333,13 @@ export default function Preview3D({
     }
 
     for (const ts of tilesetsRef.current) {
+      if (tileLoadHandlerRef.current) {
+        try {
+          ts.tileLoad.removeEventListener(tileLoadHandlerRef.current)
+        } catch {
+          void 0
+        }
+      }
       try {
         viewer.scene.primitives.remove(ts)
       } catch {
@@ -373,11 +467,9 @@ export default function Preview3D({
 
             applyClippingToTileset(tileset, bounds, includeSpanningBuildings, pickPoints)
 
-            const showExpr = buildShowExpr(bounds, includeSpanningBuildings, pickPoints)
-            tileset.style = new Cesium3DTileStyle({
-              color: `color("${buildingColor}")`,
-              show: showExpr,
-            })
+            if (tileLoadHandlerRef.current) {
+              tileset.tileLoad.addEventListener(tileLoadHandlerRef.current)
+            }
           } catch (err) {
             console.warn('[Preview3D] Failed to load tileset:', url, err)
           }
@@ -399,6 +491,7 @@ export default function Preview3D({
         }
 
         tilesetsRef.current = loadedTilesets
+        forEachBuildingFeature(applyStateToFeature)
         console.log('[Preview3D] Loaded tilesets:', loadedTilesets.length)
 
         let terrainBoundingSphere: BoundingSphere | null = null
@@ -511,16 +604,105 @@ export default function Preview3D({
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, includeTerrain])
 
   useEffect(() => {
-    if (tilesetsRef.current.length && selectionBounds) {
-      const showExpr = buildShowExpr(selectionBounds, includeSpanningBuildings, pickPoints)
-      for (const tileset of tilesetsRef.current) {
-        tileset.style = new Cesium3DTileStyle({
-          color: `color("${buildingColor}")`,
-          show: showExpr,
-        })
-      }
+    forEachBuildingFeature((feature) => {
+      const id = getBuildingId(feature)
+      if (id && excludedIdsRef.current.has(id)) return
+      feature.color = baseBuildingColor()
+    })
+  }, [buildingColor])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    if (!selectionBounds) {
+      handlerRef.current?.destroy()
+      handlerRef.current = null
+      hoveredFeatureRef.current = null
+      viewer.scene.canvas.style.cursor = 'default'
+      return
     }
-  }, [buildingColor, selectionBounds, includeSpanningBuildings, pickPoints])
+
+    const canvas = viewer.scene.canvas
+    const handler = new ScreenSpaceEventHandler(canvas)
+
+    const clearHover = (): void => {
+      const hovered = hoveredFeatureRef.current
+      if (hovered) {
+        applyStateToFeature(hovered)
+        hoveredFeatureRef.current = null
+      }
+      canvas.style.cursor = 'default'
+    }
+
+    handler.setInputAction((movement: { endPosition: Cartesian2 }) => {
+      if (handler.isDestroyed()) return
+      const feature = asTileFeature(viewer.scene.pick(movement.endPosition))
+      if (feature === hoveredFeatureRef.current) return
+      clearHover()
+      if (feature && feature.show) {
+        feature.color = Color.fromCssColorString('#ff9800').withAlpha(0.8)
+        hoveredFeatureRef.current = feature
+        canvas.style.cursor = 'pointer'
+      }
+    }, ScreenSpaceEventType.MOUSE_MOVE)
+
+    handler.setInputAction((click: { position: Cartesian2 }) => {
+      if (handler.isDestroyed()) return
+      const feature = asTileFeature(viewer.scene.pick(click.position))
+      if (!feature) return
+      const id = getBuildingId(feature)
+      if (!id || excludedIdsRef.current.has(id)) return
+      excludedIdsRef.current.add(id)
+      undoStackRef.current.push(id)
+      feature.show = false
+      hoveredFeatureRef.current = null
+      canvas.style.cursor = 'default'
+      setExcludedCount(excludedIdsRef.current.size)
+      onExcludedChangeRef.current?.([...excludedIdsRef.current])
+    }, ScreenSpaceEventType.LEFT_CLICK)
+
+    handlerRef.current = handler
+
+    return () => {
+      handler.destroy()
+      handlerRef.current = null
+      hoveredFeatureRef.current = null
+      canvas.style.cursor = 'default'
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionBounds])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key.toLowerCase() !== 'z' || e.shiftKey) return
+      e.preventDefault()
+      const last = undoStackRef.current.pop()
+      if (!last) return
+      excludedIdsRef.current.delete(last)
+      restoreFiltersAndColors()
+      setExcludedCount(excludedIdsRef.current.size)
+      onExcludedChangeRef.current?.([...excludedIdsRef.current])
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const next = new Set(excludedBuildingIds ?? [])
+    const current = excludedIdsRef.current
+    const same =
+      next.size === current.size &&
+      Array.from(next).every((id) => current.has(id))
+    if (same) return
+    excludedIdsRef.current = next
+    undoStackRef.current = []
+    restoreFiltersAndColors()
+    setExcludedCount(next.size)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excludedBuildingIds])
 
   useEffect(() => {
     for (const tileset of tilesetsRef.current) {
@@ -569,6 +751,26 @@ export default function Preview3D({
   return (
     <div style={wrapperStyle}>
       <div ref={containerRef} style={containerStyle} />
+      {selectionBounds && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '16px',
+            left: '16px',
+            zIndex: 10,
+            pointerEvents: 'none',
+            background: 'var(--surface)',
+            color: 'var(--text-dim)',
+            padding: '6px 12px',
+            borderRadius: '4px',
+            fontSize: '11px',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          建物にカーソルを合わせてクリックで削除 / Ctrl+Zで取り消し
+          {excludedCount > 0 && `（削除済み ${excludedCount}件）`}
+        </div>
+      )}
       <ModelSizeOverlay
         selectionBounds={selectionBounds}
         scale={scale}

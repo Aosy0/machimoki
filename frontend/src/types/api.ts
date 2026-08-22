@@ -19,7 +19,8 @@ export interface ExportOptions {
   upAxis?: UpAxis;
   scale?: number;
   includeSpanningBuildings?: boolean;
-  pickPoints?: Array<{ lon: number; lat: number }>
+  pickPoints?: Array<{ lon: number; lat: number }>;
+  excludedGmlIds?: string[];
 }
 
 export interface ValidationResult {
