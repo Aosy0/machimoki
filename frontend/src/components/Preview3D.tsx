@@ -29,6 +29,7 @@ import {
   type TerrainSampleData,
 } from '../lib/solidTerrain'
 import ModelSizeOverlay from './ModelSizeOverlay'
+import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 
 function clearGlobeClippingPlanes(
   globe: { clippingPlanes: ClippingPlaneCollection | undefined }
@@ -96,7 +97,10 @@ export default function Preview3D({
   const tileLoadHandlerRef = useRef<((tile: any) => void) | null>(null)
   const onExcludedChangeRef = useRef(onExcludedBuildingIdsChange)
   const buildingColorRef = useRef(buildingColor)
+  const registryRef = useRef<Map<string, BuildingListItem>>(new Map())
   const [excludedCount, setExcludedCount] = useState(0)
+  const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
+  const [buildingItems, setBuildingItems] = useState<BuildingListItem[]>([])
 
   buildingColorRef.current = buildingColor
   onExcludedChangeRef.current = onExcludedBuildingIdsChange
@@ -190,7 +194,71 @@ export default function Preview3D({
   if (!tileLoadHandlerRef.current) {
     tileLoadHandlerRef.current = (tile: any) => {
       forEachContentFeature(tile, applyStateToFeature)
+      forEachContentFeature(tile, (feature) => {
+        const id = getBuildingId(feature)
+        if (!id || registryRef.current.has(id)) return
+        let height: string | null = null
+        let usage: string | null = null
+        try {
+          const h = feature.getProperty('bldg:measuredHeight')
+          if (h !== undefined && h !== null && String(h).length > 0) {
+            height = String(Math.round(Number(h) * 10) / 10)
+          }
+        } catch {
+          void 0
+        }
+        try {
+          const u = feature.getProperty('bldg:usage')
+          if (typeof u === 'string' && u.length > 0) usage = u
+        } catch {
+          void 0
+        }
+        registryRef.current.set(id, { id, height, usage })
+      })
+      setBuildingItems(Array.from(registryRef.current.values()))
     }
+  }
+
+  const commitExclusions = (): void => {
+    const ids = [...excludedIdsRef.current]
+    setExcludedCount(ids.length)
+    setExcludedIdsState(ids)
+    onExcludedChangeRef.current?.(ids)
+  }
+
+  const excludeBuildingById = (id: string): void => {
+    if (!excludedIdsRef.current.has(id)) {
+      excludedIdsRef.current.add(id)
+      undoStackRef.current.push(id)
+    }
+    forEachBuildingFeature((feature) => {
+      if (getBuildingId(feature) === id && feature.show) feature.show = false
+    })
+    hoveredFeatureRef.current = null
+    commitExclusions()
+  }
+
+  const restoreBuildingById = (id: string): void => {
+    if (!excludedIdsRef.current.has(id)) return
+    excludedIdsRef.current.delete(id)
+    undoStackRef.current = undoStackRef.current.filter((x) => x !== id)
+    restoreFiltersAndColors()
+    commitExclusions()
+  }
+
+  const highlightBuildingById = (id: string | null): void => {
+    const canvas = viewerRef.current?.scene.canvas
+    if (hoveredFeatureRef.current) {
+      applyStateToFeature(hoveredFeatureRef.current)
+      hoveredFeatureRef.current = null
+    }
+    if (!id || !canvas) return
+    forEachBuildingFeature((feature) => {
+      if (hoveredFeatureRef.current) return
+      if (getBuildingId(feature) !== id || !feature.show) return
+      feature.color = Color.fromCssColorString('#ff9800').withAlpha(0.8)
+      hoveredFeatureRef.current = feature
+    })
   }
 
   const latestTerrainParamsRef = useRef({ terrainThickness, flattenBottom, terrainColor })
@@ -347,6 +415,8 @@ export default function Preview3D({
       }
     }
     tilesetsRef.current = []
+    registryRef.current.clear()
+    setBuildingItems([])
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -653,13 +723,8 @@ export default function Preview3D({
       if (!feature) return
       const id = getBuildingId(feature)
       if (!id || excludedIdsRef.current.has(id)) return
-      excludedIdsRef.current.add(id)
-      undoStackRef.current.push(id)
-      feature.show = false
-      hoveredFeatureRef.current = null
       canvas.style.cursor = 'default'
-      setExcludedCount(excludedIdsRef.current.size)
-      onExcludedChangeRef.current?.([...excludedIdsRef.current])
+      excludeBuildingById(id)
     }, ScreenSpaceEventType.LEFT_CLICK)
 
     handlerRef.current = handler
@@ -682,8 +747,7 @@ export default function Preview3D({
       if (!last) return
       excludedIdsRef.current.delete(last)
       restoreFiltersAndColors()
-      setExcludedCount(excludedIdsRef.current.size)
-      onExcludedChangeRef.current?.([...excludedIdsRef.current])
+      commitExclusions()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -701,6 +765,7 @@ export default function Preview3D({
     undoStackRef.current = []
     restoreFiltersAndColors()
     setExcludedCount(next.size)
+    setExcludedIdsState([...next])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [excludedBuildingIds])
 
@@ -770,6 +835,15 @@ export default function Preview3D({
           建物にカーソルを合わせてクリックで削除 / Ctrl+Zで取り消し
           {excludedCount > 0 && `（削除済み ${excludedCount}件）`}
         </div>
+      )}
+      {selectionBounds && (
+        <BuildingListPanel
+          items={buildingItems}
+          excludedIds={excludedIdsState}
+          onExclude={excludeBuildingById}
+          onRestore={restoreBuildingById}
+          onHoverItem={highlightBuildingById}
+        />
       )}
       <ModelSizeOverlay
         selectionBounds={selectionBounds}
