@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
+import { FixedSizeList, type ListChildComponentProps } from 'react-window'
 
 export interface BuildingListItem {
   id: string
@@ -6,21 +7,89 @@ export interface BuildingListItem {
   usage: string | null
 }
 
-interface BuildingListPanelProps {
+export interface BuildingListPanelProps {
   items: BuildingListItem[]
   excludedIds: string[]
+  listLoading: boolean
   onExclude: (id: string) => void
   onRestore: (id: string) => void
   onHoverItem: (id: string | null) => void
 }
 
+interface RowData {
+  items: BuildingListItem[]
+  excludedSet: Set<string>
+  onExclude: (id: string) => void
+  onRestore: (id: string) => void
+  onHoverItem: (id: string | null) => void
+}
+
+const ITEM_SIZE = 28
+const MAX_LIST_HEIGHT = 360
+
 function shortId(id: string): string {
   return id.length > 18 ? `${id.slice(0, 15)}…` : id
 }
 
+const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>) => {
+  const item = data.items[index]
+  const excluded = data.excludedSet.has(item.id)
+  return (
+    <div
+      style={{
+        ...style,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '0 8px',
+        borderBottom: '1px solid var(--border)',
+        opacity: excluded ? 0.55 : 1,
+      }}
+      onMouseEnter={() => data.onHoverItem(item.id)}
+      onMouseLeave={() => data.onHoverItem(null)}
+    >
+      <span
+        title={item.id}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          fontFamily: 'ui-monospace, "SF Mono", monospace',
+          textDecoration: excluded ? 'line-through' : 'none',
+          color: excluded ? 'var(--text-dim)' : 'var(--text)',
+        }}
+      >
+        {shortId(item.id)}
+        {item.height && <span style={{ color: 'var(--text-dim)' }}> / {item.height}m</span>}
+      </span>
+      <button
+        onClick={() => (excluded ? data.onRestore(item.id) : data.onExclude(item.id))}
+        style={{
+          flexShrink: 0,
+          padding: '2px 8px',
+          fontSize: '10px',
+          cursor: 'pointer',
+          borderRadius: '3px',
+          border: excluded
+            ? '1px solid var(--accent)'
+            : '1px solid #b3591f',
+          background: excluded ? 'var(--accent)' : 'transparent',
+          color: excluded ? 'var(--text)' : '#ff9800',
+        }}
+      >
+        {excluded ? '戻す' : '削除'}
+      </button>
+    </div>
+  )
+})
+Row.displayName = 'BuildingListRow'
+
 export default function BuildingListPanel({
   items,
   excludedIds,
+  listLoading,
   onExclude,
   onRestore,
   onHoverItem,
@@ -34,6 +103,13 @@ export default function BuildingListPanel({
     if (!q) return items
     return items.filter((item) => item.id.toLowerCase().includes(q))
   }, [items, filter])
+
+  const itemData = useMemo<RowData>(
+    () => ({ items: filtered, excludedSet, onExclude, onRestore, onHoverItem }),
+    [filtered, excludedSet, onExclude, onRestore, onHoverItem]
+  )
+
+  const listHeight = filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * ITEM_SIZE) : 0
 
   if (items.length === 0) return null
 
@@ -74,6 +150,7 @@ export default function BuildingListPanel({
       >
         <span style={{ color: 'var(--accent)' }}>{open ? '▾' : '▸'}</span>
         建物一覧（{items.length}件 / 削除済み {excludedIds.length}件）
+        {listLoading ? ' 読み込み中…' : ''}
       </button>
       {open && (
         <>
@@ -95,63 +172,20 @@ export default function BuildingListPanel({
               }}
             />
           </div>
-          <div style={{ overflowY: 'auto' }}>
-            {filtered.map((item) => {
-              const excluded = excludedSet.has(item.id)
-              return (
-                <div
-                  key={item.id}
-                  onMouseEnter={() => onHoverItem(item.id)}
-                  onMouseLeave={() => onHoverItem(null)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '5px 8px',
-                    borderBottom: '1px solid var(--border)',
-                    opacity: excluded ? 0.55 : 1,
-                  }}
-                >
-                  <span
-                    title={item.id}
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      fontFamily: 'ui-monospace, "SF Mono", monospace',
-                      textDecoration: excluded ? 'line-through' : 'none',
-                      color: excluded ? 'var(--text-dim)' : 'var(--text)',
-                    }}
-                  >
-                    {shortId(item.id)}
-                    {item.height && <span style={{ color: 'var(--text-dim)' }}> / {item.height}m</span>}
-                  </span>
-                  <button
-                    onClick={() => (excluded ? onRestore(item.id) : onExclude(item.id))}
-                    style={{
-                      flexShrink: 0,
-                      padding: '2px 8px',
-                      fontSize: '10px',
-                      cursor: 'pointer',
-                      borderRadius: '3px',
-                      border: excluded
-                        ? '1px solid var(--accent)'
-                        : '1px solid #b3591f',
-                      background: excluded ? 'var(--accent)' : 'transparent',
-                      color: excluded ? 'var(--text)' : '#ff9800',
-                    }}
-                  >
-                    {excluded ? '戻す' : '削除'}
-                  </button>
-                </div>
-              )
-            })}
-            {filtered.length === 0 && (
-              <div style={{ padding: '10px', color: 'var(--text-dim)' }}>該当なし</div>
-            )}
-          </div>
+          {listHeight > 0 ? (
+            <FixedSizeList
+              height={listHeight}
+              width="100%"
+              itemCount={filtered.length}
+              itemSize={ITEM_SIZE}
+              itemData={itemData}
+              itemKey={(index, data) => data.items[index].id}
+            >
+              {Row}
+            </FixedSizeList>
+          ) : (
+            <div style={{ padding: '10px', color: 'var(--text-dim)' }}>該当なし</div>
+          )}
         </>
       )}
     </div>

@@ -101,6 +101,9 @@ export default function Preview3D({
   const [excludedCount, setExcludedCount] = useState(0)
   const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
   const [buildingItems, setBuildingItems] = useState<BuildingListItem[]>([])
+  const [listLoading, setListLoading] = useState(false)
+  const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
+  const listRafRef = useRef<number | null>(null)
 
   buildingColorRef.current = buildingColor
   onExcludedChangeRef.current = onExcludedBuildingIdsChange
@@ -191,6 +194,16 @@ export default function Preview3D({
     forEachBuildingFeature(applyStateToFeature)
   }
 
+  // タイル読み込みごとに setBuildingItems を呼ぶと再レンダリングが爆発するため、
+  // requestAnimationFrame で 1 フレームに 1 回だけまとめて反映する
+  const scheduleListFlush = (): void => {
+    if (listRafRef.current !== null) return
+    listRafRef.current = requestAnimationFrame(() => {
+      listRafRef.current = null
+      setBuildingItems(Array.from(registryRef.current.values()))
+    })
+  }
+
   if (!tileLoadHandlerRef.current) {
     tileLoadHandlerRef.current = (tile: any) => {
       forEachContentFeature(tile, applyStateToFeature)
@@ -215,7 +228,7 @@ export default function Preview3D({
         }
         registryRef.current.set(id, { id, height, usage })
       })
-      setBuildingItems(Array.from(registryRef.current.values()))
+      scheduleListFlush()
     }
   }
 
@@ -325,6 +338,10 @@ export default function Preview3D({
     loadTerrain()
 
     return () => {
+      if (listRafRef.current !== null) {
+        cancelAnimationFrame(listRafRef.current)
+        listRafRef.current = null
+      }
       for (const ts of tilesetsRef.current) {
         if (tileLoadHandlerRef.current) {
           try {
@@ -333,6 +350,15 @@ export default function Preview3D({
             void 0
           }
         }
+        const fn = progressListenersRef.current.get(ts)
+        if (fn) {
+          try {
+            ts.loadProgress.removeEventListener(fn)
+          } catch {
+            void 0
+          }
+          progressListenersRef.current.delete(ts)
+        }
         try {
           viewer.scene.primitives.remove(ts)
         } catch {
@@ -340,6 +366,7 @@ export default function Preview3D({
         }
       }
       tilesetsRef.current = []
+      progressListenersRef.current.clear()
       if (solidTerrainPrimitiveRef.current) {
         viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
         solidTerrainPrimitiveRef.current = null
@@ -408,6 +435,15 @@ export default function Preview3D({
           void 0
         }
       }
+      const fn = progressListenersRef.current.get(ts)
+      if (fn) {
+        try {
+          ts.loadProgress.removeEventListener(fn)
+        } catch {
+          void 0
+        }
+        progressListenersRef.current.delete(ts)
+      }
       try {
         viewer.scene.primitives.remove(ts)
       } catch {
@@ -416,7 +452,9 @@ export default function Preview3D({
     }
     tilesetsRef.current = []
     registryRef.current.clear()
+    progressListenersRef.current.clear()
     setBuildingItems([])
+    setListLoading(false)
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -534,6 +572,12 @@ export default function Preview3D({
 
             viewer!.scene.primitives.add(tileset)
             loadedTilesets.push(tileset)
+
+            const progressFn = (pending: number, processing: number): void => {
+              setListLoading(pending > 0 || processing > 0)
+            }
+            tileset.loadProgress.addEventListener(progressFn)
+            progressListenersRef.current.set(tileset, progressFn)
 
             applyClippingToTileset(tileset, bounds, includeSpanningBuildings, pickPoints)
 
@@ -705,16 +749,24 @@ export default function Preview3D({
       canvas.style.cursor = 'default'
     }
 
+    let hoverRafScheduled = false
     handler.setInputAction((movement: { endPosition: Cartesian2 }) => {
       if (handler.isDestroyed()) return
-      const feature = asTileFeature(viewer.scene.pick(movement.endPosition))
-      if (feature === hoveredFeatureRef.current) return
-      clearHover()
-      if (feature && feature.show) {
-        feature.color = Color.fromCssColorString('#ff9800').withAlpha(0.8)
-        hoveredFeatureRef.current = feature
-        canvas.style.cursor = 'pointer'
-      }
+      if (hoverRafScheduled) return
+      hoverRafScheduled = true
+      const pos = movement.endPosition
+      requestAnimationFrame(() => {
+        hoverRafScheduled = false
+        if (handler.isDestroyed()) return
+        const feature = asTileFeature(viewer.scene.pick(pos))
+        if (feature === hoveredFeatureRef.current) return
+        clearHover()
+        if (feature && feature.show) {
+          feature.color = Color.fromCssColorString('#ff9800').withAlpha(0.8)
+          hoveredFeatureRef.current = feature
+          canvas.style.cursor = 'pointer'
+        }
+      })
     }, ScreenSpaceEventType.MOUSE_MOVE)
 
     handler.setInputAction((click: { position: Cartesian2 }) => {
@@ -840,6 +892,7 @@ export default function Preview3D({
         <BuildingListPanel
           items={buildingItems}
           excludedIds={excludedIdsState}
+          listLoading={listLoading}
           onExclude={excludeBuildingById}
           onRestore={restoreBuildingById}
           onHoverItem={highlightBuildingById}
