@@ -24,7 +24,7 @@ function parseNum(val: unknown): number | null {
   return null
 }
 
-function checkFeatureBounds(
+export function checkFeatureBounds(
   feature: any,
   bounds: SelectionBounds,
   includeSpanning: boolean,

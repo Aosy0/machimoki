@@ -22,7 +22,13 @@ import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
 import { resolveMuniCodes, findTilesetUrl, type Lod } from '../lib/catalogApi'
-import { applyClippingToTileset, createGlobeClippingPlanes, refilterPickPoints, refilterSpanning } from '../lib/clipping'
+import {
+  applyClippingToTileset,
+  createGlobeClippingPlanes,
+  refilterPickPoints,
+  refilterSpanning,
+  checkFeatureBounds,
+} from '../lib/clipping'
 import {
   sampleTerrainData,
   buildSolidTerrainPrimitive,
@@ -207,9 +213,23 @@ export default function Preview3D({
   if (!tileLoadHandlerRef.current) {
     tileLoadHandlerRef.current = (tile: any) => {
       forEachContentFeature(tile, applyStateToFeature)
+      // クリッピングと同一の範囲判定を使い、選択範囲外の建物はリストに含めない
+      const ts = tile.tileset as
+        | (Cesium3DTileset & {
+            _customSelectionBounds?: SelectionBounds
+            _customIncludeSpanning?: boolean
+            _customPickPoints?: Array<{ lon: number; lat: number }>
+          })
+        | undefined
+      const bounds = ts?._customSelectionBounds
+      const includeSpanning = ts?._customIncludeSpanning ?? false
+      const pickPoints = ts?._customPickPoints
       forEachContentFeature(tile, (feature) => {
         const id = getBuildingId(feature)
         if (!id || registryRef.current.has(id)) return
+        if (bounds && !checkFeatureBounds(feature, bounds, includeSpanning, pickPoints)) {
+          return
+        }
         let height: string | null = null
         let usage: string | null = null
         try {
