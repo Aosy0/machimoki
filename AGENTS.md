@@ -15,13 +15,16 @@ HMRのため、毎回サーバーを再起動する必要はありません。�
 などの非常に狭い範囲の選択を行い、いくつかの建物だけが表示されていることを確認してください。
 
 ## 開発サーバーの起動について
-- `npm run dev` を実行する際は、`Start-Process` などで別プロセス・別シェルとして起動しない。
-  出力がOpenCode側で検出できずコマンドがハングし続ける。
-- 直接コマンドを実行し、標準エラーも合流させる。
-  例: `npx vite --host 0.0.0.0 --port 5173 2>&1`
-- 起動完了メッセージ（`ready in ... ms` など）が出れば正常に立ち上がっている。
-- サーバーを裏で動かし続けたい場合は `&` でバックグラウンド実行する
-  （例: `node server.js &`）。
+herdrでバックグラウンド起動/終了する。`Start-Process`/`&`は使わない。SKILL: `.agents/skills/herdr/SKILL.md`
+```bash
+herdr pane split --current --direction right --cwd "$PWD" --no-focus  # → pane_id取得
+herdr pane run <pane_id> "npm run dev:frontend 2>&1"
+herdr pane wait-output <pane_id> --match "ready in" --timeout 30000
+herdr pane read <pane_id> --source recent-unwrapped --lines 80  # ログ確認
+# 終了
+herdr pane send-keys <pane_id> ctrl+c
+herdr pane close <pane_id>
+```
 
 ## Core/CLI/API について
 
