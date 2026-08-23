@@ -8,8 +8,5 @@ omo/
 .env.*
 screenshots/
 test/
-*.md
-!README.md
-!AGENTS.md
 report/
 *.3mf
