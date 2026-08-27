@@ -32,10 +32,17 @@ async function getDracoDecoder(): Promise<unknown> {
     if (globalDecoder) {
       dracoDecoderPromise = Promise.resolve(globalDecoder);
     } else {
-      throw new Error(
-        'Browser Draco decoder not available. Please load draco_decoder.js ' +
-          'and set window.__DRACO_DECODER_MODULE__ before calling buildBuildingMeshes.',
-      );
+      // Vite / browser fallback: reuse the same npm package.
+      // draco3dgltf ships a WASM decoder that works in browsers as well.
+      try {
+        const draco3dgltf = await import('draco3dgltf');
+        dracoDecoderPromise = draco3dgltf.default.createDecoderModule();
+      } catch {
+        throw new Error(
+          'Browser Draco decoder not available. Please load draco_decoder.js ' +
+            'and set window.__DRACO_DECODER_MODULE__ before calling buildBuildingMeshes.',
+        );
+      }
     }
   }
   return dracoDecoderPromise;

@@ -19,6 +19,7 @@ import LoadingOverlay from './components/LoadingOverlay'
 import ErrorToast from './components/ErrorToast'
 import HelpPanel from './components/HelpPanel'
 import { exportModel } from './lib/apiClient'
+import { runWorkerExport, triggerDownload } from './lib/workerExport'
 import { useRectangleSelection } from './hooks/useRectangleSelection'
 import { usePointPicking, type PickPoint } from './hooks/usePointPicking'
 import type { PipelineState } from './types/pipeline'
@@ -196,6 +197,47 @@ function App() {
     }
     setIsExporting(true)
     setErrorMessage(null)
+    setPipelineState({ phase: 'composing', progress: 0, message: 'エクスポート準備中...', error: null })
+    const exportOptions = {
+      terrainThickness: parameters.terrainThickness,
+      flattenBottom: parameters.flattenBottom,
+      format: parameters.exportFormat as '3mf' | 'stl' | 'machimoki',
+      machimokiModelFormat: parameters.exportFormat === 'machimoki' ? ('3mf' as const) : undefined,
+      lod: parameters.lod,
+      includeTerrain: parameters.includeTerrain,
+      buildingColor: parameters.buildingColor,
+      terrainColor: parameters.terrainColor,
+      upAxis: parameters.upAxis as 'z-up' | 'y-up',
+      scale,
+      includeSpanningBuildings: parameters.includeSpanningBuildings,
+      pickPoints,
+      excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
+    }
+    const useWorker = exportOptions.format !== 'machimoki'
+    if (useWorker) {
+      try {
+        setPipelineState({ phase: 'acquiring', progress: 5, message: '建物データ取得中...', error: null })
+        const { buildBuildingMeshes, buildTerrainMesh } = await import('@machimoki/core')
+        const buildingMeshes = await buildBuildingMeshes(selectionBounds, exportOptions.lod, exportOptions.excludedGmlIds)
+        let terrainMesh: import('@machimoki/core').RawMesh | null = null
+        if (exportOptions.includeTerrain) {
+          setPipelineState({ phase: 'acquiring', progress: 30, message: '地形データ取得中...', error: null })
+          terrainMesh = await buildTerrainMesh(selectionBounds, exportOptions.terrainThickness, exportOptions.flattenBottom)
+        }
+        setPipelineState({ phase: 'composing', progress: 50, message: '3Dモデル生成中（Worker）...', error: null })
+        const { buffer, warnings } = await runWorkerExport(selectionBounds, exportOptions as unknown as import('@machimoki/core').ExportOptions, buildingMeshes, terrainMesh, (p, m) =>
+          setPipelineState({ phase: 'composing', progress: 50 + p * 0.4, message: m, error: null }),
+        )
+        if (warnings.length > 0) console.warn('[Machimoki] warnings:', warnings)
+        triggerDownload(buffer, exportOptions.format)
+        setPipelineState({ phase: 'complete', progress: 100, message: '完了', error: null })
+        setTimeout(() => setPipelineState({ phase: 'idle', progress: 0, message: '', error: null }), 2000)
+        return
+      } catch (err) {
+        console.warn('[Machimoki] Workerエクスポート失敗、APIフォールバックへ:', err)
+        setPipelineState({ phase: 'composing', progress: 50, message: 'Worker失敗、サーバーで再試行中...', error: null })
+      }
+    }
     try {
       await exportModel(selectionBounds, {
         terrainThickness: parameters.terrainThickness,
@@ -212,8 +254,12 @@ function App() {
         pickPoints,
         excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
       })
+      setPipelineState({ phase: 'complete', progress: 100, message: '完了', error: null })
+      setTimeout(() => setPipelineState({ phase: 'idle', progress: 0, message: '', error: null }), 2000)
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'エクスポートに失敗しました')
+      const msg = err instanceof Error ? err.message : 'エクスポートに失敗しました'
+      setErrorMessage(msg)
+      setPipelineState({ phase: 'error', progress: 0, message: '', error: msg })
     } finally {
       setIsExporting(false)
     }
@@ -234,22 +280,24 @@ function App() {
     const timeout = setTimeout(() => {
       console.warn('[Machimoki] WASM初期化が30秒以上挂かっています')
     }, 30000)
-    import('manifold-3d').then(({ default: Module }) => {
-      console.log('[Machimoki] manifold-3dモジュール読み込み完了')
-      return Module({ locateFile: () => '/@fs/C:/Users/koboy/Documents/machimoki/node_modules/manifold-3d/manifold.wasm' })
-    }).then((wasm) => {
-      console.log('[Machimoki] WASM読み込み完了、setup()開始')
-      wasm.setup()
-      console.log('[Machimoki] WASM setup()完了')
-      manifoldRef.current = wasm
-      setIsWasmLoading(false)
-    }).catch((err: unknown) => {
-      console.error('[Machimoki] WASM初期化エラー:', err)
-      setIsWasmLoading(false)
-      setErrorMessage(err instanceof Error ? `WASM初期化失敗: ${err.message}` : 'WASM初期化に失敗しました')
-    }).finally(() => {
-      clearTimeout(timeout)
-    })
+    Promise.all([import('manifold-3d/lib/wasm.js'), import('manifold-3d/manifold.wasm?url')])
+      .then(async ([wasmMod, wasmUrlMod]) => {
+        const wasmUrl = (wasmUrlMod as unknown as { default: string }).default
+        console.log('[Machimoki] manifold-3dモジュール読み込み完了', wasmUrl)
+        wasmMod.setWasmUrl(wasmUrl)
+        const wasm = await wasmMod.getManifoldModule()
+        console.log('[Machimoki] WASM setup()完了')
+        manifoldRef.current = wasm
+        setIsWasmLoading(false)
+      })
+      .catch((err: unknown) => {
+        console.error('[Machimoki] WASM初期化エラー:', err)
+        setIsWasmLoading(false)
+        setErrorMessage(err instanceof Error ? `WASM初期化失敗: ${err.message}` : 'WASM初期化に失敗しました')
+      })
+      .finally(() => {
+        clearTimeout(timeout)
+      })
   }, [])
 
   useEffect(() => {

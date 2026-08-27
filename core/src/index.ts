@@ -9,6 +9,18 @@ export {
 
 export { buildPrintableModelFromMeshes } from './pipelineUtils.js';
 
+export { exportMachimoki, exportMachimokiFromMeshes } from './pipeline.js';
+export type { MachimokiExportResult } from './pipeline.js';
+
+export {
+  createMachimokiBuffer,
+  inspectMachimoki,
+  MACHIMOKI_MANIFEST,
+  MACHIMOKI_MODEL_3MF,
+  MACHIMOKI_MODEL_STL,
+} from './machimokiFormat.js';
+export type { MachimokiManifest } from './machimokiFormat.js';
+
 export {
   capBuildingBottom,
   splitConnectedComponents,
@@ -39,6 +51,9 @@ export type {
 } from './types.js';
 
 export { buildPrintableModel } from './pipeline.js';
+
+export { buildBuildingMeshes } from './meshBuilder.js';
+export { buildTerrainMesh } from './terrain.js';
 
 export { validateMesh } from './validate.js';
 
