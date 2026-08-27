@@ -10,9 +10,9 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve, ServerType } from '@hono/node-server';
 import { pathToFileURL } from 'node:url';
-import { buildPrintableModel } from '../core/pipeline.js';
-import { validateMesh } from '../core/validate.js';
-import { Bounds, ExportOptions, Lod } from '../core/types.js';
+import { buildPrintableModel } from '../pipeline.js';
+import { validateMesh } from '../validate.js';
+import { Bounds, ExportOptions, Lod } from '../types.js';
 
 const app = new Hono();
 

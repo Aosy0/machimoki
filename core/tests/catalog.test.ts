@@ -20,7 +20,7 @@ describe('catalog', () => {
       }),
     );
 
-    const { resolveMuniCode } = await import('../../src/core/catalog');
+    const { resolveMuniCode } = await import('../src/catalog');
     const result = await resolveMuniCode(35.6895, 139.6917);
 
     expect(result).toBe('13101');
@@ -37,14 +37,14 @@ describe('catalog', () => {
       }),
     );
 
-    const { resolveMuniCode } = await import('../../src/core/catalog');
+    const { resolveMuniCode } = await import('../src/catalog');
     await expect(resolveMuniCode(35.6895, 139.6917)).rejects.toThrow('市区町村コード');
   });
 
   it('resolveMuniCode throws on HTTP error', async () => {
     fetchSpy.mockResolvedValueOnce(new Response('error', { status: 500 }));
 
-    const { resolveMuniCode } = await import('../../src/core/catalog');
+    const { resolveMuniCode } = await import('../src/catalog');
     await expect(resolveMuniCode(35.6895, 139.6917)).rejects.toThrow('逆ジオコーディング失敗');
   });
 
@@ -75,7 +75,7 @@ describe('catalog', () => {
       ),
     );
 
-    const { findTilesetUrl } = await import('../../src/core/catalog');
+    const { findTilesetUrl } = await import('../src/catalog');
     const url = await findTilesetUrl('13101', 'lod1');
 
     expect(url).toBe('https://example.com/tileset.json');
@@ -108,7 +108,7 @@ describe('catalog', () => {
       ),
     );
 
-    const { findTilesetUrl } = await import('../../src/core/catalog');
+    const { findTilesetUrl } = await import('../src/catalog');
     await findTilesetUrl('13101', 'lod1');
     await findTilesetUrl('13101', 'lod1');
 
@@ -123,7 +123,7 @@ describe('catalog', () => {
       }),
     );
 
-    const { findTilesetUrl } = await import('../../src/core/catalog');
+    const { findTilesetUrl } = await import('../src/catalog');
     await expect(findTilesetUrl('99999', 'lod1')).rejects.toThrow(
       '該当する3D Tilesデータセットが見つかりません',
     );
@@ -162,7 +162,7 @@ describe('catalog', () => {
         }),
       );
 
-    const { resolveMuniCodes } = await import('../../src/core/catalog');
+    const { resolveMuniCodes } = await import('../src/catalog');
     const result = await resolveMuniCodes({
       west: 139.6903,
       south: 35.6997,
@@ -197,7 +197,7 @@ describe('catalog', () => {
         }),
       );
 
-    const { resolveMuniCodes } = await import('../../src/core/catalog');
+    const { resolveMuniCodes } = await import('../src/catalog');
     const result = await resolveMuniCodes({
       west: 139.6903,
       south: 35.6997,
@@ -216,7 +216,7 @@ describe('catalog', () => {
       .mockResolvedValueOnce(new Response('error', { status: 500 }))
       .mockResolvedValueOnce(new Response('error', { status: 500 }));
 
-    const { resolveMuniCodes } = await import('../../src/core/catalog');
+    const { resolveMuniCodes } = await import('../src/catalog');
     await expect(
       resolveMuniCodes({
         west: 139.6903,
@@ -270,7 +270,7 @@ describe('catalog', () => {
       ),
     );
 
-    const { findTilesetUrl } = await import('../../src/core/catalog');
+    const { findTilesetUrl } = await import('../src/catalog');
     const url = await findTilesetUrl('13101', 'lod2');
 
     expect(url).toBe('https://example.com/tileset-notextured.json');
@@ -303,7 +303,7 @@ describe('catalog', () => {
       ),
     );
 
-    const { findTilesetUrl } = await import('../../src/core/catalog');
+    const { findTilesetUrl } = await import('../src/catalog');
     const url = await findTilesetUrl('13103', 'lod3');
 
     expect(url).toBe('https://example.com/tileset-lod3.json');

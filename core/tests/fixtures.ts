@@ -1,4 +1,4 @@
-import { RawMesh } from '../../src/core/types.js';
+import { RawMesh } from '../src/types.js';
 
 export function createCubeMesh(): RawMesh {
   const positions = new Float32Array([

@@ -12,9 +12,9 @@
 import { Command } from 'commander';
 import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { buildPrintableModel } from '../core/pipeline.js';
-import { validateMesh } from '../core/validate.js';
-import { Bounds, ExportOptions, Lod } from '../core/types.js';
+import { buildPrintableModel } from '../pipeline.js';
+import { validateMesh } from '../validate.js';
+import { Bounds, ExportOptions, Lod } from '../types.js';
 
 export const program = new Command();
 

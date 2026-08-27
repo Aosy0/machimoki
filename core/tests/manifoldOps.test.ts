@@ -10,8 +10,8 @@ import {
   importFrom3MF,
   importFromSTL,
   cleanupManifoldImports,
-} from '../../src/core/manifoldOps.js';
-import { parseSTL } from '../../src/core/stlParser.js';
+} from '../src/manifoldOps.js';
+import { parseSTL } from '../src/stlParser.js';
 import { createCubeMesh } from './fixtures.js';
 
 describe('manifoldOps', () => {

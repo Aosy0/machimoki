@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { writeBinarySTL } from '../../src/core/stlWriter.js';
-import { parseSTL } from '../../src/core/stlParser.js';
+import { writeBinarySTL } from '../src/stlWriter.js';
+import { parseSTL } from '../src/stlParser.js';
 import { createCubeMesh } from './fixtures.js';
 
 describe('writeBinarySTL', () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
-import { buildTerrainMesh } from '../../src/core/terrain';
-import type { Bounds } from '../../src/core/types';
+import { buildTerrainMesh } from '../src/terrain';
+import type { Bounds } from '../src/types';
 
 vi.mock('cesium', () => {
   class Cartesian3 {

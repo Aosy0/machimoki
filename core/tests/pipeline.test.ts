@@ -1,25 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildPrintableModel, componentContainsPoint, dedupeComponents } from '../../src/core/pipeline.js';
-import type { RawMesh } from '../../src/core/types';
+import { buildPrintableModel, componentContainsPoint, dedupeComponents } from '../src/pipeline.js';
+import type { RawMesh } from '../src/types';
 
 const fakeBuffer = Buffer.from('fake-model');
 
-vi.mock('../../src/core/terrain.js', () => ({
+vi.mock('../src/terrain.js', () => ({
   buildTerrainMesh: vi.fn(),
 }));
 
-vi.mock('../../src/core/meshBuilder.js', () => ({
+vi.mock('../src/meshBuilder.js', () => ({
   buildBuildingMeshes: vi.fn(),
 }));
 
-vi.mock('../../src/core/manifoldOps.js', () => ({
+vi.mock('../src/manifoldOps.js', () => ({
   createManifoldFromMesh: vi.fn(),
   exportPartsTo3MF: vi.fn(),
   exportMeshesToSTL: vi.fn(),
   unionMeshes: vi.fn(),
 }));
 
-vi.mock('../../src/core/buildingCapper.js', () => ({
+vi.mock('../src/buildingCapper.js', () => ({
   capBuildingBottom: vi.fn((mesh: RawMesh) => mesh),
   splitConnectedComponents: vi.fn((mesh: RawMesh) => [mesh]),
   weldVertices: vi.fn((mesh: RawMesh) => mesh),
@@ -60,9 +60,9 @@ describe('buildPrintableModel', () => {
   });
 
   it('orchestrates terrain + buildings -> 3MF by default', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
 
     const terrainFake = createFakeManifold();
     const buildingFake = createFakeManifold();
@@ -99,9 +99,9 @@ describe('buildPrintableModel', () => {
   });
 
   it('exports to STL when format is stl', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportMeshesToSTL, unionMeshes } = await import('../../src/core/manifoldOps.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportMeshesToSTL, unionMeshes } = await import('../src/manifoldOps.js');
 
     const buildingFake = createFakeManifold();
     const unionFake = createFakeManifold();
@@ -124,9 +124,9 @@ describe('buildPrintableModel', () => {
   });
 
   it('skips terrain when includeTerrain is false', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
 
     const buildingFake = createFakeManifold();
 
@@ -149,8 +149,8 @@ describe('buildPrintableModel', () => {
   });
 
   it('passes custom lod to building mesh builder', async () => {
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
 
     const buildingFake = createFakeManifold();
 
@@ -171,9 +171,9 @@ describe('buildPrintableModel', () => {
   });
 
   it('returns warnings for non-manifold buildings and still exports printable ones', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
 
     const terrainFake = createFakeManifold();
     const buildingFake = createFakeManifold();
@@ -207,8 +207,8 @@ describe('buildPrintableModel', () => {
   });
 
   it('throws a descriptive error when no meshes are produced', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
 
     vi.mocked(buildTerrainMesh).mockRejectedValue(new Error('terrain failed'));
     vi.mocked(buildBuildingMeshes).mockResolvedValue([]);
@@ -222,10 +222,10 @@ describe('buildPrintableModel', () => {
   });
 
   it('scale=2 doubles mesh dimensions (volume ≈ 8x for unit cube)', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
-    const { capBuildingBottom } = await import('../../src/core/buildingCapper.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { capBuildingBottom } = await import('../src/buildingCapper.js');
 
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
     vi.mocked(capBuildingBottom).mockImplementation((mesh: RawMesh) => mesh);
@@ -256,10 +256,10 @@ describe('buildPrintableModel', () => {
   });
 
   it('scale=1 is a no-op (no new allocations)', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
-    const { capBuildingBottom } = await import('../../src/core/buildingCapper.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { capBuildingBottom } = await import('../src/buildingCapper.js');
 
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
@@ -287,9 +287,9 @@ describe('buildPrintableModel', () => {
   });
 
   it('excludes buildings straddling bounds when includeSpanningBuildings is false', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
 
     // bounds {west:-1, south:-1, east:1, north:1} → engine coords:
     // centerLon=0, centerLat=0, mPerDegLon=111320, mPerDegLat=111320
@@ -405,9 +405,9 @@ describe('buildPrintableModel with pickPoints', () => {
   });
 
   it('keeps only buildings whose footprint contains a pick point', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
 
     const hitMesh: RawMesh = {
       positions: new Float32Array([-10, 0, -10, 10, 0, -10, 0, 0, 10]),
@@ -435,9 +435,9 @@ describe('buildPrintableModel with pickPoints', () => {
   });
 
   it('warns when no building matches the pick points', async () => {
-    const { buildTerrainMesh } = await import('../../src/core/terrain.js');
-    const { buildBuildingMeshes } = await import('../../src/core/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../../src/core/manifoldOps.js');
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
 
     const farMesh: RawMesh = {
       positions: new Float32Array([-100, 0, -100, -90, 0, -100, -95, 0, -90]),

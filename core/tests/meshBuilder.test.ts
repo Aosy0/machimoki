@@ -7,8 +7,8 @@ import {
   getGmlidArray,
   resolveExcludedBatchIds,
   filterTrianglesByBatchIds,
-} from '../../src/core/meshBuilder';
-import type { Bounds } from '../../src/core/types';
+} from '../src/meshBuilder';
+import type { Bounds } from '../src/types';
 
 vi.mock('cesium', () => {
   class Cartesian3 {
@@ -65,7 +65,7 @@ vi.mock('cesium', () => {
   };
 });
 
-vi.mock('../../src/core/catalog', () => ({
+vi.mock('../src/catalog', () => ({
   resolveMuniCode: vi.fn(),
   resolveMuniCodes: vi.fn(),
   findTilesetUrl: vi.fn(),
@@ -153,7 +153,7 @@ describe('meshBuilder', () => {
 
   beforeEach(async () => {
     const { Cesium3DTileset } = await import('cesium');
-    const { resolveMuniCodes, findTilesetUrl } = await import('../../src/core/catalog');
+    const { resolveMuniCodes, findTilesetUrl } = await import('../src/catalog');
 
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockReset();
     (Cesium3DTileset.fromUrl as unknown as MockInstance).mockReset();
@@ -196,7 +196,7 @@ describe('meshBuilder', () => {
       },
     });
 
-    const { resolveMuniCodes, findTilesetUrl } = await import('../../src/core/catalog');
+    const { resolveMuniCodes, findTilesetUrl } = await import('../src/catalog');
 
     const meshes = await buildBuildingMeshes(bounds, 'lod1');
 

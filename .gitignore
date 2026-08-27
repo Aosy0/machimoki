@@ -3,6 +3,7 @@ dist/
 .playwright-mcp/
 omo/
 .omo/
+.screenshots/
 *.log
 .env
 .env.*
@@ -10,3 +11,4 @@ screenshots/
 test/
 report/
 *.3mf
+.agents/skills/

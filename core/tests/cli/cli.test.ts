@@ -14,11 +14,11 @@ import {
   parsePickPoint,
 } from '../../src/cli/index.js';
 
-vi.mock('../../src/core/pipeline.js', () => ({
+vi.mock('../../src/pipeline.js', () => ({
   buildPrintableModel: vi.fn(),
 }));
 
-vi.mock('../../src/core/validate.js', () => ({
+vi.mock('../../src/validate.js', () => ({
   validateMesh: vi.fn().mockResolvedValue({
     status: 'pass',
     numTri: 1,
@@ -36,10 +36,10 @@ vi.mock('../../src/core/validate.js', () => ({
 }));
 
 const buildPrintableModel = vi.mocked(
-  (await import('../../src/core/pipeline.js')).buildPrintableModel,
+  (await import('../../src/pipeline.js')).buildPrintableModel,
 );
 const validateMesh = vi.mocked(
-  (await import('../../src/core/validate.js')).validateMesh,
+  (await import('../../src/validate.js')).validateMesh,
 );
 
 describe('CLI argument parsers', () => {

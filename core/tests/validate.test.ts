@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateMesh } from '../../src/core/validate.js';
+import { validateMesh } from '../src/validate.js';
 import {
   createManifoldFromMesh,
   exportTo3MF,
   exportToSTL,
   cleanupManifoldImports,
-} from '../../src/core/manifoldOps.js';
-import { writeBinarySTL } from '../../src/core/stlWriter.js';
+} from '../src/manifoldOps.js';
+import { writeBinarySTL } from '../src/stlWriter.js';
 import { createCubeMesh } from './fixtures.js';
 
 describe('validateMesh', () => {
