@@ -755,7 +755,10 @@ function App() {
                 visible={pipelineState.phase !== 'idle' && pipelineState.phase !== 'complete'}
                 progress={pipelineState.progress}
               />
-              <LoadingOverlay message="エクスポート中..." visible={isExporting} />
+              <LoadingOverlay
+                message="エクスポート中..."
+                visible={isExporting && pipelineState.phase === 'idle'}
+              />
             </div>
             <ParameterPanel
               parameters={parameters}
