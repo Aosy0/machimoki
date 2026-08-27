@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import * as Cesium from 'cesium'
 import {
   Viewer,
   Cartesian3,
@@ -10,6 +11,10 @@ import {
   WebMercatorProjection,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
+
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).Cesium = Cesium
+}
 
 import Preview3D from './components/Preview3D'
 import ModelViewer from './components/ModelViewer'

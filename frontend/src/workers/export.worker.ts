@@ -1,7 +1,7 @@
 import { setWasmUrl } from 'manifold-3d/lib/wasm.js'
 import wasmUrl from 'manifold-3d/manifold.wasm?url'
-import { buildPrintableModelFromMeshes } from '@machimoki/core'
-import type { Bounds, ExportOptions, RawMesh } from '@machimoki/core'
+import { buildPrintableModelFromMeshes } from '../../../core/src/pipelineUtils.ts'
+import type { Bounds, ExportOptions, RawMesh } from '../../../core/src/types.ts'
 
 setWasmUrl(wasmUrl)
 
