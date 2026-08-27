@@ -11,6 +11,10 @@ export interface BuildingListPanelProps {
   items: BuildingListItem[]
   excludedIds: string[]
   listLoading: boolean
+  loadingDetail?: string | null
+  loadingProgress?: number | null
+  totalTiles?: number | null
+  loadedTiles?: number | null
   onExclude: (id: string) => void
   onRestore: (id: string) => void
   onHoverItem: (id: string | null) => void
@@ -90,6 +94,9 @@ export default function BuildingListPanel({
   items,
   excludedIds,
   listLoading,
+  loadingProgress,
+  totalTiles,
+  loadedTiles,
   onExclude,
   onRestore,
   onHoverItem,
@@ -132,26 +139,66 @@ export default function BuildingListPanel({
         overflow: 'hidden',
       }}
     >
-      <button
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          padding: '7px 10px',
-          background: 'transparent',
-          border: 'none',
-          borderBottom: open ? '1px solid var(--border)' : 'none',
-          cursor: 'pointer',
-          color: 'var(--text)',
-          fontWeight: 600,
-          textAlign: 'left',
-        }}
-      >
-        <span style={{ color: 'var(--accent)' }}>{open ? '▾' : '▸'}</span>
-        建物一覧（{items.length}件 / 削除済み {excludedIds.length}件）
-        {listLoading ? ' 読み込み中…' : ''}
-      </button>
+      <div style={{ position: 'relative', borderBottom: open ? '1px solid var(--border)' : 'none', overflow: 'hidden' }}>
+        {listLoading && loadingProgress != null && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: `${Math.max(0, Math.min(100, loadingProgress))}%`,
+              background: 'var(--accent)',
+              opacity: 0.18,
+              transition: 'width 0.25s ease',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+        {listLoading && loadingProgress == null && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: '2px',
+              background: 'var(--accent)',
+              opacity: 0.85,
+              backgroundImage: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
+              backgroundSize: '200% 100%',
+              animation: 'machimoki-indeterminate 1.2s linear infinite',
+            }}
+          />
+        )}
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '7px 10px',
+            background: 'transparent',
+            border: 'none',
+            width: '100%',
+            cursor: 'pointer',
+            color: 'var(--text)',
+            fontWeight: 600,
+            textAlign: 'left',
+          }}
+        >
+          <span style={{ color: 'var(--accent)' }}>{open ? '▾' : '▸'}</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            {listLoading
+              ? totalTiles != null && loadedTiles != null && totalTiles > 0
+                ? `建物一覧（${loadedTiles}/${totalTiles} タイル 読み込み中）`
+                : '建物一覧（読み込み中…）'
+              : `建物一覧（${items.length}件 / 削除済み ${excludedIds.length}件）`}
+          </span>
+        </button>
+        <style>{`@keyframes machimoki-indeterminate { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
+      </div>
       {open && (
         <>
           <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>

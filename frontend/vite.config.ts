@@ -17,6 +17,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^manifold-3d$/, replacement: 'manifold-3d/manifold.js' },
+      { find: /^@machimoki\/core$/, replacement: resolve(__dirname, '../core/src/index.ts') },
     ],
   },
   optimizeDeps: {

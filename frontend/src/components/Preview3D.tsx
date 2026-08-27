@@ -108,6 +108,12 @@ export default function Preview3D({
   const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
   const [buildingItems, setBuildingItems] = useState<BuildingListItem[]>([])
   const [listLoading, setListLoading] = useState(false)
+  const [totalTiles, setTotalTiles] = useState<number | null>(null)
+  const [loadedTiles, setLoadedTiles] = useState<number | null>(null)
+  const [buildingLoadDetail, setBuildingLoadDetail] = useState<string | null>(null)
+  const [buildingLoadProgress, setBuildingLoadProgress] = useState<number | null>(null)
+  const maxTilesRef = useRef(0)
+  const pendingMapRef = useRef<Map<Cesium3DTileset, number>>(new Map())
   const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
   const listRafRef = useRef<number | null>(null)
 
@@ -473,8 +479,14 @@ export default function Preview3D({
     tilesetsRef.current = []
     registryRef.current.clear()
     progressListenersRef.current.clear()
+    maxTilesRef.current = 0
+    pendingMapRef.current.clear()
     setBuildingItems([])
     setListLoading(false)
+    setTotalTiles(null)
+    setLoadedTiles(null)
+    setBuildingLoadDetail(null)
+    setBuildingLoadProgress(null)
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -519,6 +531,9 @@ export default function Preview3D({
 
     async function load() {
       try {
+        setBuildingLoadDetail('タイルセットURLを特定中')
+        setBuildingLoadProgress(5)
+        setListLoading(true)
         onPipelineStateChange?.({
           phase: 'identifying',
           progress: 0,
@@ -529,6 +544,8 @@ export default function Preview3D({
         const muniCodes = await resolveMuniCodes(bounds)
         if (cancelled) return
 
+        setBuildingLoadDetail('カタログからタイルセットを検索中')
+        setBuildingLoadProgress(15)
         onPipelineStateChange?.({
           phase: 'identifying',
           progress: 50,
@@ -557,6 +574,8 @@ export default function Preview3D({
 
         console.log('[Preview3D] Resolved tileset URLs:', urls)
 
+        setBuildingLoadDetail(`3Dタイルを読み込み中（${urls.length}件）`)
+        setBuildingLoadProgress(30)
         onPipelineStateChange?.({
           phase: 'acquiring',
           progress: 0,
@@ -594,7 +613,36 @@ export default function Preview3D({
             loadedTilesets.push(tileset)
 
             const progressFn = (pending: number, processing: number): void => {
-              setListLoading(pending > 0 || processing > 0)
+              pendingMapRef.current.set(tileset, pending + processing)
+              const currentSum = Array.from(pendingMapRef.current.values()).reduce((a, b) => a + b, 0)
+              const isLoading = currentSum > 0
+              setListLoading(isLoading)
+              if (isLoading) {
+                if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
+                const max = maxTilesRef.current
+                const rawLoaded = Math.max(0, max - currentSum)
+                setTotalTiles(max)
+                setLoadedTiles((prev) => {
+                  const prevVal = prev ?? 0
+                  return Math.max(prevVal, rawLoaded)
+                })
+                setBuildingLoadDetail(`3Dタイルを読み込み中`)
+                const loadedForProgress = Math.max(loadedTiles ?? 0, rawLoaded)
+                const ratio = max > 0 ? loadedForProgress / max : 0
+                const p = 30 + ratio * 55
+                setBuildingLoadProgress((prev) => (prev == null ? p : Math.max(prev, Math.min(85, p))))
+              } else {
+                const max = maxTilesRef.current
+                if (max > 0) {
+                  setTotalTiles(max)
+                  setLoadedTiles((prev) => {
+                    const prevVal = prev ?? 0
+                    return Math.max(prevVal, max)
+                  })
+                }
+                setBuildingLoadDetail('建物リストを整理中')
+                setBuildingLoadProgress((prev) => (prev == null ? 90 : Math.max(prev, 90)))
+              }
             }
             tileset.loadProgress.addEventListener(progressFn)
             progressListenersRef.current.set(tileset, progressFn)
@@ -626,6 +674,19 @@ export default function Preview3D({
 
         tilesetsRef.current = loadedTilesets
         forEachBuildingFeature(applyStateToFeature)
+        setBuildingLoadDetail('読み込み完了')
+        setBuildingLoadProgress(100)
+        if (maxTilesRef.current > 0) {
+          setTotalTiles(maxTilesRef.current)
+          setLoadedTiles(maxTilesRef.current)
+        }
+        setTimeout(() => {
+          setListLoading(false)
+          setBuildingLoadDetail(null)
+          setBuildingLoadProgress(null)
+          setTotalTiles(null)
+          setLoadedTiles(null)
+        }, 800)
         console.log('[Preview3D] Loaded tilesets:', loadedTilesets.length)
 
         let terrainBoundingSphere: BoundingSphere | null = null
@@ -720,6 +781,8 @@ export default function Preview3D({
             ? err.message
             : '3Dタイルの読み込みに失敗しました'
         console.error('[Preview3D]', err)
+        setBuildingLoadDetail(message)
+        setBuildingLoadProgress(null)
         onPipelineStateChange?.({
           phase: 'error',
           progress: 0,
@@ -913,6 +976,10 @@ export default function Preview3D({
           items={buildingItems}
           excludedIds={excludedIdsState}
           listLoading={listLoading}
+          loadingDetail={buildingLoadDetail}
+          loadingProgress={buildingLoadProgress}
+          totalTiles={totalTiles}
+          loadedTiles={loadedTiles}
           onExclude={excludeBuildingById}
           onRestore={restoreBuildingById}
           onHoverItem={highlightBuildingById}

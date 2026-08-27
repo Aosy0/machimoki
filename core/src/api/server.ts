@@ -10,7 +10,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve, ServerType } from '@hono/node-server';
 import { pathToFileURL } from 'node:url';
-import { buildPrintableModel } from '../pipeline.js';
+import { buildPrintableModel, exportMachimoki } from '../pipeline.js';
 import { validateMesh } from '../validate.js';
 import { Bounds, ExportOptions, Lod } from '../types.js';
 
@@ -36,6 +36,24 @@ app.post('/api/export', async (c) => {
   const { bounds, options } = parseResult.value;
 
   try {
+    if (options.format === 'machimoki') {
+      const { buffer, modelBuffer, modelFormat, warnings } = await exportMachimoki(bounds, options);
+      const mimeType = modelFormat === 'stl' ? 'model/stl' : 'model/3mf';
+      const validation = await validateMesh(modelBuffer, mimeType);
+
+      if (validation.status === 'fail') {
+        return c.json({ error: 'Validation failed', warnings, validation }, 422);
+      }
+
+      return new Response(buffer, {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': 'attachment; filename="model.machimoki"',
+          'X-Validation-Status': validation.status,
+        },
+      });
+    }
+
     const { buffer, warnings } = await buildPrintableModel(bounds, options);
     const mimeType = options.format === 'stl' ? 'model/stl' : 'model/3mf';
     const validation = await validateMesh(buffer, mimeType);
