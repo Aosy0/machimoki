@@ -112,6 +112,7 @@ export default function Preview3D({
   const [tileProcessing, setTileProcessing] = useState(0)
   const [buildingLoadDetail, setBuildingLoadDetail] = useState<string | null>(null)
   const [buildingLoadProgress, setBuildingLoadProgress] = useState<number | null>(null)
+  const maxTilesRef = useRef(0)
   const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
   const listRafRef = useRef<number | null>(null)
 
@@ -477,6 +478,7 @@ export default function Preview3D({
     tilesetsRef.current = []
     registryRef.current.clear()
     progressListenersRef.current.clear()
+    maxTilesRef.current = 0
     setBuildingItems([])
     setListLoading(false)
     setTilePending(0)
@@ -615,11 +617,13 @@ export default function Preview3D({
               const total = pending + processing
               if (total > 0) {
                 setBuildingLoadDetail(`3Dタイルを読み込み中（残り ${pending} / 処理中 ${processing}）`)
-                const p = Math.max(30, Math.min(85, 85 - total * 2))
-                setBuildingLoadProgress(p)
+                if (total > maxTilesRef.current) maxTilesRef.current = total
+                const ratio = maxTilesRef.current > 0 ? 1 - total / maxTilesRef.current : 0
+                const p = 30 + ratio * 55
+                setBuildingLoadProgress((prev) => (prev == null ? p : Math.max(prev, Math.min(85, p))))
               } else {
                 setBuildingLoadDetail('建物リストを整理中')
-                setBuildingLoadProgress(90)
+                setBuildingLoadProgress((prev) => (prev == null ? 90 : Math.max(prev, 90)))
               }
             }
             tileset.loadProgress.addEventListener(progressFn)
