@@ -108,11 +108,12 @@ export default function Preview3D({
   const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
   const [buildingItems, setBuildingItems] = useState<BuildingListItem[]>([])
   const [listLoading, setListLoading] = useState(false)
-  const [tilePending, setTilePending] = useState(0)
-  const [tileProcessing, setTileProcessing] = useState(0)
+  const [totalTiles, setTotalTiles] = useState<number | null>(null)
+  const [loadedTiles, setLoadedTiles] = useState<number | null>(null)
   const [buildingLoadDetail, setBuildingLoadDetail] = useState<string | null>(null)
   const [buildingLoadProgress, setBuildingLoadProgress] = useState<number | null>(null)
   const maxTilesRef = useRef(0)
+  const pendingMapRef = useRef<Map<Cesium3DTileset, number>>(new Map())
   const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
   const listRafRef = useRef<number | null>(null)
 
@@ -479,10 +480,11 @@ export default function Preview3D({
     registryRef.current.clear()
     progressListenersRef.current.clear()
     maxTilesRef.current = 0
+    pendingMapRef.current.clear()
     setBuildingItems([])
     setListLoading(false)
-    setTilePending(0)
-    setTileProcessing(0)
+    setTotalTiles(null)
+    setLoadedTiles(null)
     setBuildingLoadDetail(null)
     setBuildingLoadProgress(null)
 
@@ -611,17 +613,33 @@ export default function Preview3D({
             loadedTilesets.push(tileset)
 
             const progressFn = (pending: number, processing: number): void => {
-              setListLoading(pending > 0 || processing > 0)
-              setTilePending(pending)
-              setTileProcessing(processing)
-              const total = pending + processing
-              if (total > 0) {
-                setBuildingLoadDetail(`3Dタイルを読み込み中（残り ${pending} / 処理中 ${processing}）`)
-                if (total > maxTilesRef.current) maxTilesRef.current = total
-                const ratio = maxTilesRef.current > 0 ? 1 - total / maxTilesRef.current : 0
+              pendingMapRef.current.set(tileset, pending + processing)
+              const currentSum = Array.from(pendingMapRef.current.values()).reduce((a, b) => a + b, 0)
+              const isLoading = currentSum > 0
+              setListLoading(isLoading)
+              if (isLoading) {
+                if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
+                const max = maxTilesRef.current
+                const rawLoaded = Math.max(0, max - currentSum)
+                setTotalTiles(max)
+                setLoadedTiles((prev) => {
+                  const prevVal = prev ?? 0
+                  return Math.max(prevVal, rawLoaded)
+                })
+                setBuildingLoadDetail(`3Dタイルを読み込み中`)
+                const loadedForProgress = Math.max(loadedTiles ?? 0, rawLoaded)
+                const ratio = max > 0 ? loadedForProgress / max : 0
                 const p = 30 + ratio * 55
                 setBuildingLoadProgress((prev) => (prev == null ? p : Math.max(prev, Math.min(85, p))))
               } else {
+                const max = maxTilesRef.current
+                if (max > 0) {
+                  setTotalTiles(max)
+                  setLoadedTiles((prev) => {
+                    const prevVal = prev ?? 0
+                    return Math.max(prevVal, max)
+                  })
+                }
                 setBuildingLoadDetail('建物リストを整理中')
                 setBuildingLoadProgress((prev) => (prev == null ? 90 : Math.max(prev, 90)))
               }
@@ -658,12 +676,16 @@ export default function Preview3D({
         forEachBuildingFeature(applyStateToFeature)
         setBuildingLoadDetail('読み込み完了')
         setBuildingLoadProgress(100)
-        setTilePending(0)
-        setTileProcessing(0)
+        if (maxTilesRef.current > 0) {
+          setTotalTiles(maxTilesRef.current)
+          setLoadedTiles(maxTilesRef.current)
+        }
         setTimeout(() => {
           setListLoading(false)
           setBuildingLoadDetail(null)
           setBuildingLoadProgress(null)
+          setTotalTiles(null)
+          setLoadedTiles(null)
         }, 800)
         console.log('[Preview3D] Loaded tilesets:', loadedTilesets.length)
 
@@ -956,8 +978,8 @@ export default function Preview3D({
           listLoading={listLoading}
           loadingDetail={buildingLoadDetail}
           loadingProgress={buildingLoadProgress}
-          pendingTiles={tilePending}
-          processingTiles={tileProcessing}
+          totalTiles={totalTiles}
+          loadedTiles={loadedTiles}
           onExclude={excludeBuildingById}
           onRestore={restoreBuildingById}
           onHoverItem={highlightBuildingById}

@@ -13,8 +13,8 @@ export interface BuildingListPanelProps {
   listLoading: boolean
   loadingDetail?: string | null
   loadingProgress?: number | null
-  pendingTiles?: number
-  processingTiles?: number
+  totalTiles?: number | null
+  loadedTiles?: number | null
   onExclude: (id: string) => void
   onRestore: (id: string) => void
   onHoverItem: (id: string | null) => void
@@ -94,10 +94,9 @@ export default function BuildingListPanel({
   items,
   excludedIds,
   listLoading,
-  loadingDetail,
   loadingProgress,
-  pendingTiles,
-  processingTiles,
+  totalTiles,
+  loadedTiles,
   onExclude,
   onRestore,
   onHoverItem,
@@ -165,7 +164,7 @@ export default function BuildingListPanel({
               bottom: 0,
               height: '2px',
               background: 'var(--accent)',
-              opacity: 0.9,
+              opacity: 0.85,
               backgroundImage: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
               backgroundSize: '200% 100%',
               animation: 'machimoki-indeterminate 1.2s linear infinite',
@@ -191,11 +190,11 @@ export default function BuildingListPanel({
         >
           <span style={{ color: 'var(--accent)' }}>{open ? '▾' : '▸'}</span>
           <span style={{ flex: 1, minWidth: 0 }}>
-            建物一覧（{items.length}件 / 削除済み {excludedIds.length}件）
-            {listLoading && loadingDetail ? ` — ${loadingDetail}` : listLoading ? ' 読み込み中…' : ''}
-            {listLoading && (pendingTiles != null || processingTiles != null)
-              ? `（残り ${pendingTiles ?? 0} / 処理中 ${processingTiles ?? 0}）`
-              : ''}
+            {listLoading
+              ? totalTiles != null && loadedTiles != null && totalTiles > 0
+                ? `建物一覧（${loadedTiles}/${totalTiles} タイル 読み込み中）`
+                : '建物一覧（読み込み中…）'
+              : `建物一覧（${items.length}件 / 削除済み ${excludedIds.length}件）`}
           </span>
         </button>
         <style>{`@keyframes machimoki-indeterminate { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
