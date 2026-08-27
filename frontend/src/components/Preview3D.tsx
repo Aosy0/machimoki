@@ -108,6 +108,10 @@ export default function Preview3D({
   const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
   const [buildingItems, setBuildingItems] = useState<BuildingListItem[]>([])
   const [listLoading, setListLoading] = useState(false)
+  const [tilePending, setTilePending] = useState(0)
+  const [tileProcessing, setTileProcessing] = useState(0)
+  const [buildingLoadDetail, setBuildingLoadDetail] = useState<string | null>(null)
+  const [buildingLoadProgress, setBuildingLoadProgress] = useState<number | null>(null)
   const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
   const listRafRef = useRef<number | null>(null)
 
@@ -475,6 +479,10 @@ export default function Preview3D({
     progressListenersRef.current.clear()
     setBuildingItems([])
     setListLoading(false)
+    setTilePending(0)
+    setTileProcessing(0)
+    setBuildingLoadDetail(null)
+    setBuildingLoadProgress(null)
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -519,6 +527,9 @@ export default function Preview3D({
 
     async function load() {
       try {
+        setBuildingLoadDetail('タイルセットURLを特定中')
+        setBuildingLoadProgress(5)
+        setListLoading(true)
         onPipelineStateChange?.({
           phase: 'identifying',
           progress: 0,
@@ -529,6 +540,8 @@ export default function Preview3D({
         const muniCodes = await resolveMuniCodes(bounds)
         if (cancelled) return
 
+        setBuildingLoadDetail('カタログからタイルセットを検索中')
+        setBuildingLoadProgress(15)
         onPipelineStateChange?.({
           phase: 'identifying',
           progress: 50,
@@ -557,6 +570,8 @@ export default function Preview3D({
 
         console.log('[Preview3D] Resolved tileset URLs:', urls)
 
+        setBuildingLoadDetail(`3Dタイルを読み込み中（${urls.length}件）`)
+        setBuildingLoadProgress(30)
         onPipelineStateChange?.({
           phase: 'acquiring',
           progress: 0,
@@ -595,6 +610,17 @@ export default function Preview3D({
 
             const progressFn = (pending: number, processing: number): void => {
               setListLoading(pending > 0 || processing > 0)
+              setTilePending(pending)
+              setTileProcessing(processing)
+              const total = pending + processing
+              if (total > 0) {
+                setBuildingLoadDetail(`3Dタイルを読み込み中（残り ${pending} / 処理中 ${processing}）`)
+                const p = Math.max(30, Math.min(85, 85 - total * 2))
+                setBuildingLoadProgress(p)
+              } else {
+                setBuildingLoadDetail('建物リストを整理中')
+                setBuildingLoadProgress(90)
+              }
             }
             tileset.loadProgress.addEventListener(progressFn)
             progressListenersRef.current.set(tileset, progressFn)
@@ -626,6 +652,15 @@ export default function Preview3D({
 
         tilesetsRef.current = loadedTilesets
         forEachBuildingFeature(applyStateToFeature)
+        setBuildingLoadDetail('読み込み完了')
+        setBuildingLoadProgress(100)
+        setTilePending(0)
+        setTileProcessing(0)
+        setTimeout(() => {
+          setListLoading(false)
+          setBuildingLoadDetail(null)
+          setBuildingLoadProgress(null)
+        }, 800)
         console.log('[Preview3D] Loaded tilesets:', loadedTilesets.length)
 
         let terrainBoundingSphere: BoundingSphere | null = null
@@ -720,6 +755,8 @@ export default function Preview3D({
             ? err.message
             : '3Dタイルの読み込みに失敗しました'
         console.error('[Preview3D]', err)
+        setBuildingLoadDetail(message)
+        setBuildingLoadProgress(null)
         onPipelineStateChange?.({
           phase: 'error',
           progress: 0,
@@ -913,6 +950,10 @@ export default function Preview3D({
           items={buildingItems}
           excludedIds={excludedIdsState}
           listLoading={listLoading}
+          loadingDetail={buildingLoadDetail}
+          loadingProgress={buildingLoadProgress}
+          pendingTiles={tilePending}
+          processingTiles={tileProcessing}
           onExclude={excludeBuildingById}
           onRestore={restoreBuildingById}
           onHoverItem={highlightBuildingById}
