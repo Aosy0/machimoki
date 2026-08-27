@@ -237,6 +237,7 @@ function App() {
         triggerDownload(buffer, exportOptions.format)
         setPipelineState({ phase: 'complete', progress: 100, message: '完了', error: null })
         setTimeout(() => setPipelineState({ phase: 'idle', progress: 0, message: '', error: null }), 2000)
+        setIsExporting(false)
         return
       } catch (err) {
         console.warn('[Machimoki] Workerエクスポート失敗、APIフォールバックへ:', err)
