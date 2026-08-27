@@ -33,8 +33,9 @@ export default function ModelSizeOverlay({
   const dragRef = useRef<{ startX: number; startScale: number } | null>(null)
 
   const dims = selectionBounds ? computeNaturalDimensions(selectionBounds) : null
-  const outputWidth = dims ? dims.widthM * scale : 0
-  const outputDepth = dims ? dims.depthM * scale : 0
+  // scale is dimensionless (m/m): output size in mm = natural size in m * scale * 1000
+  const outputWidth = dims ? dims.widthM * scale * 1000 : 0
+  const outputDepth = dims ? dims.depthM * scale * 1000 : 0
 
   useEffect(() => {
     if (editingField && inputRef.current) {
@@ -52,7 +53,7 @@ export default function ModelSizeOverlay({
     }
     if (val > 0) {
       const natural = editingField === 'width' ? dims.widthM : dims.depthM
-      const newScale = val / natural
+      const newScale = val / (natural * 1000)
       if (newScale > 0 && isFinite(newScale)) {
         onScaleChange(newScale)
       }
@@ -102,7 +103,8 @@ export default function ModelSizeOverlay({
   if (!selectionBounds || !dims) return null
 
   const maxDim = Math.max(dims.widthM, dims.depthM)
-  const autoScale = maxDim > 0 ? 150 / maxDim : 1
+  // Target 150 mm for the longest natural dimension; scale is dimensionless (m/m).
+  const autoScale = maxDim > 0 ? 150 / (maxDim * 1000) : 1
   const showReset = Math.abs(scale - autoScale) > 0.0001
 
   return (

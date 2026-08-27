@@ -36,6 +36,20 @@ export function transformForUpAxis(positions: Float32Array, upAxis: UpAxis): Flo
   return transformed;
 }
 
+const METERS_TO_MM = 1000;
+const MM_TO_METERS = 0.001;
+
+/**
+ * Scale positions by a uniform factor (e.g. m → mm).
+ */
+function scalePositions(positions: Float32Array, factor: number): Float32Array {
+  const scaled = new Float32Array(positions.length);
+  for (let i = 0; i < positions.length; i++) {
+    scaled[i] = positions[i] * factor;
+  }
+  return scaled;
+}
+
 function meshToRaw(manifoldMesh: {
   vertProperties: Float32Array;
   triVerts: Uint32Array;
@@ -285,7 +299,7 @@ export async function exportPartsTo3MF(
     const meshParts = parts.map((p) => {
       const mp = getMeshPart(p);
       return {
-        positions: transformForUpAxis(mp.positions, upAxis),
+        positions: scalePositions(transformForUpAxis(mp.positions, upAxis), METERS_TO_MM),
         indices: mp.indices,
         color: mp.color,
       };
@@ -296,13 +310,17 @@ export async function exportPartsTo3MF(
 
   // All parts are pure Manifold objects — use manifold-3d's export3mf.
   const doc = new Document();
+  const scaledManifolds: Manifold[] = [];
 
   for (const part of parts as Array<{ manifold: Manifold }>) {
-    // (x, y, z) -> (x, -z, y) as a column-major rotation about X (z-up).
-    if (upAxis === 'z-up') {
-      part.manifold.transform([1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1]);
-    }
-    const manifoldMesh = part.manifold.getMesh();
+    // Rotate (x, y, z) -> (x, -z, y) for z-up, then scale m -> mm.
+    // manifold.transform returns a new Manifold.
+    const scaled =
+      upAxis === 'z-up'
+        ? part.manifold.transform([METERS_TO_MM, 0, 0, 0, 0, 0, METERS_TO_MM, 0, 0, -METERS_TO_MM, 0, 0, 0, 0, 0, 1])
+        : part.manifold.transform([METERS_TO_MM, 0, 0, 0, 0, METERS_TO_MM, 0, 0, 0, 0, METERS_TO_MM, 0, 0, 0, 0, 1]);
+    scaledManifolds.push(scaled);
+    const manifoldMesh = scaled.getMesh();
     const material = doc.createMaterial();
     const id2properties = createId2Properties(doc, manifoldMesh, material);
     const gltfMesh = writeMesh(doc, manifoldMesh, id2properties);
@@ -311,6 +329,7 @@ export async function exportPartsTo3MF(
   }
 
   const arrayBuffer = await export3mf(doc, { header: { unit: 'millimeter' } });
+  for (const m of scaledManifolds) m.delete();
   return Buffer.from(arrayBuffer);
 }
 
@@ -338,7 +357,7 @@ export function mergeRawMeshes(meshes: RawMesh[]): RawMesh {
 
 export function exportMeshesToSTL(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Buffer {
   const merged = mergeRawMeshes(meshes);
-  merged.positions = transformForUpAxis(merged.positions, upAxis);
+  merged.positions = scalePositions(transformForUpAxis(merged.positions, upAxis), METERS_TO_MM);
   return writeBinarySTL(merged);
 }
 
@@ -353,7 +372,7 @@ export async function exportMeshesTo3MF(meshes: RawMesh[], upAxis: UpAxis = 'z-u
     const positionAccessor = doc
       .createAccessor()
       .setType('VEC3')
-      .setArray(transformForUpAxis(mesh.positions, upAxis))
+      .setArray(scalePositions(transformForUpAxis(mesh.positions, upAxis), METERS_TO_MM))
       .setBuffer(buffer);
 
     const indicesAccessor = doc
@@ -383,7 +402,7 @@ export async function exportMeshesTo3MF(meshes: RawMesh[], upAxis: UpAxis = 'z-u
  */
 export function exportToSTL(manifold: Manifold, upAxis: UpAxis = 'z-up'): Buffer {
   const raw = meshToRaw(manifold.getMesh());
-  raw.positions = transformForUpAxis(raw.positions, upAxis);
+  raw.positions = scalePositions(transformForUpAxis(raw.positions, upAxis), METERS_TO_MM);
   return writeBinarySTL(raw);
 }
 
@@ -402,7 +421,10 @@ function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
 export async function importFrom3MF(buffer: Buffer): Promise<Manifold> {
   await getWasm();
   const arrayBuffer = bufferToArrayBuffer(buffer);
-  return importManifold(arrayBuffer, { mimetype: 'model/3mf' });
+  const manifold = await importManifold(arrayBuffer, { mimetype: 'model/3mf' });
+  const scaled = manifold.transform([MM_TO_METERS, 0, 0, 0, 0, MM_TO_METERS, 0, 0, 0, 0, MM_TO_METERS, 0, 0, 0, 0, 1]);
+  manifold.delete();
+  return scaled;
 }
 
 /**
@@ -410,6 +432,7 @@ export async function importFrom3MF(buffer: Buffer): Promise<Manifold> {
  */
 export async function importFromSTL(buffer: Buffer): Promise<Manifold> {
   const rawMesh = parseSTL(buffer);
+  rawMesh.positions = scalePositions(rawMesh.positions, MM_TO_METERS);
   return createManifoldFromMesh(rawMesh);
 }
 

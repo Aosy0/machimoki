@@ -120,12 +120,13 @@ describe('manifoldOps', () => {
     const minZ = Math.min(...Array.from(parsed.positions).filter((_, i) => i % 3 === 2));
     const maxZ = Math.max(...Array.from(parsed.positions).filter((_, i) => i % 3 === 2));
 
-    // Cube spans [0,1] on every engine axis. Z-up rotation maps
-    // (x, y, z) -> (x, -z, y): y now spans [-1, 0], z spans [0, 1].
-    expect(minY).toBeCloseTo(-1, 6);
+    // Cube spans [0,1] m on every engine axis → [0,1000] mm after scaling.
+    // Z-up rotation maps (x, y, z) -> (x, -z, y):
+    // y now spans [-1000, 0], z spans [0, 1000].
+    expect(minY).toBeCloseTo(-1000, 6);
     expect(maxY).toBeCloseTo(0, 6);
     expect(minZ).toBeCloseTo(0, 6);
-    expect(maxZ).toBeCloseTo(1, 6);
+    expect(maxZ).toBeCloseTo(1000, 6);
   });
 
   it('exportMeshesToSTL preserves y-up geometry when requested', () => {
@@ -139,8 +140,8 @@ describe('manifoldOps', () => {
     const maxZ = Math.max(...Array.from(parsed.positions).filter((_, i) => i % 3 === 2));
 
     expect(minY).toBeCloseTo(0, 6);
-    expect(maxY).toBeCloseTo(1, 6);
+    expect(maxY).toBeCloseTo(1000, 6);
     expect(minZ).toBeCloseTo(0, 6);
-    expect(maxZ).toBeCloseTo(1, 6);
+    expect(maxZ).toBeCloseTo(1000, 6);
   });
 });

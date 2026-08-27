@@ -127,7 +127,7 @@ function App() {
     const depthM = Math.abs(heightDeg) * (Math.PI / 180) * 6371000
     const maxDim = Math.max(widthM, depthM)
     if (maxDim > 0) {
-      setScale(150 / maxDim)
+      setScale(150 / (maxDim * 1000))
     }
   }, [selectionBounds])
 
@@ -185,6 +185,13 @@ function App() {
   const handleExport = useCallback(async () => {
     if (!selectionBounds) {
       setErrorMessage('エクスポートする前に地図で範囲を選択してください')
+      return
+    }
+    const widthDeg = selectionBounds.east - selectionBounds.west
+    const heightDeg = selectionBounds.north - selectionBounds.south
+    const MAX_DEG = 0.02
+    if (widthDeg > MAX_DEG || heightDeg > MAX_DEG) {
+      setErrorMessage(`選択範囲が大きすぎます。各辺は${MAX_DEG}度（約2.2km）以下にしてください。`)
       return
     }
     setIsExporting(true)

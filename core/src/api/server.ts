@@ -54,6 +54,7 @@ app.post('/api/export', async (c) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error('[api/export] 500', message, error instanceof Error ? error.stack : '');
     return c.json({ error: message }, 500);
   }
 });
