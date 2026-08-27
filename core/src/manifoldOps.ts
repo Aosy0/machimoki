@@ -128,7 +128,7 @@ export async function exportTo3MF(
   manifold: Manifold,
   color?: string,
   upAxis: UpAxis = 'z-up',
-): Promise<Buffer> {
+): Promise<Uint8Array> {
   return exportPartsTo3MF([{ manifold, color }], upAxis);
 }
 
@@ -224,7 +224,7 @@ function buildColored3mfXml(
 /**
  * Build a complete 3MF ZIP buffer from colored parts.
  */
-function createColored3mfZip(xml: string): Buffer {
+function createColored3mfZip(xml: string): Uint8Array {
   const contentTypes = `<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -242,7 +242,7 @@ function createColored3mfZip(xml: string): Buffer {
     '3D/3dmodel.model': strToU8(xml),
   };
 
-  return Buffer.from(zipSync(files).buffer);
+  return zipSync(files);
 }
 
 /**
@@ -284,7 +284,7 @@ export async function exportPartsTo3MF(
     | { mesh: RawMesh; color?: string }
   >,
   upAxis: UpAxis = 'z-up',
-): Promise<Buffer> {
+): Promise<Uint8Array> {
   if (parts.length === 0) {
     throw new Error('No parts to export');
   }
@@ -330,7 +330,7 @@ export async function exportPartsTo3MF(
 
   const arrayBuffer = await export3mf(doc, { header: { unit: 'millimeter' } });
   for (const m of scaledManifolds) m.delete();
-  return Buffer.from(arrayBuffer);
+  return new Uint8Array(arrayBuffer);
 }
 
 export function mergeRawMeshes(meshes: RawMesh[]): RawMesh {
@@ -355,13 +355,13 @@ export function mergeRawMeshes(meshes: RawMesh[]): RawMesh {
   return { positions, indices };
 }
 
-export function exportMeshesToSTL(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Buffer {
+export function exportMeshesToSTL(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Uint8Array {
   const merged = mergeRawMeshes(meshes);
   merged.positions = scalePositions(transformForUpAxis(merged.positions, upAxis), METERS_TO_MM);
   return writeBinarySTL(merged);
 }
 
-export async function exportMeshesTo3MF(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Promise<Buffer> {
+export async function exportMeshesTo3MF(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Promise<Uint8Array> {
   const doc = new Document();
   const buffer = doc.createBuffer();
   const scene = doc.createScene();
@@ -394,31 +394,29 @@ export async function exportMeshesTo3MF(meshes: RawMesh[], upAxis: UpAxis = 'z-u
   doc.getRoot().setDefaultScene(scene);
 
   const arrayBuffer = await export3mf(doc, { header: { unit: 'millimeter' } });
-  return Buffer.from(arrayBuffer);
+  return new Uint8Array(arrayBuffer);
 }
 
 /**
  * Export a Manifold to a binary STL buffer.
  */
-export function exportToSTL(manifold: Manifold, upAxis: UpAxis = 'z-up'): Buffer {
+export function exportToSTL(manifold: Manifold, upAxis: UpAxis = 'z-up'): Uint8Array {
   const raw = meshToRaw(manifold.getMesh());
   raw.positions = scalePositions(transformForUpAxis(raw.positions, upAxis), METERS_TO_MM);
   return writeBinarySTL(raw);
 }
 
-function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
-  const arrayBuffer = buffer.buffer.slice(
+function bufferToArrayBuffer(buffer: Uint8Array): ArrayBuffer {
+  return buffer.buffer.slice(
     buffer.byteOffset,
     buffer.byteOffset + buffer.byteLength
-  );
-  // In Node.js Buffer always wraps an ArrayBuffer.
-  return arrayBuffer as ArrayBuffer;
+  ) as ArrayBuffer;
 }
 
 /**
  * Import a Manifold from a 3MF buffer.
  */
-export async function importFrom3MF(buffer: Buffer): Promise<Manifold> {
+export async function importFrom3MF(buffer: Uint8Array): Promise<Manifold> {
   await getWasm();
   const arrayBuffer = bufferToArrayBuffer(buffer);
   const manifold = await importManifold(arrayBuffer, { mimetype: 'model/3mf' });
@@ -430,7 +428,7 @@ export async function importFrom3MF(buffer: Buffer): Promise<Manifold> {
 /**
  * Import a Manifold from an STL buffer.
  */
-export async function importFromSTL(buffer: Buffer): Promise<Manifold> {
+export async function importFromSTL(buffer: Uint8Array): Promise<Manifold> {
   const rawMesh = parseSTL(buffer);
   rawMesh.positions = scalePositions(rawMesh.positions, MM_TO_METERS);
   return createManifoldFromMesh(rawMesh);

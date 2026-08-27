@@ -7,17 +7,19 @@ export interface Bounds {
 
 export type UpAxis = 'z-up' | 'y-up'
 export type Lod = 'lod1' | 'lod2' | 'lod3' | 'lod4'
+export type ExportFormat = '3mf' | 'stl' | 'machimoki'
 
 export interface ExportOptions {
   terrainThickness: number;
   flattenBottom: boolean;
-  format: '3mf' | 'stl';
+  format: ExportFormat;
   lod?: Lod;
   includeTerrain?: boolean;
   buildingColor?: string;
   terrainColor?: string;
   upAxis?: UpAxis;
   scale?: number;
+  machimokiModelFormat?: '3mf' | 'stl';
   includeSpanningBuildings?: boolean;
   pickPoints?: Array<{ lon: number; lat: number }>;
   excludedGmlIds?: string[];

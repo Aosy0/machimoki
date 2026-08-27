@@ -12,5 +12,8 @@
     "dev:api": "npm run dev -w core",
     "build": "npm run build -w core && npm run build -w frontend",
     "test": "npm run test -w core"
+  },
+  "devDependencies": {
+    "wrangler": "^4.127.0"
   }
 }

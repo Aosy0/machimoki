@@ -1,4 +1,4 @@
-import type { Bounds, ExportOptions, ValidationResult } from '../types/api';
+import type { Bounds, ExportFormat, ExportOptions, ValidationResult } from '../types/api';
 
 async function readErrorMessage(res: Response): Promise<string> {
   const text = await res.text();
@@ -28,11 +28,18 @@ export async function exportModel(
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `model.${options.format}`;
+  a.download = downloadFilename(res, options.format);
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadFilename(res: Response, format: ExportFormat): string {
+  const disposition = res.headers.get('Content-Disposition');
+  const match = disposition?.match(/filename="?([^";]+)"?/);
+  if (match) return match[1];
+  return `model.${format}`;
 }
 
 export async function validateModel(file: File): Promise<ValidationResult> {

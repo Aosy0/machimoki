@@ -124,7 +124,7 @@ describe('CLI export command', () => {
   it('writes a model file with default options', async () => {
     const outputPath = join(tempDir, 'out.3mf');
     buildPrintableModel.mockResolvedValue({
-      buffer: Buffer.from('model-bytes'),
+      buffer: new TextEncoder().encode('model-bytes'),
       warnings: [],
     });
 
@@ -159,7 +159,7 @@ describe('CLI export command', () => {
   it('honors --include-spanning-buildings', async () => {
     const outputPath = join(tempDir, 'out.3mf');
     buildPrintableModel.mockResolvedValue({
-      buffer: Buffer.from('model-bytes'),
+      buffer: new TextEncoder().encode('model-bytes'),
       warnings: [],
     });
 
@@ -185,7 +185,7 @@ describe('CLI export command', () => {
   it('honors --no-terrain and --format stl', async () => {
     const outputPath = join(tempDir, 'out.stl');
     buildPrintableModel.mockResolvedValue({
-      buffer: Buffer.from('stl-bytes'),
+      buffer: new TextEncoder().encode('stl-bytes'),
       warnings: [],
     });
 
@@ -219,7 +219,7 @@ describe('CLI export command', () => {
   it('honors --scale 2', async () => {
     const outputPath = join(tempDir, 'out.3mf');
     buildPrintableModel.mockResolvedValue({
-      buffer: Buffer.from('scaled-bytes'),
+      buffer: new TextEncoder().encode('scaled-bytes'),
       warnings: [],
     });
 
@@ -246,7 +246,7 @@ describe('CLI export command', () => {
   it('passes repeated --pick-point options to the pipeline', async () => {
     const outputPath = join(tempDir, 'out.3mf');
     buildPrintableModel.mockResolvedValue({
-      buffer: Buffer.from('picked-bytes'),
+      buffer: new TextEncoder().encode('picked-bytes'),
       warnings: [],
     });
 
@@ -293,7 +293,7 @@ describe('CLI validate command', () => {
 
   it('prints JSON result for a valid file', async () => {
     const filePath = join(tempDir, 'model.stl');
-    writeFileSync(filePath, Buffer.from('solid cube endsolid cube'));
+    writeFileSync(filePath, new TextEncoder().encode('solid cube endsolid cube'));
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     validateMesh.mockResolvedValue({
@@ -313,7 +313,7 @@ describe('CLI validate command', () => {
 
     await program.parseAsync(['node', 'cli', 'validate', '--file', filePath]);
 
-    expect(validateMesh).toHaveBeenCalledWith(expect.any(Buffer), 'model/stl');
+    expect(validateMesh).toHaveBeenCalledWith(expect.any(Uint8Array), 'model/stl');
     expect(logSpy).toHaveBeenCalled();
     const output = logSpy.mock.calls[0][0] as string;
     expect(JSON.parse(output).status).toBe('pass');

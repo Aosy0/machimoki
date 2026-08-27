@@ -9,19 +9,36 @@ import {
   Matrix4,
   Transforms,
 } from 'cesium';
-import { NodeIO } from '@gltf-transform/core';
+import { WebIO } from '@gltf-transform/core';
 import { KHRDracoMeshCompression } from '@gltf-transform/extensions';
 import type { Accessor, Primitive } from '@gltf-transform/core';
 import type { Bounds, Lod, RawMesh } from './types.js';
 import { findTilesetUrl, resolveMuniCodes } from './catalog.js';
-import draco3dgltf from 'draco3dgltf';
 
 let dracoDecoderPromise: Promise<unknown> | null = null;
 
-function getDracoDecoder(): Promise<unknown> {
-  const promise = dracoDecoderPromise ?? draco3dgltf.createDecoderModule();
-  dracoDecoderPromise = promise;
-  return promise;
+async function getDracoDecoder(): Promise<unknown> {
+  if (dracoDecoderPromise) return dracoDecoderPromise;
+
+  const isBrowser =
+    typeof globalThis !== 'undefined' &&
+    typeof (globalThis as Record<string, unknown>).window !== 'undefined';
+
+  if (!isBrowser) {
+    const draco3dgltf = await import('draco3dgltf');
+    dracoDecoderPromise = draco3dgltf.default.createDecoderModule();
+  } else {
+    const globalDecoder = (globalThis as Record<string, unknown>).__DRACO_DECODER_MODULE__;
+    if (globalDecoder) {
+      dracoDecoderPromise = Promise.resolve(globalDecoder);
+    } else {
+      throw new Error(
+        'Browser Draco decoder not available. Please load draco_decoder.js ' +
+          'and set window.__DRACO_DECODER_MODULE__ before calling buildBuildingMeshes.',
+      );
+    }
+  }
+  return dracoDecoderPromise;
 }
 
 interface TileLike {
@@ -448,7 +465,7 @@ async function parseGlbToRawMeshes(
 ): Promise<RawMesh[]> {
   const { buffer: processedBuffer, rtcCenter } = preprocessGlbForNodeIO(glbBuffer);
   const decoder = await getDracoDecoder();
-  const io = new NodeIO()
+  const io = new WebIO()
     .registerExtensions([KHRDracoMeshCompression])
     .registerDependencies({
       'draco3d.decoder': decoder,

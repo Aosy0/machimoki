@@ -13,7 +13,7 @@ import { createCubeMesh } from './fixtures.js';
 describe('validateMesh', () => {
   it('passes for a watertight cube (3MF)', async () => {
     const manifold = await createManifoldFromMesh(createCubeMesh());
-    let buffer: Buffer;
+    let buffer: Uint8Array;
 
     try {
       buffer = await exportTo3MF(manifold);
@@ -36,7 +36,7 @@ describe('validateMesh', () => {
 
   it('passes for a watertight cube (STL)', async () => {
     const manifold = await createManifoldFromMesh(createCubeMesh());
-    let buffer: Buffer;
+    let buffer: Uint8Array;
 
     try {
       buffer = exportToSTL(manifold);

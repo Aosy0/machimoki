@@ -13,16 +13,21 @@ export type UpAxis = 'z-up' | 'y-up';
 
 export type Lod = 'lod1' | 'lod2' | 'lod3' | 'lod4';
 
+export type ExportFormat = '3mf' | 'stl' | 'machimoki';
+
 export interface ExportOptions {
   terrainThickness: number;
   flattenBottom: boolean;
-  format: '3mf' | 'stl';
+  format: ExportFormat;
   lod?: Lod;
   includeTerrain?: boolean;
   buildingColor?: string;
   terrainColor?: string;
   upAxis?: UpAxis;
   scale?: number;
+  // When format is 'machimoki', the embedded model is produced in this format
+  // ('3mf' | 'stl'). Defaults to '3mf'.
+  machimokiModelFormat?: '3mf' | 'stl';
   // 選択範囲の境界をまたぐ建物を含めるか（デフォルト false）。
   // true にすると、フットプリントが範囲に完全内包されない建物も含める。
   includeSpanningBuildings?: boolean;
@@ -41,7 +46,7 @@ export interface ExportRequest {
 }
 
 export interface ExportResult {
-  buffer: Buffer;
+  buffer: Uint8Array;
   warnings: string[];
 }
 

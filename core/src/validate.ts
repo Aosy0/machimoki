@@ -7,7 +7,7 @@ import type { Manifold } from 'manifold-3d';
 import { ValidationResult } from './types.js';
 import { importFrom3MF, importFromSTL } from './manifoldOps.js';
 
-async function importByMimeType(buffer: Buffer, mimeType: string): Promise<Manifold> {
+async function importByMimeType(buffer: Uint8Array, mimeType: string): Promise<Manifold> {
   const lowerMime = mimeType.toLowerCase();
   if (lowerMime === 'model/3mf') {
     return importFrom3MF(buffer);
@@ -87,7 +87,7 @@ function createFailResult(statusCode: string): ValidationResult {
  * with `self_intersections` set to 1 and `statusCode` set to the error text.
  */
 export async function validateMesh(
-  buffer: Buffer,
+  buffer: Uint8Array,
   mimeType: string
 ): Promise<ValidationResult> {
   let manifold: Manifold;

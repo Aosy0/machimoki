@@ -11,19 +11,20 @@ const NORMAL_SIZE = 12;
 const VERTEX_SIZE = 12;
 const BYTES_PER_FLOAT = 4;
 
-function isASCII(buffer: Buffer): boolean {
+function isASCII(buffer: Uint8Array): boolean {
   if (buffer.length < 5) return false;
-  const prefix = buffer.toString('ascii', 0, 5).toLowerCase();
+  const prefix = new TextDecoder().decode(buffer.subarray(0, 5)).toLowerCase();
   if (prefix !== 'solid') return false;
-  const text = buffer.toString('ascii').toLowerCase();
+  const text = new TextDecoder().decode(buffer).toLowerCase();
   return text.includes('endsolid');
 }
 
-function parseBinarySTL(buffer: Buffer): RawMesh {
+function parseBinarySTL(buffer: Uint8Array): RawMesh {
   if (buffer.length < HEADER_SIZE + 4) {
     throw new Error('Binary STL buffer is too short');
   }
-  const numTri = buffer.readUInt32LE(TRIANGLE_COUNT_OFFSET);
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const numTri = view.getUint32(TRIANGLE_COUNT_OFFSET, true);
   const expectedSize = HEADER_SIZE + 4 + TRIANGLE_RECORD_SIZE * numTri;
   if (buffer.length < expectedSize) {
     throw new Error(
@@ -41,9 +42,9 @@ function parseBinarySTL(buffer: Buffer): RawMesh {
 
     for (let vert = 0; vert < 3; vert++) {
       const posIdx = tri * 9 + vert * 3;
-      positions[posIdx] = buffer.readFloatLE(offset);
-      positions[posIdx + 1] = buffer.readFloatLE(offset + BYTES_PER_FLOAT);
-      positions[posIdx + 2] = buffer.readFloatLE(offset + BYTES_PER_FLOAT * 2);
+      positions[posIdx] = view.getFloat32(offset, true);
+      positions[posIdx + 1] = view.getFloat32(offset + BYTES_PER_FLOAT, true);
+      positions[posIdx + 2] = view.getFloat32(offset + BYTES_PER_FLOAT * 2, true);
       offset += VERTEX_SIZE;
     }
 
@@ -99,9 +100,9 @@ function parseASCIISTL(text: string): RawMesh {
  * Returns indices as a flat list [0, 1, 2, 3, 4, 5, ...] with each triangle
  * referencing three sequential vertices.
  */
-export function parseSTL(buffer: Buffer): RawMesh {
+export function parseSTL(buffer: Uint8Array): RawMesh {
   if (isASCII(buffer)) {
-    return parseASCIISTL(buffer.toString('ascii'));
+    return parseASCIISTL(new TextDecoder().decode(buffer));
   }
   return parseBinarySTL(buffer);
 }

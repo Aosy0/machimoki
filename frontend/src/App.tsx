@@ -201,6 +201,7 @@ function App() {
         terrainThickness: parameters.terrainThickness,
         flattenBottom: parameters.flattenBottom,
         format: parameters.exportFormat,
+        machimokiModelFormat: parameters.exportFormat === 'machimoki' ? '3mf' : undefined,
         lod: parameters.lod,
         includeTerrain: parameters.includeTerrain,
         buildingColor: parameters.buildingColor,

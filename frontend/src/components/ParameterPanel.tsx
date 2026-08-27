@@ -7,7 +7,7 @@ export interface Parameters {
   includeTerrain: boolean
   showTerrainImagery: boolean
   lod: Lod
-  exportFormat: '3mf' | 'stl'
+  exportFormat: '3mf' | 'stl' | 'machimoki'
   buildingColor: string
   terrainColor: string
   upAxis: 'z-up' | 'y-up'
@@ -150,7 +150,13 @@ function ParameterPanel({ parameters, onChange, onExport, availableLods = ['lod1
           >
             <option value="3mf">3MF（推奨）</option>
             <option value="stl">STL</option>
+            <option value="machimoki">Machimoki（.machimoki）</option>
           </select>
+          {parameters.exportFormat === 'machimoki' && (
+            <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '6px' }}>
+              .machimoki はモデル（3MF）とメタデータを1つのZIPにまとめた形式です
+            </p>
+          )}
         </div>
 
         {/* Up Axis */}

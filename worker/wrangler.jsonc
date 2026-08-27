@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "machimoki-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "f2e7e6e725d64bbe8800ead054a4388b"
+    }
+  ],
+  "vars": {
+    "ORIGIN_URL": ""
+  }
+}

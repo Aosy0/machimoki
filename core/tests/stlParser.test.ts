@@ -4,7 +4,7 @@ import { parseSTL } from '../src/stlParser.js';
 import { writeBinarySTL } from '../src/stlWriter.js';
 import { createCubeMesh } from './fixtures.js';
 
-function buildASCIISTL(): Buffer {
+function buildASCIISTL(): Uint8Array {
   const mesh = createCubeMesh();
   const lines: string[] = ['solid cube'];
 
@@ -23,7 +23,7 @@ function buildASCIISTL(): Buffer {
   }
 
   lines.push('endsolid cube');
-  return Buffer.from(lines.join('\n'), 'ascii');
+  return new TextEncoder().encode(lines.join('\n'));
 }
 
 describe('parseSTL', () => {

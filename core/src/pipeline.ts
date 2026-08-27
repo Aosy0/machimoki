@@ -13,6 +13,24 @@ import {
   unionMeshes,
 } from './manifoldOps.js';
 import { capBuildingBottom, splitConnectedComponents, weldVertices } from './buildingCapper.js';
+import {
+  componentContainsPoint,
+  componentIntersectsBounds,
+  dedupeComponents,
+  meshToRaw,
+  scaleRawMesh,
+} from './pipelineCore.js';
+import { createMachimokiBuffer } from './machimokiFormat.js';
+import { buildPrintableModelFromMeshes } from './pipelineUtils.js';
+
+export {
+  boundsToEngineXZ,
+  componentContainsPoint,
+  componentIntersectsBounds,
+  dedupeComponents,
+  meshToRaw,
+  scaleRawMesh,
+} from './pipelineCore.js';
 
 /**
  * Build a printable 3D model from geographic bounds and export options.
@@ -37,188 +55,6 @@ export async function buildPrintableModel(
   }
 }
 
-/**
- * Convert geographic bounds to the local engine coordinate frame
- * (x = east, y = up, z = south) centered on the selection center.
- * Matches the transform used by meshBuilder/terrain.
- */
-export function boundsToEngineXZ(bounds: Bounds): { minX: number; maxX: number; minZ: number; maxZ: number } {
-  const centerLon = (bounds.west + bounds.east) / 2;
-  const centerLat = (bounds.south + bounds.north) / 2;
-  const mPerDegLon = 111320 * Math.cos((centerLat * Math.PI) / 180);
-  const mPerDegLat = 111320;
-  return {
-    minX: (bounds.west - centerLon) * mPerDegLon,
-    maxX: (bounds.east - centerLon) * mPerDegLon,
-    minZ: -(bounds.north - centerLat) * mPerDegLat,
-    maxZ: -(bounds.south - centerLat) * mPerDegLat,
-  };
-}
-
-/**
- * True if the point (engine x/z) is inside the XZ projection of any triangle
- * of the mesh. A point on a triangle edge counts as inside.
- */
-export function pointInTriangleXZ(
-  px: number,
-  pz: number,
-  ax: number,
-  az: number,
-  bx: number,
-  bz: number,
-  cx: number,
-  cz: number,
-  epsilon = 1e-9,
-): boolean {
-  const sign = (x1: number, z1: number, x2: number, z2: number, x3: number, z3: number): number =>
-    (x1 - x3) * (z2 - z3) - (x2 - x3) * (z1 - z3);
-
-  const d1 = sign(px, pz, ax, az, bx, bz);
-  const d2 = sign(px, pz, bx, bz, cx, cz);
-  const d3 = sign(px, pz, cx, cz, ax, az);
-
-  const hasNegative = d1 < -epsilon || d2 < -epsilon || d3 < -epsilon;
-  const hasPositive = d1 > epsilon || d2 > epsilon || d3 > epsilon;
-  return !(hasNegative && hasPositive);
-}
-
-/**
- * True if the component's 2D footprint (x/z) contains the given pick point.
- * Uses a bounding-box pre-check followed by a per-triangle point-in-triangle
- * test, so a click inside an L-shaped footprint only matches the real
- * footprint rather than its bounding box.
- */
-export function componentContainsPoint(
-  mesh: RawMesh,
-  lon: number,
-  lat: number,
-  bounds: Bounds,
-): boolean {
-  const { minX, maxX, minZ, maxZ } = boundsToEngineXZ(bounds);
-  const centerLon = (bounds.west + bounds.east) / 2;
-  const centerLat = (bounds.south + bounds.north) / 2;
-  const mPerDegLon = 111320 * Math.cos((centerLat * Math.PI) / 180);
-  const mPerDegLat = 111320;
-  const px = (lon - centerLon) * mPerDegLon;
-  const pz = -(lat - centerLat) * mPerDegLat;
-
-  if (px < minX || px > maxX || pz < minZ || pz > maxZ) return false;
-
-  const positions = mesh.positions;
-  const indices = mesh.indices;
-  const numTriangles = indices.length / 3;
-
-  for (let t = 0; t < numTriangles; t++) {
-    const i0 = indices[t * 3] * 3;
-    const i1 = indices[t * 3 + 1] * 3;
-    const i2 = indices[t * 3 + 2] * 3;
-    if (
-      pointInTriangleXZ(
-        px,
-        pz,
-        positions[i0],
-        positions[i0 + 2],
-        positions[i1],
-        positions[i1 + 2],
-        positions[i2],
-        positions[i2 + 2],
-      )
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Remove duplicate components. PLATEAU tilesets may contain the same building
- * at multiple refinement levels (parent/child tiles with identical footprints
- * but different tessellation), so the raw fetch yields duplicates. Components
- * sharing a footprint bounding box (rounded to 1cm) are collapsed to the one
- * with the most triangles (the finest representation).
- */
-export function dedupeComponents(components: RawMesh[]): RawMesh[] {
-  const byFootprint = new Map<string, { mesh: RawMesh; triCount: number }>();
-
-  for (const comp of components) {
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minZ = Infinity;
-    let maxZ = -Infinity;
-    for (let i = 0; i < comp.positions.length; i += 3) {
-      const x = comp.positions[i];
-      const z = comp.positions[i + 2];
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (z < minZ) minZ = z;
-      if (z > maxZ) maxZ = z;
-    }
-
-    const key = `${minX.toFixed(2)},${minZ.toFixed(2)},${maxX.toFixed(2)},${maxZ.toFixed(2)}`;
-    const triCount = comp.indices.length / 3;
-    const existing = byFootprint.get(key);
-    if (!existing || triCount > existing.triCount) {
-      byFootprint.set(key, { mesh: comp, triCount });
-    }
-  }
-
-  return Array.from(byFootprint.values()).map((entry) => entry.mesh);
-}
-
-/**
- * True if the mesh's 2D footprint (x/z) intersects the selection bounds.
- *
- * PLATEAU tilesets contain huge root tiles (kilometer-scale regions), so a
- * tile-level intersection test keeps every building from all intersecting
- * tiles. Each connected component is a single building; filtering at this
- * level removes buildings far outside the requested bounds.
- */
-function componentIntersectsBounds(mesh: RawMesh, bounds: Bounds, tolerance = 1e-2, includeSpanning = true): boolean {
-  const { minX, maxX, minZ, maxZ } = boundsToEngineXZ(bounds);
-
-  let bMinX = Infinity;
-  let bMaxX = -Infinity;
-  let bMinZ = Infinity;
-  let bMaxZ = -Infinity;
-  for (let i = 0; i < mesh.positions.length; i += 3) {
-    const x = mesh.positions[i];
-    const z = mesh.positions[i + 2];
-    if (x < bMinX) bMinX = x;
-    if (x > bMaxX) bMaxX = x;
-    if (z < bMinZ) bMinZ = z;
-    if (z > bMaxZ) bMaxZ = z;
-  }
-
-  if (!includeSpanning) {
-    return (
-      bMinX >= minX - tolerance &&
-      bMaxX <= maxX + tolerance &&
-      bMinZ >= minZ - tolerance &&
-      bMaxZ <= maxZ + tolerance
-    );
-  }
-
-  return !(
-    bMaxX < minX - tolerance ||
-    bMinX > maxX + tolerance ||
-    bMaxZ < minZ - tolerance ||
-    bMinZ > maxZ + tolerance
-  );
-}
-
-/**
- * Scale a RawMesh by multiplying all position components by a uniform factor.
- * Returns a new mesh with a fresh Float32Array; does NOT mutate the input.
- */
-function scaleRawMesh(mesh: RawMesh, scale: number): RawMesh {
-  if (scale === 1) return mesh;
-  const scaled = new Float32Array(mesh.positions.length);
-  for (let i = 0; i < mesh.positions.length; i++) {
-    scaled[i] = mesh.positions[i] * scale;
-  }
-  return { positions: scaled, indices: mesh.indices };
-}
-
 async function buildPrintableModelUnsafe(
   bounds: Bounds,
   options: ExportOptions,
@@ -233,6 +69,12 @@ async function buildPrintableModelUnsafe(
   const includeSpanning = options.includeSpanningBuildings ?? false;
   const pickPoints = options.pickPoints ?? [];
   const warnings: string[] = [];
+
+  if (format === 'machimoki') {
+    throw new Error(
+      "format 'machimoki' is not supported by buildPrintableModel; use exportMachimoki instead",
+    );
+  }
 
   const buildingMeshes = await buildBuildingMeshes(bounds, lod, options.excludedGmlIds);
 
@@ -314,6 +156,70 @@ async function buildPrintableModelUnsafe(
   }
 }
 
-function meshToRaw(mesh: { vertProperties: Float32Array; triVerts: Uint32Array }): RawMesh {
-  return { positions: mesh.vertProperties, indices: mesh.triVerts };
+export interface MachimokiExportResult extends ExportResult {
+  modelBuffer: Uint8Array;
+  modelFormat: '3mf' | 'stl';
+}
+
+/**
+ * Build a `.machimoki` container from geographic bounds and export options.
+ *
+ * Fetches buildings and terrain, produces the printable model in the embedded
+ * format (`options.machimokiModelFormat`, default '3mf'), then wraps it in a
+ * `.machimoki` ZIP with a manifest.
+ */
+export async function exportMachimoki(
+  bounds: Bounds,
+  options: ExportOptions,
+): Promise<MachimokiExportResult> {
+  try {
+    return await exportMachimokiUnsafe(bounds, options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to export .machimoki: ${message}`);
+  }
+}
+
+async function exportMachimokiUnsafe(
+  bounds: Bounds,
+  options: ExportOptions,
+): Promise<MachimokiExportResult> {
+  const modelFormat = options.machimokiModelFormat ?? '3mf';
+  const modelOptions: ExportOptions = { ...options, format: modelFormat };
+  const { buffer, warnings } = await buildPrintableModel(bounds, modelOptions);
+  return {
+    buffer: createMachimokiBuffer(buffer, modelFormat, bounds, options, warnings),
+    modelBuffer: buffer,
+    modelFormat,
+    warnings,
+  };
+}
+
+/**
+ * Build a `.machimoki` container from already-fetched meshes.
+ *
+ * Equivalent to `exportMachimoki` but accepts pre-fetched `RawMesh` data
+ * instead of fetching buildings/terrain itself. Useful when the caller already
+ * has the geometry (e.g. decoded in the browser or a Worker).
+ */
+export async function exportMachimokiFromMeshes(
+  buildingMeshes: RawMesh[],
+  terrainMesh: RawMesh | null,
+  bounds: Bounds,
+  options: ExportOptions,
+): Promise<MachimokiExportResult> {
+  const modelFormat = options.machimokiModelFormat ?? '3mf';
+  const modelOptions: ExportOptions = { ...options, format: modelFormat };
+  const { buffer, warnings } = await buildPrintableModelFromMeshes(
+    buildingMeshes,
+    terrainMesh,
+    bounds,
+    modelOptions,
+  );
+  return {
+    buffer: createMachimokiBuffer(buffer, modelFormat, bounds, options, warnings),
+    modelBuffer: buffer,
+    modelFormat,
+    warnings,
+  };
 }

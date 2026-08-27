@@ -83,7 +83,7 @@ app.post('/api/validate', async (c) => {
 
   try {
     const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const buffer = new Uint8Array(arrayBuffer);
     const result = await validateMesh(buffer, mimeType);
     return c.json(result);
   } catch (error) {
@@ -121,6 +121,10 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
 
   const flattenBottom = typeof record.flattenBottom === 'boolean' ? record.flattenBottom : true;
   const format = parseFormat(record.format) ?? '3mf';
+  const machimokiModelFormat = parseMachimokiModelFormat(record.machimokiModelFormat);
+  if (machimokiModelFormat === null) {
+    return { ok: false, error: 'Invalid machimokiModelFormat' };
+  }
   const lod = parseLod(record.lod) ?? 'lod1';
   const includeTerrain =
     typeof record.includeTerrain === 'boolean' ? record.includeTerrain : true;
@@ -154,6 +158,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     terrainThickness,
     flattenBottom,
     format,
+    machimokiModelFormat,
     lod,
     includeTerrain,
     buildingColor,
@@ -195,7 +200,15 @@ function parseNumber(value: unknown): number | null {
   return null;
 }
 
-function parseFormat(value: unknown): '3mf' | 'stl' | null {
+function parseFormat(value: unknown): '3mf' | 'stl' | 'machimoki' | null {
+  if (typeof value !== 'string') return null;
+  const lower = value.toLowerCase();
+  if (lower === '3mf' || lower === 'stl' || lower === 'machimoki') return lower;
+  return null;
+}
+
+function parseMachimokiModelFormat(value: unknown): '3mf' | 'stl' | null | undefined {
+  if (value === undefined) return undefined;
   if (typeof value !== 'string') return null;
   const lower = value.toLowerCase();
   if (lower === '3mf' || lower === 'stl') return lower;

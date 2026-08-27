@@ -1,9 +1,130 @@
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
+import type { KVNamespace } from '@cloudflare/workers-types'
 
-const app = new Hono()
+type Bindings = {
+  KV: KVNamespace
+  ORIGIN_URL: string
+}
 
+const app = new Hono<{ Bindings: Bindings }>()
+
+// Enable CORS for all routes
+app.use('*', cors({
+  origin: '*',
+  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+}))
+
+// Health check
 app.get('/health', (c) => {
-  return c.json({ status: 'ok' })
+  return c.json({ status: 'ok', timestamp: Date.now() })
+})
+
+// PLATEAU catalog proxy with KV cache
+app.get('/api/catalog', async (c) => {
+  const cacheKey = 'catalog:plateau'
+
+  const cached = await c.env.KV.get(cacheKey)
+  if (cached) {
+    return c.json(JSON.parse(cached))
+  }
+
+  const res = await fetch('https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets')
+  if (!res.ok) {
+    return c.json({ error: 'Failed to fetch catalog' }, 502)
+  }
+
+  const data = await res.json()
+  await c.env.KV.put(cacheKey, JSON.stringify(data), { expirationTtl: 86400 })
+  return c.json(data)
+})
+
+// Per-muniCode catalog filtering with caching
+app.get('/api/catalog/:muniCode', async (c) => {
+  const muniCode = c.req.param('muniCode')
+  const lod = c.req.query('lod') || '1'
+  const cacheKey = `catalog:${muniCode}:${lod}`
+
+  const cached = await c.env.KV.get(cacheKey)
+  if (cached) {
+    return c.json(JSON.parse(cached))
+  }
+
+  const catalogUrl = 'https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets'
+  const res = await fetch(catalogUrl)
+  if (!res.ok) {
+    return c.json({ error: 'Failed to fetch catalog' }, 502)
+  }
+
+  const data = await res.json() as { datasets: Array<Record<string, unknown>> }
+  const prefCode = muniCode.slice(0, 2)
+
+  const filtered = (data.datasets || []).filter((d) => {
+    if (d.pref_code !== prefCode) return false
+    if (d.format !== '3D Tiles') return false
+    if (d.type !== '建築物モデル') return false
+    if (String(d.lod) !== lod) return false
+    if (d.ward_code && d.ward_code === muniCode) return true
+    if (d.city_code === muniCode) return true
+    return false
+  })
+
+  const result = { datasets: filtered }
+  await c.env.KV.put(cacheKey, JSON.stringify(result), { expirationTtl: 86400 })
+  return c.json(result)
+})
+
+// Simple fixed-window rate limiter using KV
+async function checkRateLimit(
+  kv: KVNamespace,
+  ip: string,
+  limit: number
+): Promise<boolean> {
+  const window = Math.floor(Date.now() / 60000)
+  const key = `rate:${ip}:${window}`
+  const countStr = await kv.get(key)
+  const count = countStr ? parseInt(countStr, 10) : 0
+  if (count >= limit) return false
+  await kv.put(key, String(count + 1), { expirationTtl: 120 })
+  return true
+}
+
+function originUrl(origin: string, path: string): string {
+  return `${origin.replace(/\/+$/, '')}${path}`
+}
+
+// Fallback proxy for export (rate limited).
+// The heavy pipeline (mesh fetch + manifold + .machimoki assembly) runs on the
+// origin core API server; this Worker only forwards the request and streams the
+// resulting binary (3MF / STL / .machimoki) back to the client.
+app.post('/api/export', async (c) => {
+  if (!c.env.ORIGIN_URL) {
+    return c.json({ error: 'Origin server not configured' }, 503)
+  }
+
+  const ip = c.req.header('CF-Connecting-IP') || 'unknown'
+  const allowed = await checkRateLimit(c.env.KV, ip, 10)
+  if (!allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429)
+  }
+
+  return fetch(originUrl(c.env.ORIGIN_URL, '/api/export'), c.req.raw)
+})
+
+// Fallback proxy for validation (rate limited)
+app.post('/api/validate', async (c) => {
+  if (!c.env.ORIGIN_URL) {
+    return c.json({ error: 'Origin server not configured' }, 503)
+  }
+
+  const ip = c.req.header('CF-Connecting-IP') || 'unknown'
+  const allowed = await checkRateLimit(c.env.KV, ip, 30)
+  if (!allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429)
+  }
+
+  return fetch(originUrl(c.env.ORIGIN_URL, '/api/validate'), c.req.raw)
 })
 
 export default app

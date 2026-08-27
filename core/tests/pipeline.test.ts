@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildPrintableModel, componentContainsPoint, dedupeComponents } from '../src/pipeline.js';
 import type { RawMesh } from '../src/types';
 
-const fakeBuffer = Buffer.from('fake-model');
+const fakeBuffer = new TextEncoder().encode('fake-model');
 
 vi.mock('../src/terrain.js', () => ({
   buildTerrainMesh: vi.fn(),

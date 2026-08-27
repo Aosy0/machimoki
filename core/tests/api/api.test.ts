@@ -4,6 +4,7 @@ import type { ServerType } from '@hono/node-server';
 
 vi.mock('../../src/pipeline.js', () => ({
   buildPrintableModel: vi.fn(),
+  exportMachimoki: vi.fn(),
 }));
 
 vi.mock('../../src/validate.js', () => ({
@@ -25,6 +26,9 @@ vi.mock('../../src/validate.js', () => ({
 
 const buildPrintableModel = vi.mocked(
   (await import('../../src/pipeline.js')).buildPrintableModel,
+);
+const exportMachimoki = vi.mocked(
+  (await import('../../src/pipeline.js')).exportMachimoki,
 );
 
 function getPort(server: ServerType): number {
@@ -55,7 +59,7 @@ describe('API server', () => {
   });
 
   it('POST /api/export returns binary model with attachment headers', async () => {
-    const fakeBuffer = Buffer.from('binary-model-data');
+    const fakeBuffer = new TextEncoder().encode('binary-model-data');
     buildPrintableModel.mockResolvedValue({ buffer: fakeBuffer, warnings: ['demo warning'] });
 
     const response = await fetch(`${baseUrl}/api/export`, {
@@ -74,7 +78,7 @@ describe('API server', () => {
     expect(response.headers.get('Content-Disposition')).toContain('model.3mf');
 
     const arrayBuffer = await response.arrayBuffer();
-    expect(Buffer.from(arrayBuffer).toString()).toBe('binary-model-data');
+    expect(new TextDecoder().decode(arrayBuffer)).toBe('binary-model-data');
 
     expect(buildPrintableModel).toHaveBeenCalledWith(
       { west: 139.69, south: 35.69, east: 139.7, north: 35.7 },
@@ -89,7 +93,7 @@ describe('API server', () => {
   });
 
   it('POST /api/export supports STL format', async () => {
-    buildPrintableModel.mockResolvedValue({ buffer: Buffer.from('stl-data'), warnings: [] });
+    buildPrintableModel.mockResolvedValue({ buffer: new TextEncoder().encode('stl-data'), warnings: [] });
 
     const response = await fetch(`${baseUrl}/api/export`, {
       method: 'POST',
@@ -106,8 +110,62 @@ describe('API server', () => {
     expect(response.headers.get('Content-Disposition')).toContain('model.stl');
   });
 
+  it('POST /api/export returns a .machimoki container', async () => {
+    const fakeModel = new TextEncoder().encode('machimoki-model-bytes');
+    exportMachimoki.mockResolvedValue({
+      buffer: new TextEncoder().encode('machimoki-zip-bytes'),
+      modelBuffer: fakeModel,
+      modelFormat: '3mf',
+      warnings: [],
+    });
+
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 139.69, south: 35.69, east: 139.7, north: 35.7 },
+        terrainThickness: 10,
+        flattenBottom: true,
+        format: 'machimoki',
+        machimokiModelFormat: '3mf',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Disposition')).toContain('model.machimoki');
+    expect(response.headers.get('X-Validation-Status')).toBe('pass');
+
+    const arrayBuffer = await response.arrayBuffer();
+    expect(new TextDecoder().decode(arrayBuffer)).toBe('machimoki-zip-bytes');
+
+    expect(exportMachimoki).toHaveBeenCalledWith(
+      { west: 139.69, south: 35.69, east: 139.7, north: 35.7 },
+      expect.objectContaining({
+        terrainThickness: 10,
+        flattenBottom: true,
+        format: 'machimoki',
+        machimokiModelFormat: '3mf',
+      }),
+    );
+  });
+
+  it('POST /api/export rejects invalid machimokiModelFormat', async () => {
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 0, south: 0, east: 1, north: 1 },
+        terrainThickness: 5,
+        format: 'machimoki',
+        machimokiModelFormat: 'obj',
+      }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
   it('POST /api/export accepts scale parameter', async () => {
-    buildPrintableModel.mockResolvedValue({ buffer: Buffer.from('scaled-model'), warnings: [] });
+    buildPrintableModel.mockResolvedValue({ buffer: new TextEncoder().encode('scaled-model'), warnings: [] });
 
     const response = await fetch(`${baseUrl}/api/export`, {
       method: 'POST',
@@ -128,7 +186,7 @@ describe('API server', () => {
   });
 
   it('POST /api/export accepts includeSpanningBuildings parameter', async () => {
-    buildPrintableModel.mockResolvedValue({ buffer: Buffer.from('model'), warnings: [] });
+    buildPrintableModel.mockResolvedValue({ buffer: new TextEncoder().encode('model'), warnings: [] });
 
     const response = await fetch(`${baseUrl}/api/export`, {
       method: 'POST',
@@ -149,7 +207,7 @@ describe('API server', () => {
   });
 
   it('POST /api/export accepts pickPoints parameter', async () => {
-    buildPrintableModel.mockResolvedValue({ buffer: Buffer.from('model'), warnings: [] });
+    buildPrintableModel.mockResolvedValue({ buffer: new TextEncoder().encode('model'), warnings: [] });
 
     const response = await fetch(`${baseUrl}/api/export`, {
       method: 'POST',
@@ -197,7 +255,7 @@ describe('API server', () => {
   });
 
   it('POST /api/validate returns JSON result for an uploaded STL', async () => {
-    const fileContent = Buffer.from('solid cube endsolid cube');
+    const fileContent = new TextEncoder().encode('solid cube endsolid cube');
     const formData = new FormData();
     formData.append('file', new File([fileContent], 'test.stl', { type: 'model/stl' }));
 

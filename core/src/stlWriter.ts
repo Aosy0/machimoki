@@ -23,7 +23,7 @@ const BYTES_PER_FLOAT = 4;
  *   - 3 x 12-byte vertices
  *   - 2-byte attribute byte count (0)
  */
-export function writeBinarySTL(mesh: RawMesh): Buffer {
+export function writeBinarySTL(mesh: RawMesh): Uint8Array {
   const numTri = mesh.indices.length / 3;
   if (!Number.isInteger(numTri)) {
     throw new Error(
@@ -31,10 +31,11 @@ export function writeBinarySTL(mesh: RawMesh): Buffer {
     );
   }
 
-  const buffer = Buffer.alloc(HEADER_SIZE + TRIANGLE_COUNT_SIZE + TRIANGLE_RECORD_SIZE * numTri);
+  const buffer = new Uint8Array(HEADER_SIZE + TRIANGLE_COUNT_SIZE + TRIANGLE_RECORD_SIZE * numTri);
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
   // 80-byte header — left as zeros.
-  buffer.writeUInt32LE(numTri, HEADER_SIZE);
+  view.setUint32(HEADER_SIZE, numTri, true);
 
   let offset = HEADER_SIZE + TRIANGLE_COUNT_SIZE;
   for (let tri = 0; tri < numTri; tri++) {
@@ -51,14 +52,14 @@ export function writeBinarySTL(mesh: RawMesh): Buffer {
       const x = mesh.positions[idx * 3];
       const y = mesh.positions[idx * 3 + 1];
       const z = mesh.positions[idx * 3 + 2];
-      buffer.writeFloatLE(x, offset);
-      buffer.writeFloatLE(y, offset + BYTES_PER_FLOAT);
-      buffer.writeFloatLE(z, offset + BYTES_PER_FLOAT * 2);
+      view.setFloat32(offset, x, true);
+      view.setFloat32(offset + BYTES_PER_FLOAT, y, true);
+      view.setFloat32(offset + BYTES_PER_FLOAT * 2, z, true);
       offset += VERTEX_SIZE;
     }
 
     // Attribute byte count (2 bytes) — set to 0.
-    buffer.writeUInt16LE(0, offset);
+    view.setUint16(offset, 0, true);
     offset += ATTRIBUTE_SIZE;
   }
 
