@@ -75,33 +75,7 @@ CLI/API の呼び出し手順と合否ルールが記載されている。
 
 ## 既知の問題
 
-### ブラウザが localhost の開発サーバーにアクセスできない
-
-**症状**: curl は通るが、Chrome/Firefox/Edge で localhost の HTTP サーバーに
-アクセスするとサブリソースが `(保留中)` のまま読み込まれない。
-
-**原因**: TCP 輻輳制御プロバイダが **BBR2** に設定されていると、ループバック
-（RTT ≒ 0）で BBR2 の ProbeRTT 処理がハングし、ブラウザの並列サブリソース
-取得が停止する。curl は単一接続のため回避できていた。
-
-**修正**（管理者 PowerShell）:
-```powershell
-netsh int tcp set supplemental template=Internet congestionprovider=CUBIC
-netsh int tcp set supplemental template=Datacenter congestionprovider=CUBIC
-netsh int tcp set supplemental template=Compat congestionprovider=CUBIC
-netsh int tcp set supplemental template=DatacenterCustom congestionprovider=CUBIC
-netsh int tcp set supplemental template=InternetCustom congestionprovider=CUBIC
-```
-再起動不要。即座に反映される。
-
-**診断**:
-```powershell
-Get-NetTCPSetting | Select-Object SettingName, CongestionProvider
-```
-BBR2 が表示されたら上記修正を実行する。
-
-**備考**: Vite の `host` 設定を `0.0.0.0` から `127.0.0.1` に変えても症状は
-変わらないので注意。根本原因は BBR2 である。
+詳細は `README.md` の「補足」セクションを参照。
 
 ## 参照コード（読み取り専用）
 
@@ -109,3 +83,12 @@ BBR2 が表示されたら上記修正を実行する。
 - ~/Documents/plateau-catalog-generator
 
 PLATEAU公式のCesium/データカタログAPI実装。参考にするのみで、編集・変更は禁止。
+
+## Architecture Rules
+
+3層構造を維持する。詳細は `README.md` の Architecture セクションを参照。
+
+- frontend: UI/3Dレンダリングのみ。重い演算禁止
+- core: メッシュ生成/検査。ブラウザAPI禁止
+- worker: 静的配信/軽量プロキシ。重い演算禁止
+- 依存関係: frontend -> core (API), worker -> frontend/core (Proxy)

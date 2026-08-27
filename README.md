@@ -11,6 +11,8 @@ machimoki/
 └── worker/      # Cloudflare Workers（ヘルスチェック）
 ```
 
+**設計思想:** 責務を分離し、重い3D演算は `core` に集約、`frontend` は UI/3Dレンダリングに専念、`worker` は静的配信/軽量プロキシに徹する。依存は `frontend → core`（HTTP API）、`worker → frontend/core`（Proxy）に限定し、逆方向の依存を禁止する。詳細なセットアップや起動手順は本READMEの後続セクションを参照。
+
 ### core
 
 ブラウザ非依存の 3D パイプライン本体。PLATEAU の 3D Tiles（建物）と Cesium 地形から `RawMesh` を構築し、manifold-3d でブール演算・3MF/STL エクスポート・検証を行う。
@@ -147,4 +149,27 @@ skills/machimoki-pipeline.md
 ## 補足
 
 - HMR 前提のため、通常は Vite の再起動は不要。必要と判断したときのみ再起動する。
-- ブラウザで localhost のサブリソースが `保留中` になる場合は、TCP 輻輳制御が BBR2 になっている可能性がある。管理者 PowerShell で `CUBIC` に戻す（`AGENTS.md` 参照）。
+
+### 既知の問題: ブラウザが localhost の開発サーバーにアクセスできない
+
+**症状**: curl は通るが、Chrome/Firefox/Edge で localhost の HTTP サーバーにアクセスするとサブリソースが `(保留中)` のまま読み込まれない。
+
+**原因**: TCP 輻輳制御プロバイダが **BBR2** に設定されていると、ループバック（RTT ≒ 0）で BBR2 の ProbeRTT 処理がハングし、ブラウザの並列サブリソース取得が停止する。curl は単一接続のため回避できていた。
+
+**修正**（管理者 PowerShell）:
+```powershell
+netsh int tcp set supplemental template=Internet congestionprovider=CUBIC
+netsh int tcp set supplemental template=Datacenter congestionprovider=CUBIC
+netsh int tcp set supplemental template=Compat congestionprovider=CUBIC
+netsh int tcp set supplemental template=DatacenterCustom congestionprovider=CUBIC
+netsh int tcp set supplemental template=InternetCustom congestionprovider=CUBIC
+```
+再起動不要。即座に反映される。
+
+**診断**:
+```powershell
+Get-NetTCPSetting | Select-Object SettingName, CongestionProvider
+```
+BBR2 が表示されたら上記修正を実行する。
+
+**備考**: Vite の `host` 設定を `0.0.0.0` から `127.0.0.1` に変えても症状は変わらないので注意。根本原因は BBR2 である。
