@@ -14,7 +14,7 @@ vi.mock('../src/meshBuilder.js', () => ({
 
 vi.mock('../src/manifoldOps.js', () => ({
   createManifoldFromMesh: vi.fn(),
-  exportPartsTo3MF: vi.fn(),
+  exportTo3MF: vi.fn(),
   exportMeshesToSTL: vi.fn(),
   unionMeshes: vi.fn(),
 }));
@@ -62,15 +62,16 @@ describe('buildPrintableModel', () => {
   it('orchestrates terrain + buildings -> 3MF by default', async () => {
     const { buildTerrainMesh } = await import('../src/terrain.js');
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
 
-    const terrainFake = createFakeManifold();
     const buildingFake = createFakeManifold();
+    const unionFake = createFakeManifold();
 
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
-    vi.mocked(createManifoldFromMesh).mockResolvedValueOnce(buildingFake).mockResolvedValueOnce(terrainFake);
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(createManifoldFromMesh).mockResolvedValue(buildingFake);
+    vi.mocked(unionMeshes).mockResolvedValue(unionFake);
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
     const bounds = { west: 139.69, south: 35.69, east: 139.7, north: 35.7 };
     const options = {
@@ -83,18 +84,20 @@ describe('buildPrintableModel', () => {
 
     expect(buildTerrainMesh).toHaveBeenCalledWith(bounds, 10, true);
     expect(buildBuildingMeshes).toHaveBeenCalledWith(bounds, 'lod1', undefined);
-    expect(createManifoldFromMesh).toHaveBeenCalledWith(terrainMesh);
     expect(createManifoldFromMesh).toHaveBeenCalledWith(buildingMesh);
-    expect(exportPartsTo3MF).toHaveBeenCalledTimes(1);
-    const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
-    expect(parts).toHaveLength(2);
-    expect(parts[0].manifold).toBe(terrainFake);
-    expect(parts[0].color).toBe('#ffffff');
-    expect(parts[1].manifold).toBe(buildingFake);
-    expect(parts[1].color).toBe('#ffffff');
+    expect(unionMeshes).toHaveBeenCalledTimes(1);
+    const unionMeshesArg = vi.mocked(unionMeshes).mock.calls[0][0];
+    expect(unionMeshesArg).toHaveLength(2);
+    expect(unionMeshesArg[0]).toBe(terrainMesh);
+    expect(unionMeshesArg[1]).toEqual({
+      positions: buildingFake.getMesh().vertProperties,
+      indices: buildingFake.getMesh().triVerts,
+    });
+    expect(exportTo3MF).toHaveBeenCalledTimes(1);
+    expect(exportTo3MF).toHaveBeenCalledWith(unionFake, '#ffffff', 'z-up');
     expect(result.buffer).toBe(fakeBuffer);
     expect(result.warnings).toEqual([]);
-    expect(terrainFake.delete).toHaveBeenCalled();
+    expect(unionFake.delete).toHaveBeenCalled();
     expect(buildingFake.delete).toHaveBeenCalled();
   });
 
@@ -126,14 +129,16 @@ describe('buildPrintableModel', () => {
   it('skips terrain when includeTerrain is false', async () => {
     const { buildTerrainMesh } = await import('../src/terrain.js');
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
 
     const buildingFake = createFakeManifold();
+    const unionFake = createFakeManifold();
 
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
     vi.mocked(createManifoldFromMesh).mockResolvedValue(buildingFake);
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(unionMeshes).mockResolvedValue(unionFake);
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
     await buildPrintableModel(
       { west: 0, south: 0, east: 1, north: 1 },
@@ -142,21 +147,27 @@ describe('buildPrintableModel', () => {
 
     expect(buildTerrainMesh).not.toHaveBeenCalled();
     expect(createManifoldFromMesh).not.toHaveBeenCalledWith(terrainMesh);
-    expect(exportPartsTo3MF).toHaveBeenCalledTimes(1);
-    const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
-    expect(parts).toHaveLength(1);
-    expect(parts[0].manifold).toBe(buildingFake);
+    expect(unionMeshes).toHaveBeenCalledTimes(1);
+    const unionMeshesArg = vi.mocked(unionMeshes).mock.calls[0][0];
+    expect(unionMeshesArg).toHaveLength(1);
+    expect(unionMeshesArg[0]).toEqual({
+      positions: buildingFake.getMesh().vertProperties,
+      indices: buildingFake.getMesh().triVerts,
+    });
+    expect(exportTo3MF).toHaveBeenCalledTimes(1);
   });
 
   it('passes custom lod to building mesh builder', async () => {
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
 
     const buildingFake = createFakeManifold();
+    const unionFake = createFakeManifold();
 
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
     vi.mocked(createManifoldFromMesh).mockResolvedValue(buildingFake);
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(unionMeshes).mockResolvedValue(unionFake);
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
     await buildPrintableModel(
       { west: 0, south: 0, east: 1, north: 1 },
@@ -164,19 +175,17 @@ describe('buildPrintableModel', () => {
     );
 
     expect(buildBuildingMeshes).toHaveBeenCalledWith(expect.any(Object), 'lod2', undefined);
-    expect(exportPartsTo3MF).toHaveBeenCalledTimes(1);
-    const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
-    expect(parts).toHaveLength(1);
-    expect(parts[0].manifold).toBe(buildingFake);
+    expect(unionMeshes).toHaveBeenCalledTimes(1);
+    expect(exportTo3MF).toHaveBeenCalledTimes(1);
   });
 
   it('returns warnings for non-manifold buildings and still exports printable ones', async () => {
     const { buildTerrainMesh } = await import('../src/terrain.js');
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
 
-    const terrainFake = createFakeManifold();
     const buildingFake = createFakeManifold();
+    const unionFake = createFakeManifold();
 
     // 2 distinct footprints so dedupeComponents keeps both
     const secondBuilding: RawMesh = {
@@ -188,9 +197,9 @@ describe('buildPrintableModel', () => {
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh, secondBuilding]);
     vi.mocked(createManifoldFromMesh)
       .mockResolvedValueOnce(buildingFake)
-      .mockRejectedValueOnce(new Error('Not manifold'))
-      .mockResolvedValueOnce(terrainFake);
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+      .mockRejectedValueOnce(new Error('Not manifold'));
+    vi.mocked(unionMeshes).mockResolvedValue(unionFake);
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
     const result = await buildPrintableModel(
       { west: 0, south: 0, east: 1, north: 1 },
@@ -199,11 +208,15 @@ describe('buildPrintableModel', () => {
 
     expect(result.warnings.length).toBe(1);
     expect(result.warnings[0]).toContain('Building 2 skipped');
-    expect(exportPartsTo3MF).toHaveBeenCalledTimes(1);
-    const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
-    expect(parts).toHaveLength(2);
-    expect(parts[0].manifold).toBe(terrainFake);
-    expect(parts[1].manifold).toBe(buildingFake);
+    expect(unionMeshes).toHaveBeenCalledTimes(1);
+    const unionMeshesArg = vi.mocked(unionMeshes).mock.calls[0][0];
+    expect(unionMeshesArg).toHaveLength(2);
+    expect(unionMeshesArg[0]).toBe(terrainMesh);
+    expect(unionMeshesArg[1]).toEqual({
+      positions: buildingFake.getMesh().vertProperties,
+      indices: buildingFake.getMesh().triVerts,
+    });
+    expect(exportTo3MF).toHaveBeenCalledTimes(1);
   });
 
   it('throws a descriptive error when no meshes are produced', async () => {
@@ -224,7 +237,7 @@ describe('buildPrintableModel', () => {
   it('scale=2 doubles mesh dimensions (volume ≈ 8x for unit cube)', async () => {
     const { buildTerrainMesh } = await import('../src/terrain.js');
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
     const { capBuildingBottom } = await import('../src/buildingCapper.js');
 
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
@@ -235,7 +248,8 @@ describe('buildPrintableModel', () => {
       capturedMesh = mesh;
       return createFakeManifold();
     });
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
     await buildPrintableModel(
       { west: 0, south: 0, east: 1, north: 1 },
@@ -258,7 +272,7 @@ describe('buildPrintableModel', () => {
   it('scale=1 is a no-op (no new allocations)', async () => {
     const { buildTerrainMesh } = await import('../src/terrain.js');
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
     const { capBuildingBottom } = await import('../src/buildingCapper.js');
 
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
@@ -266,16 +280,12 @@ describe('buildPrintableModel', () => {
     vi.mocked(capBuildingBottom).mockImplementation((mesh: RawMesh) => mesh);
 
     let capturedBuildingMesh: RawMesh | null = null;
-    let capturedTerrainMesh: RawMesh | null = null;
     vi.mocked(createManifoldFromMesh).mockImplementation(async (mesh: RawMesh) => {
-      if (!capturedBuildingMesh) {
-        capturedBuildingMesh = mesh;
-      } else {
-        capturedTerrainMesh = mesh;
-      }
+      capturedBuildingMesh = mesh;
       return createFakeManifold();
     });
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
     await buildPrintableModel(
       { west: 0, south: 0, east: 1, north: 1 },
@@ -283,13 +293,14 @@ describe('buildPrintableModel', () => {
     );
 
     expect(capturedBuildingMesh).toBe(buildingMesh);
-    expect(capturedTerrainMesh).toBe(terrainMesh);
+    const unionMeshesArg = vi.mocked(unionMeshes).mock.calls[0][0];
+    expect(unionMeshesArg[0]).toBe(terrainMesh);
   });
 
   it('excludes buildings straddling bounds when includeSpanningBuildings is false', async () => {
     const { buildTerrainMesh } = await import('../src/terrain.js');
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
 
     // bounds {west:-1, south:-1, east:1, north:1} → engine coords:
     // centerLon=0, centerLat=0, mPerDegLon=111320, mPerDegLat=111320
@@ -309,7 +320,8 @@ describe('buildPrintableModel', () => {
 
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([straddlingMesh]);
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
 
     // Default (includeSpanningBuildings omitted → false): building EXCLUDED, only terrain remains
     vi.mocked(createManifoldFromMesh).mockResolvedValue(createFakeManifold());
@@ -317,14 +329,17 @@ describe('buildPrintableModel', () => {
       { west: -1, south: -1, east: 1, north: 1 },
       { terrainThickness: 5, flattenBottom: true, format: '3mf' },
     );
-    // createManifoldFromMesh called only for terrain = 1 call
-    expect(createManifoldFromMesh).toHaveBeenCalledTimes(1);
-    expect(createManifoldFromMesh).toHaveBeenCalledWith(terrainMesh);
+    // No building survives filtering, so createManifoldFromMesh is never called.
+    expect(createManifoldFromMesh).toHaveBeenCalledTimes(0);
+    expect(unionMeshes).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(unionMeshes).mock.calls[0][0]).toHaveLength(1);
+    expect(vi.mocked(unionMeshes).mock.calls[0][0][0]).toBe(terrainMesh);
 
     vi.clearAllMocks();
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([straddlingMesh]);
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
     vi.mocked(createManifoldFromMesh).mockResolvedValue(createFakeManifold());
 
     // includeSpanningBuildings=true: building IS included
@@ -332,8 +347,10 @@ describe('buildPrintableModel', () => {
       { west: -1, south: -1, east: 1, north: 1 },
       { terrainThickness: 5, flattenBottom: true, format: '3mf', includeSpanningBuildings: true },
     );
-    // createManifoldFromMesh called for building + terrain = 2 calls
-    expect(createManifoldFromMesh).toHaveBeenCalledTimes(2);
+    // createManifoldFromMesh called once for the building; union gets terrain + building.
+    expect(createManifoldFromMesh).toHaveBeenCalledTimes(1);
+    expect(unionMeshes).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(unionMeshes).mock.calls[0][0]).toHaveLength(2);
   });
 });
 
@@ -407,7 +424,7 @@ describe('buildPrintableModel with pickPoints', () => {
   it('keeps only buildings whose footprint contains a pick point', async () => {
     const { buildTerrainMesh } = await import('../src/terrain.js');
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
 
     const hitMesh: RawMesh = {
       positions: new Float32Array([-10, 0, -10, 10, 0, -10, 0, 0, 10]),
@@ -421,7 +438,8 @@ describe('buildPrintableModel with pickPoints', () => {
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([hitMesh, missMesh]);
     vi.mocked(createManifoldFromMesh).mockResolvedValue(createFakeManifold());
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
     await buildPrintableModel(
       { west: -1, south: -1, east: 1, north: 1 },
@@ -430,25 +448,25 @@ describe('buildPrintableModel with pickPoints', () => {
 
     expect(createManifoldFromMesh).toHaveBeenCalledWith(hitMesh);
     expect(createManifoldFromMesh).not.toHaveBeenCalledWith(missMesh);
-    const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
-    expect(parts).toHaveLength(2);
+    expect(unionMeshes).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(unionMeshes).mock.calls[0][0]).toHaveLength(2);
   });
 
   it('warns when no building matches the pick points', async () => {
     const { buildTerrainMesh } = await import('../src/terrain.js');
     const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
-    const { createManifoldFromMesh, exportPartsTo3MF } = await import('../src/manifoldOps.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
 
     const farMesh: RawMesh = {
       positions: new Float32Array([-100, 0, -100, -90, 0, -100, -95, 0, -90]),
       indices: new Uint32Array([0, 1, 2]),
     };
-    const terrainFake = createFakeManifold();
 
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([farMesh]);
-    vi.mocked(createManifoldFromMesh).mockResolvedValue(terrainFake);
-    vi.mocked(exportPartsTo3MF).mockResolvedValue(fakeBuffer);
+    vi.mocked(createManifoldFromMesh).mockResolvedValue(createFakeManifold());
+    vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
     const result = await buildPrintableModel(
       { west: -1, south: -1, east: 1, north: 1 },
@@ -456,8 +474,8 @@ describe('buildPrintableModel with pickPoints', () => {
     );
 
     expect(result.warnings).toContain('No buildings matched the pick points');
-    const parts = vi.mocked(exportPartsTo3MF).mock.calls[0][0];
-    expect(parts).toHaveLength(1);
-    expect(parts[0].manifold).toBe(terrainFake);
+    expect(unionMeshes).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(unionMeshes).mock.calls[0][0]).toHaveLength(1);
+    expect(vi.mocked(unionMeshes).mock.calls[0][0][0]).toBe(terrainMesh);
   });
 });

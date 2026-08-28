@@ -8,8 +8,8 @@ import { buildTerrainMesh } from './terrain.js';
 import type { Manifold } from 'manifold-3d';
 import {
   createManifoldFromMesh,
-  exportPartsTo3MF,
   exportMeshesToSTL,
+  exportTo3MF,
   unionMeshes,
 } from './manifoldOps.js';
 import { capBuildingBottom, splitConnectedComponents, weldVertices } from './buildingCapper.js';
@@ -135,24 +135,25 @@ async function buildPrintableModelUnsafe(
     }
   }
 
-  const parts: Array<{ manifold: Manifold; color: string }> = [];
-  if (terrainMesh) {
-    parts.push({ manifold: await createManifoldFromMesh(terrainMesh), color: terrainColor });
-  }
-  for (const manifold of buildingManifolds) {
-    parts.push({ manifold, color: buildingColor });
-  }
+  // 3MF path: union terrain + buildings into a single manifold so the 3MF
+  // contains exactly one <object> and one <build> <item>. Bambu Studio warns
+  // on multi-object / multi-height files, so a single merged object is the
+  // safe default.
+  const meshes: RawMesh[] = [];
+  if (terrainMesh) meshes.push(terrainMesh);
+  meshes.push(...buildingManifolds.map((m) => meshToRaw(m.getMesh())));
 
-  if (parts.length === 0) {
+  if (meshes.length === 0) {
     throw new Error('No printable meshes generated for the requested bounds');
   }
 
+  const union = await unionMeshes(meshes);
   try {
-    return { buffer: await exportPartsTo3MF(parts, upAxis), warnings };
+    const modelColor = terrainMesh ? terrainColor : buildingColor;
+    return { buffer: await exportTo3MF(union, modelColor, upAxis), warnings };
   } finally {
-    for (const part of parts) {
-      part.manifold.delete();
-    }
+    union.delete();
+    for (const manifold of buildingManifolds) manifold.delete();
   }
 }
 

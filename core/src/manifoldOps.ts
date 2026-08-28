@@ -2,10 +2,7 @@
  * Manifold creation, boolean, and import/export operations.
  */
 
-import { Document } from '@gltf-transform/core';
 import { getManifoldModule } from 'manifold-3d/lib/wasm.js';
-import { writeMesh } from 'manifold-3d/lib/gltf-io.js';
-import { toArrayBuffer as export3mf } from 'manifold-3d/lib/export-3mf.js';
 import { importManifold, cleanup as cleanupImportModel } from 'manifold-3d/lib/import-model.js';
 import type { Manifold } from 'manifold-3d';
 import { strToU8, zipSync } from 'fflate';
@@ -105,23 +102,11 @@ export async function unionMeshes(meshes: RawMesh[]): Promise<Manifold> {
   }
 }
 
-function createId2Properties(
-  doc: Document,
-  manifoldMesh: { runOriginalID: Uint32Array },
-  material: ReturnType<typeof doc.createMaterial>,
-): Map<number, { material: ReturnType<typeof doc.createMaterial>; attributes: Array<'POSITION'> }> {
-  const id2properties = new Map<number, { material: ReturnType<typeof doc.createMaterial>; attributes: Array<'POSITION'> }>();
-  for (const id of manifoldMesh.runOriginalID) {
-    id2properties.set(id, { material, attributes: ['POSITION'] });
-  }
-  return id2properties;
-}
-
 /**
  * Export a Manifold to a 3MF buffer.
  *
  * @param manifold The manifold to export.
- * @param color Optional hex color string (e.g. "#ff0000") applied to all materials.
+ * @param color Optional hex color string (e.g. "#ff0000") applied to the object.
  * @param upAxis Which axis points up in the exported model (default 'z-up').
  */
 export async function exportTo3MF(
@@ -133,10 +118,26 @@ export async function exportTo3MF(
 }
 
 /**
+ * Normalize a hex color to the 3MF material format `#RRGGBBAA` (uppercase).
+ * 6-digit colors get an opaque alpha (`FF`) appended; anything else falls back
+ * to opaque white.
+ */
+function normalizeColor(color: string): string {
+  let hex = color.trim();
+  if (!hex.startsWith('#')) hex = `#${hex}`;
+  hex = hex.slice(1);
+  if (hex.length === 6) hex += 'FF';
+  if (hex.length !== 8) return '#FFFFFFFF';
+  return `#${hex.toUpperCase()}`;
+}
+
+/**
  * Generate 3MF model XML with colored parts.
  *
  * 3MF supports per-object colors via <colorgroup> resources referenced by
- * pid/pindex on <object> elements.
+ * pid/pindex on <object> elements. The material extension is only declared
+ * when a non-white color is actually used, so pure-geometry white models
+ * stay compatible with slicers that warn on unused extensions (e.g. Bambu Studio).
  */
 function buildColored3mfXml(
   parts: Array<{ positions: Float32Array; indices: Uint32Array; color?: string }>,
@@ -144,12 +145,21 @@ function buildColored3mfXml(
 ): string {
   const out: string[] = [];
 
-  out.push(`<?xml version="1.0" encoding="UTF-8"?>
+  const hasColor = parts.some((p) => p.color && normalizeColor(p.color) !== '#FFFFFFFF');
+  const modelHeader = hasColor
+    ? `<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">
+  <metadata name="Title">Machimoki model</metadata>
+  <metadata name="Application">Machimoki</metadata>
+  <resources>
+`
+    : `<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
   <metadata name="Title">Machimoki model</metadata>
   <metadata name="Application">Machimoki</metadata>
   <resources>
-`);
+`;
+  out.push(modelHeader);
 
   const partCount = parts.length;
 
@@ -157,14 +167,16 @@ function buildColored3mfXml(
   for (let i = 0; i < partCount; i++) {
     const c = parts[i].color;
     if (c) {
-      colorGroups.push({ groupId: partCount + 1 + colorGroups.length, hex: c });
+      const normalized = normalizeColor(c);
+      if (normalized === '#FFFFFFFF') continue;
+      colorGroups.push({ groupId: partCount + 1 + colorGroups.length, hex: normalized });
     }
   }
 
   for (const cg of colorGroups) {
-    out.push(`    <colorgroup id="${cg.groupId}">
-      <color color="${cg.hex}"/>
-    </colorgroup>
+    out.push(`    <m:colorgroup id="${cg.groupId}">
+      <m:color color="${cg.hex}"/>
+    </m:colorgroup>
 `);
   }
 
@@ -173,9 +185,11 @@ function buildColored3mfXml(
     const { positions, indices, color } = parts[i];
     const objectId = i + 1;
 
-    const pidAttr = color ? ` pid="${colorGroups[colorGroupIdx].groupId}"` : '';
-    const pidxAttr = color ? ' pindex="0"' : '';
-    if (color) colorGroupIdx++;
+    const normalized = color ? normalizeColor(color) : null;
+    const useColor = normalized && normalized !== '#FFFFFFFF';
+    const pidAttr = useColor ? ` pid="${colorGroups[colorGroupIdx].groupId}"` : '';
+    const pidxAttr = useColor ? ' pindex="0"' : '';
+    if (useColor) colorGroupIdx++;
 
     out.push(`    <object id="${objectId}" type="model"${pidAttr}${pidxAttr}>
       <mesh>
@@ -223,17 +237,24 @@ function buildColored3mfXml(
 
 /**
  * Build a complete 3MF ZIP buffer from colored parts.
+ *
+ * Uses the same package metadata as manifold-3d's export3mf so slicers
+ * (Bambu Studio, PrusaSlicer, ...) accept the file as valid:
+ * - [Content_Types].xml declares the 3D model MIME type
+ *   `application/vnd.ms-package.3dmanufacturing-3dmodel+xml`
+ * - _rels/.rels targets `3D/3dmodel.model` without a leading slash
  */
 function createColored3mfZip(xml: string): Uint8Array {
   const contentTypes = `<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="model" ContentType="model/3mf"/>
+  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+  <Default Extension="png" ContentType="image/png"/>
 </Types>`;
 
   const rels = `<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+  <Relationship Target="3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
 </Relationships>`;
 
   const files: Record<string, Uint8Array> = {
@@ -246,38 +267,13 @@ function createColored3mfZip(xml: string): Uint8Array {
 }
 
 /**
- * Export multiple Manifold parts to a single 3MF buffer, each with an optional
- * material color. Each part becomes a separate build item in the 3MF file.
+ * Export multiple parts to a single 3MF buffer.
  *
- * For parts with colors, generates the 3MF XML directly to include colorgroup
- * resources. For monochrome exports, falls back to manifold-3d's export3mf
- * which preserves roundtrip compatibility with importFrom3MF via
- * EXT_mesh_manifold extension.
+ * All parts are merged into a single manifold and written as exactly one
+ * <object> with one <build> <item>. Bambu Studio warns on multi-object /
+ * multi-height files, so a single merged object is the safe default. The
+ * merged object uses a single color (the first part's color, or white).
  */
-interface MeshPart {
-  positions: Float32Array;
-  indices: Uint32Array;
-  color?: string;
-}
-
-function getMeshPart(
-  part: { manifold: Manifold; color?: string } | { mesh: RawMesh; color?: string },
-): MeshPart {
-  if ('mesh' in part) {
-    return {
-      positions: part.mesh.positions,
-      indices: part.mesh.indices,
-      color: part.color,
-    };
-  }
-  const m = part.manifold.getMesh();
-  return {
-    positions: m.vertProperties,
-    indices: m.triVerts,
-    color: part.color,
-  };
-}
-
 export async function exportPartsTo3MF(
   parts: Array<
     | { manifold: Manifold; color?: string }
@@ -289,48 +285,44 @@ export async function exportPartsTo3MF(
     throw new Error('No parts to export');
   }
 
-  const hasRawMesh = parts.some((p) => 'mesh' in p);
-  const hasColor = parts.some((p) => 'color' in p && p.color);
+  const meshes: RawMesh[] = [];
+  for (const part of parts) {
+    if ('mesh' in part) {
+      if (part.mesh.positions.length > 0 && part.mesh.indices.length > 0) {
+        meshes.push(part.mesh);
+      }
+    } else {
+      const m = part.manifold.getMesh();
+      if (m.vertProperties.length > 0 && m.triVerts.length > 0) {
+        meshes.push({ positions: m.vertProperties, indices: m.triVerts });
+      }
+    }
+  }
 
-  // If any part is a RawMesh or has color, use the colored XML builder.
-  // RawMesh parts cannot go through manifold-3d's export3mf.
-  if (hasRawMesh || hasColor) {
-    const precision = 7;
-    const meshParts = parts.map((p) => {
-      const mp = getMeshPart(p);
-      return {
-        positions: scalePositions(transformForUpAxis(mp.positions, upAxis), METERS_TO_MM),
-        indices: mp.indices,
-        color: mp.color,
-      };
-    });
-    const xml = buildColored3mfXml(meshParts, precision);
+  if (meshes.length === 0) {
+    throw new Error('No parts to export');
+  }
+
+  const rawColor = parts.find((p) => p.color)?.color;
+  const normalized = rawColor ? normalizeColor(rawColor) : '#FFFFFFFF';
+  const color = normalized === '#FFFFFFFF' ? undefined : rawColor;
+
+  const union = await unionMeshes(meshes);
+  try {
+    const mesh = union.getMesh();
+    const positions = scalePositions(transformForUpAxis(mesh.vertProperties, upAxis), METERS_TO_MM);
+    const meshParts = [
+      {
+        positions,
+        indices: mesh.triVerts,
+        color,
+      },
+    ];
+    const xml = buildColored3mfXml(meshParts, 7);
     return createColored3mfZip(xml);
+  } finally {
+    union.delete();
   }
-
-  // All parts are pure Manifold objects — use manifold-3d's export3mf.
-  const doc = new Document();
-  const scaledManifolds: Manifold[] = [];
-
-  for (const part of parts as Array<{ manifold: Manifold }>) {
-    // Rotate (x, y, z) -> (x, -z, y) for z-up, then scale m -> mm.
-    // manifold.transform returns a new Manifold.
-    const scaled =
-      upAxis === 'z-up'
-        ? part.manifold.transform([METERS_TO_MM, 0, 0, 0, 0, 0, METERS_TO_MM, 0, 0, -METERS_TO_MM, 0, 0, 0, 0, 0, 1])
-        : part.manifold.transform([METERS_TO_MM, 0, 0, 0, 0, METERS_TO_MM, 0, 0, 0, 0, METERS_TO_MM, 0, 0, 0, 0, 1]);
-    scaledManifolds.push(scaled);
-    const manifoldMesh = scaled.getMesh();
-    const material = doc.createMaterial();
-    const id2properties = createId2Properties(doc, manifoldMesh, material);
-    const gltfMesh = writeMesh(doc, manifoldMesh, id2properties);
-    const node = doc.createNode();
-    node.setMesh(gltfMesh);
-  }
-
-  const arrayBuffer = await export3mf(doc, { header: { unit: 'millimeter' } });
-  for (const m of scaledManifolds) m.delete();
-  return new Uint8Array(arrayBuffer);
 }
 
 export function mergeRawMeshes(meshes: RawMesh[]): RawMesh {
@@ -357,53 +349,88 @@ export function mergeRawMeshes(meshes: RawMesh[]): RawMesh {
 
 export function exportMeshesToSTL(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Uint8Array {
   const merged = mergeRawMeshes(meshes);
-  merged.positions = scalePositions(transformForUpAxis(merged.positions, upAxis), METERS_TO_MM);
-  return writeBinarySTL(merged);
+  let positions = scalePositions(transformForUpAxis(merged.positions, upAxis), METERS_TO_MM);
+  // Weld after scaling to collapse near-coincident vertices that cause Bambu's non-manifold detection
+  const welded = weldVerticesForSTL({ positions, indices: merged.indices });
+  return writeBinarySTL(welded);
+}
+
+function weldVerticesForSTL(mesh: RawMesh, tolerance = 1e-4): RawMesh {
+  if (mesh.positions.length === 0) return mesh;
+  const cellSize = tolerance;
+  const cells = new Map<string, number[]>();
+  const newPositions: number[] = [];
+  const remap = new Uint32Array(mesh.positions.length / 3);
+  for (let i = 0; i < mesh.positions.length; i += 3) {
+    const x = mesh.positions[i];
+    const y = mesh.positions[i + 1];
+    const z = mesh.positions[i + 2];
+    const cx = Math.floor(x / cellSize);
+    const cy = Math.floor(y / cellSize);
+    const cz = Math.floor(z / cellSize);
+    let found: number | undefined;
+    outer: for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const list = cells.get(`${cx + dx},${cy + dy},${cz + dz}`);
+          if (list) {
+            for (const idx of list) {
+              const ox = newPositions[idx * 3];
+              const oy = newPositions[idx * 3 + 1];
+              const oz = newPositions[idx * 3 + 2];
+              if (Math.abs(ox - x) <= tolerance && Math.abs(oy - y) <= tolerance && Math.abs(oz - z) <= tolerance) {
+                found = idx;
+                break outer;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (found === undefined) {
+      found = newPositions.length / 3;
+      const key = `${cx},${cy},${cz}`;
+      const list = cells.get(key) ?? [];
+      list.push(found);
+      cells.set(key, list);
+      newPositions.push(x, y, z);
+    }
+    remap[i / 3] = found;
+  }
+  const newIndices = new Uint32Array(mesh.indices.length);
+  for (let i = 0; i < mesh.indices.length; i++) newIndices[i] = remap[mesh.indices[i]];
+  return { positions: new Float32Array(newPositions), indices: newIndices };
 }
 
 export async function exportMeshesTo3MF(meshes: RawMesh[], upAxis: UpAxis = 'z-up'): Promise<Uint8Array> {
-  const doc = new Document();
-  const buffer = doc.createBuffer();
-  const scene = doc.createScene();
-
-  for (const mesh of meshes) {
-    if (mesh.positions.length === 0 || mesh.indices.length === 0) continue;
-
-    const positionAccessor = doc
-      .createAccessor()
-      .setType('VEC3')
-      .setArray(scalePositions(transformForUpAxis(mesh.positions, upAxis), METERS_TO_MM))
-      .setBuffer(buffer);
-
-    const indicesAccessor = doc
-      .createAccessor()
-      .setType('SCALAR')
-      .setArray(mesh.indices)
-      .setBuffer(buffer);
-
-    const primitive = doc
-      .createPrimitive()
-      .setAttribute('POSITION', positionAccessor)
-      .setIndices(indicesAccessor);
-
-    const gltfMesh = doc.createMesh().addPrimitive(primitive);
-    const node = doc.createNode().setMesh(gltfMesh);
-    scene.addChild(node);
+  const nonEmpty = meshes.filter((m) => m.positions.length > 0 && m.indices.length > 0);
+  if (nonEmpty.length === 0) {
+    throw new Error('No meshes to export');
   }
 
-  doc.getRoot().setDefaultScene(scene);
-
-  const arrayBuffer = await export3mf(doc, { header: { unit: 'millimeter' } });
-  return new Uint8Array(arrayBuffer);
+  const union = await unionMeshes(nonEmpty);
+  try {
+    const mesh = union.getMesh();
+    const positions = scalePositions(transformForUpAxis(mesh.vertProperties, upAxis), METERS_TO_MM);
+    const meshParts = [
+      {
+        positions,
+        indices: mesh.triVerts,
+        color: undefined,
+      },
+    ];
+    const xml = buildColored3mfXml(meshParts, 7);
+    return createColored3mfZip(xml);
+  } finally {
+    union.delete();
+  }
 }
 
-/**
- * Export a Manifold to a binary STL buffer.
- */
 export function exportToSTL(manifold: Manifold, upAxis: UpAxis = 'z-up'): Uint8Array {
   const raw = meshToRaw(manifold.getMesh());
-  raw.positions = scalePositions(transformForUpAxis(raw.positions, upAxis), METERS_TO_MM);
-  return writeBinarySTL(raw);
+  let positions = scalePositions(transformForUpAxis(raw.positions, upAxis), METERS_TO_MM);
+  const welded = weldVerticesForSTL({ positions, indices: raw.indices });
+  return writeBinarySTL(welded);
 }
 
 function bufferToArrayBuffer(buffer: Uint8Array): ArrayBuffer {
