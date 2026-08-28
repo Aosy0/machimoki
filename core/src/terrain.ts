@@ -6,19 +6,18 @@ import {
   Cartesian3,
   Cartographic,
   CesiumTerrainProvider,
-  Ion,
   Matrix4,
   sampleTerrainMostDetailed,
   Transforms,
 } from 'cesium';
 import type { Bounds, RawMesh } from './types';
 
-const TERRAIN_GRID_SIZE = 64;
-// Preview3D.tsx と同じ PLATEAU 地形。asset 1 (Cesium World Terrain) は標高が異なり、
-// プレビューとエクスポートの地形が一致しない原因になるため変更しないこと。
-const PLATEAU_TERRAIN_ION_ASSET_ID = 3258112;
-const CESIUM_ION_TOKEN =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY';
+const TERRAIN_GRID_SIZE = 128;
+const DIRECT_TERRAIN_URL =
+  (typeof process !== 'undefined' && (process as any).env?.TERRAIN_URL) ??
+  (typeof process !== 'undefined' && (process as any).env?.VITE_TERRAIN_URL) ??
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TERRAIN_URL) ??
+  'https://tile.plateauview.mlit.go.jp/terrain';
 
 function enuToEngine(x: number, y: number, z: number): { x: number; y: number; z: number } {
   // ENU -> engine coordinates: (X, Y, Z) -> (X, Z, -Y)
@@ -30,10 +29,6 @@ export async function buildTerrainMesh(
   thickness: number,
   flattenBottom: boolean,
 ): Promise<RawMesh> {
-  Ion.defaultAccessToken = CESIUM_ION_TOKEN;
-
-  const terrainProvider = await CesiumTerrainProvider.fromIonAssetId(PLATEAU_TERRAIN_ION_ASSET_ID);
-
   const widthDeg = bounds.east - bounds.west;
   const heightDeg = bounds.north - bounds.south;
   const centerLon = (bounds.west + bounds.east) / 2;
@@ -48,7 +43,18 @@ export async function buildTerrainMesh(
     }
   }
 
-  const sampled = await sampleTerrainMostDetailed(terrainProvider, positions);
+  let sampled: Cartographic[];
+  let terrainProvider: any;
+  try {
+    terrainProvider = await (CesiumTerrainProvider as any).fromUrl(DIRECT_TERRAIN_URL, { requestVertexNormals: true } as any);
+  } catch (e) {
+    throw new Error(`PLATEAU-Terrain取得失敗: ${DIRECT_TERRAIN_URL} - ${(e as Error).message}`);
+  }
+  try {
+    sampled = await sampleTerrainMostDetailed(terrainProvider, positions);
+  } catch (e) {
+    throw new Error(`PLATEAU-Terrain取得失敗: ${DIRECT_TERRAIN_URL} - ${(e as Error).message}`);
+  }
 
   // Convert to local ENU coordinates centered on selection center
   const centerCartesian = Cartesian3.fromDegrees(centerLon, centerLat, 0);

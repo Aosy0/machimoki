@@ -35,6 +35,95 @@ import {
  * union, and export to 3MF or STL. Building color and terrain color are
  * written as 3MF colorgroup resources.
  */
+export function alignFlatTerrainToBuildings(
+  terrainMesh: RawMesh | null,
+  buildingMeshes: RawMesh[],
+): void {
+  if (!terrainMesh || buildingMeshes.length === 0) return;
+  const tPos = terrainMesh.positions;
+  const totalVerts = tPos.length / 3;
+  const topCount = Math.floor(totalVerts / 2);
+  if (topCount === 0) return;
+  const gridSize = Math.sqrt(topCount);
+  const isGrid = Number.isInteger(gridSize) && gridSize >= 2 && gridSize * gridSize === topCount;
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  if (isGrid) {
+    for (let i = 0; i < topCount; i++) {
+      const x = tPos[i * 3], z = tPos[i * 3 + 2];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+    }
+  }
+  for (const bm of buildingMeshes) {
+    const p = bm.positions;
+    const count = p.length / 3;
+    if (count === 0) continue;
+    let centroidX = 0;
+    let centroidZ = 0;
+    let buildingMinY = Infinity;
+    for (let i = 0; i < count; i++) {
+      centroidX += p[i * 3];
+      centroidZ += p[i * 3 + 2];
+      const y = p[i * 3 + 1];
+      if (y < buildingMinY) buildingMinY = y;
+    }
+    centroidX /= count;
+    centroidZ /= count;
+    if (!Number.isFinite(buildingMinY)) continue;
+    let terrainY: number;
+    if (isGrid && maxX > minX && maxZ > minZ) {
+      let minH = Infinity;
+      for (let v = 0; v < count; v++) {
+        const vx = p[v * 3], vz = p[v * 3 + 2];
+        const fx = ((vx - minX) / (maxX - minX)) * (gridSize - 1);
+        const fz = ((maxZ - vz) / (maxZ - minZ)) * (gridSize - 1);
+        const clampedFx = Math.max(0, Math.min(gridSize - 1, fx));
+        const clampedFz = Math.max(0, Math.min(gridSize - 1, fz));
+        const xi = Math.min(gridSize - 2, Math.floor(clampedFx));
+        const zi = Math.min(gridSize - 2, Math.floor(clampedFz));
+        const dx = clampedFx - xi;
+        const dz = clampedFz - zi;
+        const idx00 = zi * gridSize + xi;
+        const idx10 = zi * gridSize + (xi + 1);
+        const idx01 = (zi + 1) * gridSize + xi;
+        const idx11 = (zi + 1) * gridSize + (xi + 1);
+        const h00 = tPos[idx00 * 3 + 1], h10 = tPos[idx10 * 3 + 1], h01 = tPos[idx01 * 3 + 1], h11 = tPos[idx11 * 3 + 1];
+        const h = h00 * (1 - dx) * (1 - dz) + h10 * dx * (1 - dz) + h01 * (1 - dx) * dz + h11 * dx * dz;
+        if (h < minH) minH = h;
+      }
+      terrainY = Number.isFinite(minH) ? minH : tPos[0 * 3 + 1];
+    } else {
+      let bestIdx = 0;
+      let bestDist2 = Infinity;
+      for (let i = 0; i < topCount; i++) {
+        const dx = tPos[i * 3] - centroidX;
+        const dz = tPos[i * 3 + 2] - centroidZ;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestDist2) { bestDist2 = d2; bestIdx = i; }
+      }
+      terrainY = tPos[bestIdx * 3 + 1];
+    }
+    const delta = terrainY - buildingMinY - 0.3;
+    if (Math.abs(delta) < 1e-6) continue;
+    for (let i = 0; i < count; i++) {
+      p[i * 3 + 1] += delta;
+    }
+    if (Math.abs(delta) > 0.01) {
+      console.warn(
+        '[pipeline] Per-building grounding: shifted building by',
+        delta,
+        '(minY',
+        buildingMinY,
+        '-> terrainY',
+        terrainY,
+        '-0.3m overlap)',
+      );
+    }
+  }
+}
+
 export async function buildPrintableModelFromMeshes(
   buildingMeshes: RawMesh[],
   terrainMesh: RawMesh | null,
@@ -64,6 +153,7 @@ export async function buildPrintableModelFromMeshes(
     components.push(...splitConnectedComponents(welded));
   }
   const uniqueComponents = dedupeComponents(components);
+  alignFlatTerrainToBuildings(terrainMesh, uniqueComponents);
 
   // Build Manifold solids for each surviving building.
   const buildingManifolds: Manifold[] = [];

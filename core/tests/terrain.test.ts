@@ -41,10 +41,11 @@ vi.mock('cesium', () => {
   return {
     Cartesian3,
     Cartographic,
-    CesiumTerrainProvider: { fromIonAssetId: vi.fn() },
+    CesiumTerrainProvider: { fromUrl: vi.fn(), fromIonAssetId: vi.fn() },
     Ion: { defaultAccessToken: '' },
     Matrix4,
     sampleTerrainMostDetailed: vi.fn(),
+    Math: { toDegrees: (r: number) => (r * 180) / Math.PI, toRadians: (d: number) => (d * Math.PI) / 180 },
     Transforms: {
       eastNorthUpToFixedFrame: () => new Matrix4(),
     },
@@ -61,6 +62,9 @@ const bounds: Bounds = {
 describe('terrain', () => {
   beforeEach(async () => {
     const { CesiumTerrainProvider, sampleTerrainMostDetailed } = await import('cesium');
+    (CesiumTerrainProvider.fromUrl as unknown as MockInstance)
+      .mockReset()
+      .mockResolvedValue({ availability: {} });
     (CesiumTerrainProvider.fromIonAssetId as unknown as MockInstance)
       .mockReset()
       .mockResolvedValue({});
@@ -75,19 +79,19 @@ describe('terrain', () => {
     });
   });
 
-  it('samples a 64x64 grid and returns a solid mesh', async () => {
+  it('samples a 128x128 grid and returns a solid mesh', async () => {
     const mesh = await buildTerrainMesh(bounds, 10, true);
 
     expect(mesh.positions).toBeInstanceOf(Float32Array);
     expect(mesh.indices).toBeInstanceOf(Uint32Array);
 
-    const numVertices = 64 * 64 * 2;
+    const numVertices = 128 * 128 * 2;
     expect(mesh.positions.length).toBe(numVertices * 3);
   });
 
   it('flattens bottom when flattenBottom is true', async () => {
     const mesh = await buildTerrainMesh(bounds, 10, true);
-    const numVertices = 64 * 64;
+    const numVertices = 128 * 128;
 
     const bottomYValues: number[] = [];
     for (let i = numVertices; i < numVertices * 2; i++) {
@@ -100,7 +104,7 @@ describe('terrain', () => {
 
   it('keeps bottom relative to surface when flattenBottom is false', async () => {
     const mesh = await buildTerrainMesh(bounds, 10, false);
-    const numVertices = 64 * 64;
+    const numVertices = 128 * 128;
 
     const bottomYValues: number[] = [];
     for (let i = numVertices; i < numVertices * 2; i++) {

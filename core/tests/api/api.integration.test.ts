@@ -8,8 +8,6 @@ import { app } from '../../src/api/server.js';
 
 describe('API integration - real export (no mocks)', () => {
   it('POST /api/export with frontend auto-scale (150mm) succeeds', async () => {
-    // App.tsx と同じ計算: maxDim ~300m の範囲で scale = 150/(maxDim*1000) ~0.0005
-    // ここでは代表的な小範囲 139.8053,35.7470,139.8080,35.7495 を使用
     const res = await app.request('/api/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -23,14 +21,13 @@ describe('API integration - real export (no mocks)', () => {
         scale: 0.0005,
       }),
     });
-    // 500 が返った場合は本文にエラーメッセージが含まれる
     if (res.status === 500) {
       const body = await res.json();
       throw new Error(`Expected 200 but got 500: ${JSON.stringify(body)}`);
     }
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
-  });
+  }, 30000);
 
   it('POST /api/export with tiny bounds and 150mm scale succeeds', async () => {
     // 以前 Bambu Studio 警告の再現に使った極小範囲

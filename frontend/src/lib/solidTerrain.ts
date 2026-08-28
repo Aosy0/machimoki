@@ -5,6 +5,7 @@ import {
   Color,
   ColorGeometryInstanceAttribute,
   ComponentDatatype,
+  EllipsoidTerrainProvider,
   Geometry,
   GeometryAttribute,
   GeometryAttributes,
@@ -43,7 +44,7 @@ type SolidTerrainPrimitive = Primitive & {
   _machimokiSolidTerrainHasNormals?: boolean
 }
 
-const DEFAULT_GRID_SIZE = 64
+const DEFAULT_GRID_SIZE = 128
 const MIN_TERRAIN_THICKNESS = 0.1
 const TERRAIN_SURFACE_OFFSET = 0.05
 
@@ -233,6 +234,7 @@ export interface TerrainSampleData {
   topEcefValues: Float64Array
   minTopHeight: number
   indices: Uint32Array
+  isFallback: boolean
 }
 
 export async function sampleTerrainData(
@@ -255,7 +257,20 @@ export async function sampleTerrainData(
     }
   }
 
-  const sampledPositions = await sampleTerrainMostDetailed(terrainProvider, samplePositions)
+  const isIncompleteProvider =
+    terrainProvider instanceof EllipsoidTerrainProvider ||
+    (terrainProvider as any).availability === undefined
+  if (isIncompleteProvider) {
+    throw new Error(`PLATEAU-Terrain取得失敗: TerrainProviderがPLATEAU-Terrainではありません (Ellipsoidまたはavailabilityなし)`)
+  }
+  let sampledPositions: Cartographic[]
+  try {
+    sampledPositions = await sampleTerrainMostDetailed(terrainProvider, samplePositions)
+    for (const p of sampledPositions) if (!Number.isFinite(p.height as number)) p.height = 0
+  } catch (e) {
+    throw new Error(`PLATEAU-Terrain取得失敗: ${ (e as Error).message }`)
+  }
+  const isFallback = false
 
   const centerCartesian = Cartesian3.fromDegrees(centerLon, centerLat, 0)
   const centerMatrix = Transforms.eastNorthUpToFixedFrame(centerCartesian)
@@ -291,6 +306,7 @@ export async function sampleTerrainData(
     topEcefValues,
     minTopHeight,
     indices,
+    isFallback,
   }
 }
 

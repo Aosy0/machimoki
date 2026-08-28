@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Viewer,
   Cesium3DTileset,
   Color,
   Cartesian3,
+  Cartographic,
   Math as CesiumMath,
-  Ion,
   CesiumTerrainProvider,
   ClippingPlaneCollection,
   DirectionalLight,
@@ -13,6 +13,8 @@ import {
   UrlTemplateImageryProvider,
   HeadingPitchRange,
   Matrix4,
+  OrthographicFrustum,
+  PerspectiveFrustum,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   Cesium3DTileFeature,
@@ -91,9 +93,22 @@ export default function Preview3D({
   const gridLayerRef = useRef<any>(null)
   const textureLayerRef = useRef<any>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
+  const buildingMinYCacheRef = useRef<Map<string, number | null>>(new Map())
   const appliedTerrainParamsRef = useRef<{ terrainThickness: number; flattenBottom: boolean; terrainColor: string } | null>(null)
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
+  const [isOrthographic, setIsOrthographic] = useState(false)
+  const terrainBoundingSphereRef = useRef<BoundingSphere | null>(null)
+  const [debugInfo, setDebugInfo] = useState<{isFallback:boolean, minTopHeight:number, variance:number, buildingMinY:number|null, delta:number|null, terrainPrimitive:boolean}|null>(null)
+  useEffect(() => {
+    ;(window as any).__terrainDebug = debugInfo
+  }, [debugInfo])
+  const isOrthographicRef = useRef(false)
+  const toggleProjectionRef = useRef<(() => void) | null>(null)
+  const applyPresetViewRef = useRef<
+    ((headingDeg: number, pitchDeg: number, opts?: { useTop?: boolean }) => void) | null
+  >(null)
   const [terrainProvider, setTerrainProvider] = useState<TerrainProvider | null>(null)
+  const [terrainError, setTerrainError] = useState<string | null>(null)
 
   const excludedIdsRef = useRef<Set<string>>(new Set())
   const undoStackRef = useRef<string[]>([])
@@ -303,6 +318,132 @@ export default function Preview3D({
   const latestTerrainParamsRef = useRef({ terrainThickness, flattenBottom, terrainColor })
   latestTerrainParamsRef.current = { terrainThickness, flattenBottom, terrainColor }
 
+  const toggleProjection = useCallback(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    if (isOrthographicRef.current) {
+      viewer.camera.switchToPerspectiveFrustum()
+      isOrthographicRef.current = false
+      setIsOrthographic(false)
+      try {
+        window.dispatchEvent(
+          new CustomEvent('preview:projectionChange', { detail: { mode: 'perspective' } })
+        )
+      } catch {}
+    } else {
+      viewer.camera.switchToOrthographicFrustum()
+      if (selectionBounds) {
+        const lat = (selectionBounds.north + selectionBounds.south) / 2
+        const wM =
+          Math.abs(selectionBounds.east - selectionBounds.west) *
+          (Math.PI / 180) *
+          6371000 *
+          Math.cos((lat * Math.PI) / 180)
+        const hM = Math.abs(selectionBounds.north - selectionBounds.south) * (Math.PI / 180) * 6371000
+        const maxDim = Math.max(wM, hM)
+        try {
+          ;(viewer.camera.frustum as OrthographicFrustum).width = Math.max(maxDim * 1.6, 300)
+        } catch {}
+      }
+      isOrthographicRef.current = true
+      setIsOrthographic(true)
+      try {
+        window.dispatchEvent(
+          new CustomEvent('preview:projectionChange', { detail: { mode: 'orthographic' } })
+        )
+      } catch {}
+    }
+    viewer.scene.requestRender()
+  }, [selectionBounds])
+
+  const applyPresetView = useCallback(
+    (headingDeg: number, pitchDeg: number, opts?: { useTop?: boolean }) => {
+      const viewer = viewerRef.current
+      if (!viewer) return
+      const bounds = selectionBounds
+      if (!bounds) {
+        viewer.camera.setView({
+          orientation: {
+            heading: CesiumMath.toRadians(headingDeg),
+            pitch: CesiumMath.toRadians(pitchDeg),
+            roll: 0,
+          },
+        })
+        viewer.scene.requestRender()
+        try {
+          window.dispatchEvent(
+            new CustomEvent('preview:viewChange', { detail: { headingDeg, pitchDeg, opts } })
+          )
+        } catch {}
+        return
+      }
+      const flyLon = (bounds.west + bounds.east) / 2
+      const flyLat = (bounds.south + bounds.north) / 2
+      const widthDeg = bounds.east - bounds.west
+      const heightDeg = bounds.north - bounds.south
+      const widthMeters =
+        CesiumMath.toRadians(widthDeg) * 6371000 * Math.cos(CesiumMath.toRadians(flyLat))
+      const heightMeters = CesiumMath.toRadians(heightDeg) * 6371000
+      const maxDim = Math.max(widthMeters, heightMeters)
+      const range = Math.max(maxDim * 2.4, 300)
+      const cameraHeight = Math.max(maxDim * 2, 300)
+
+      cameraFramedForRef.current = bounds
+
+      const useTop = opts?.useTop || pitchDeg === -90
+      if (useTop) {
+        viewer.camera.setView({
+          destination: Cartesian3.fromDegrees(flyLon, flyLat, cameraHeight),
+          orientation: {
+            heading: CesiumMath.toRadians(headingDeg),
+            pitch: CesiumMath.toRadians(pitchDeg),
+            roll: 0,
+          },
+        })
+      } else if (terrainBoundingSphereRef.current) {
+        viewer.camera.viewBoundingSphere(
+          terrainBoundingSphereRef.current,
+          new HeadingPitchRange(
+            CesiumMath.toRadians(headingDeg),
+            CesiumMath.toRadians(pitchDeg),
+            range
+          )
+        )
+        viewer.camera.lookAtTransform(Matrix4.IDENTITY)
+      } else {
+        viewer.camera.setView({
+          destination: Cartesian3.fromDegrees(flyLon, flyLat, range),
+          orientation: {
+            heading: CesiumMath.toRadians(headingDeg),
+            pitch: CesiumMath.toRadians(pitchDeg),
+            roll: 0,
+          },
+        })
+      }
+      viewer.scene.requestRender()
+      try {
+        window.dispatchEvent(
+          new CustomEvent('preview:viewChange', { detail: { headingDeg, pitchDeg, opts } })
+        )
+      } catch {}
+    },
+    [selectionBounds]
+  )
+
+  void PerspectiveFrustum
+  toggleProjectionRef.current = toggleProjection
+  applyPresetViewRef.current = applyPresetView
+
+  useEffect(() => {
+    ;(window as any).__previewControls = {
+      toggleProjection: () => toggleProjectionRef.current?.(),
+      setView: (headingDeg: number, pitchDeg: number, opts?: any) =>
+        applyPresetViewRef.current?.(headingDeg, pitchDeg, opts),
+      getProjection: () => (isOrthographicRef.current ? 'orthographic' : 'perspective'),
+      isOrthographic: () => isOrthographicRef.current,
+    }
+  }, [isOrthographic, selectionBounds])
+
   useEffect(() => {
     console.log('[Preview3D] Viewer useEffect fired')
     if (!containerRef.current) return
@@ -332,8 +473,8 @@ export default function Preview3D({
     })
     viewer.scene.light = directionalLight
 
-    Ion.defaultAccessToken =
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJiODVhMmQ5OS1hOWZjLTQ3YmYtODlmNi1lNWUwY2MwOGUxYTMiLCJpZCI6MTQ5ODk3LCJpYXQiOjE2ODc5MzQ3NDN9.OG0mc3i7ZxGwHQjlMv3TRjiOvKWpzxglxmJRaUIykTY'
+    // 直接配信の quantized-mesh (Ion不要) のみ使用
+    const directTerrainUrl = (import.meta.env.VITE_TERRAIN_URL as string | undefined) ?? 'https://tile.plateauview.mlit.go.jp/terrain'
 
     const creditContainer = viewer.cesiumWidget.creditContainer as HTMLElement
     if (creditContainer) {
@@ -342,6 +483,13 @@ export default function Preview3D({
 
     viewerRef.current = viewer
     ;(window as any).__cesiumViewer = viewer
+    ;(window as any).__previewControls = {
+      toggleProjection: () => toggleProjectionRef.current?.(),
+      setView: (headingDeg: number, pitchDeg: number, opts?: any) =>
+        applyPresetViewRef.current?.(headingDeg, pitchDeg, opts),
+      getProjection: () => (isOrthographicRef.current ? 'orthographic' : 'perspective'),
+      isOrthographic: () => isOrthographicRef.current,
+    }
 
     const textureProvider = new UrlTemplateImageryProvider({
       url: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -350,15 +498,36 @@ export default function Preview3D({
     textureLayerRef.current.show = false
 
     const loadTerrain = async () => {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined
       try {
-        const terrainProvider = await CesiumTerrainProvider.fromIonAssetId(3258112)
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Terrain load timeout (10s)')), 10000)
+        })
+        const terrainProvider = await Promise.race([
+          CesiumTerrainProvider.fromUrl(directTerrainUrl, { requestVertexNormals: true } as any),
+          timeoutPromise,
+        ])
+        if (timeoutId) clearTimeout(timeoutId)
         if (viewerRef.current) {
           viewer.scene.terrainProvider = terrainProvider
           setTerrainProvider(terrainProvider)
           console.log('[Preview3D] Terrain set successfully')
         }
       } catch (err) {
-        console.error('[Preview3D] Terrain setup failed:', err)
+        const message =
+          err instanceof Error
+            ? `PLATEAU-Terrain取得失敗: ${err.message}`
+            : 'PLATEAU-Terrain取得失敗'
+        console.error('[Preview3D] PLATEAU-Terrain取得失敗 (フォールバックなし):', err)
+        // フォールバック地形は一切設定しない。terrainProvider は null のまま UI にエラーを表示する
+        setTerrainProvider(null)
+        setTerrainError(message)
+        onPipelineStateChange?.({
+          phase: 'error',
+          progress: 0,
+          message,
+          error: message,
+        })
       }
     }
     loadTerrain()
@@ -397,7 +566,9 @@ export default function Preview3D({
         viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
         solidTerrainPrimitiveRef.current = null
       }
+      terrainBoundingSphereRef.current = null
       setTerrainProvider(null)
+      setTerrainError(null)
       viewer.destroy()
       viewerRef.current = null
     }
@@ -499,6 +670,7 @@ export default function Preview3D({
 
     terrainSampleCacheRef.current = null
     appliedTerrainParamsRef.current = null
+    terrainBoundingSphereRef.current = null
 
     viewer.scene.globe.show = true
 
@@ -517,12 +689,21 @@ export default function Preview3D({
     }
 
     if (includeTerrain && !terrainProvider) {
-      onPipelineStateChange?.({
-        phase: 'acquiring',
-        progress: 0,
-        message: '地形データを読み込み中',
-        error: null,
-      })
+      if (terrainError) {
+        onPipelineStateChange?.({
+          phase: 'error',
+          progress: 0,
+          message: terrainError,
+          error: terrainError,
+        })
+      } else {
+        onPipelineStateChange?.({
+          phase: 'acquiring',
+          progress: 0,
+          message: '地形データを読み込み中',
+          error: null,
+        })
+      }
       return
     }
 
@@ -699,14 +880,160 @@ export default function Preview3D({
             error: null,
           })
 
+          // 下の平面は Ion失敗時のフォールバック height=0 (楕円体高0m) の平坦地形。正常時は地形起伏あり、shiftで建物高さ59mに補正
+          const calcVariance = (s: TerrainSampleData): number => {
+            const zs = s.topLocalPositions.map((p) => p.z)
+            return Math.max(...zs) - Math.min(...zs)
+          }
+          const getBuildingMinY = async (sampleForFallback: TerrainSampleData): Promise<number | null> => {
+            const cacheKey = `${bounds.west},${bounds.south},${bounds.east},${bounds.north}:${lod}`
+            if (buildingMinYCacheRef.current.has(cacheKey)) {
+              return buildingMinYCacheRef.current.get(cacheKey) ?? null
+            }
+            let minBuildingY: number | null = null
+            try {
+              const core = await import('@machimoki/core')
+              if (cancelled) return null
+              const buildingMeshes = await core.buildBuildingMeshes(
+                bounds,
+                lod,
+                excludedBuildingIds ?? undefined
+              )
+              if (cancelled) return null
+              let mY = Infinity
+              for (const m of buildingMeshes) {
+                const p = m.positions
+                for (let i = 1; i < p.length; i += 3) {
+                  const y = p[i]
+                  if (Number.isFinite(y) && y < mY) mY = y
+                }
+              }
+              minBuildingY = Number.isFinite(mY) ? mY : null
+              buildingMinYCacheRef.current.set(cacheKey, minBuildingY)
+            } catch (e) {
+              console.warn('[Preview3D] buildBuildingMeshes failed, fallback to boundingSphere', e)
+            }
+            if (minBuildingY === null) {
+              try {
+                let bestFallback: number | null = null
+                const tryUpdate = (v: number | null) => {
+                  if (v !== null && Number.isFinite(v) && (bestFallback === null || v < bestFallback)) bestFallback = v
+                }
+                for (const ts of tilesetsRef.current as any[]) {
+                  const center: Cartesian3 | undefined = ts?.boundingSphere?.center
+                  if (center) {
+                    try {
+                      const carto = Cartographic.fromCartesian(center)
+                      if (Number.isFinite(carto.height)) {
+                        const radius = ts.boundingSphere?.radius
+                        const approxBase = Number.isFinite(radius) ? carto.height - radius * 0.5 : carto.height
+                        tryUpdate(approxBase)
+                      }
+                    } catch {}
+                    try {
+                      const local = Matrix4.multiplyByPoint(sampleForFallback.inverseCenterMatrix, center, new Cartesian3())
+                      tryUpdate(local.z)
+                    } catch {}
+                  }
+                  const region = ts?.root?._header?.boundingVolume?.region as number[] | undefined
+                  if (region && region.length >= 6 && Number.isFinite(region[4])) {
+                    const regionMinH = region[4]
+                    try {
+                      const carto = Cartographic.fromRadians(region[0], region[1], regionMinH)
+                      const ecef = Cartesian3.fromRadians(carto.longitude, carto.latitude, regionMinH)
+                      const local = Matrix4.multiplyByPoint(sampleForFallback.inverseCenterMatrix, ecef, new Cartesian3())
+                      tryUpdate(local.z)
+                    } catch {}
+                    tryUpdate(regionMinH)
+                  }
+                }
+                if (bestFallback !== null) {
+                  minBuildingY = bestFallback
+                  console.warn('[Preview3D] fallback building height (best of tilesets):', minBuildingY)
+                }
+                if ((minBuildingY === null || !Number.isFinite(minBuildingY)) && viewerRef.current) {
+                  try {
+                    const lon = (bounds.west + bounds.east) / 2
+                    const lat = (bounds.south + bounds.north) / 2
+                    const carto = Cartographic.fromDegrees(lon, lat)
+                    const h = (viewerRef.current.scene.globe as any).getHeight?.(carto)
+                    if (Number.isFinite(h)) {
+                      minBuildingY = h
+                      console.warn('[Preview3D] fallback building height from globe.getHeight:', h)
+                    }
+                  } catch {}
+                }
+              } catch {
+                void 0
+              }
+              if (minBuildingY !== null) {
+                buildingMinYCacheRef.current.set(cacheKey, minBuildingY)
+              } else {
+                console.warn('[Preview3D] all fallbacks failed, buildingMinY remains null, minZ will stay', sampleForFallback.minTopHeight)
+              }
+            }
+            return minBuildingY
+          }
+          async function maybeAlignSample(sample: TerrainSampleData): Promise<{ variance: number; buildingMinY: number | null; delta: number | null }> {
+            const variance = calcVariance(sample)
+            if ((sample as any).isFallback !== true) return { variance, buildingMinY: await getBuildingMinY(sample), delta: null }
+            const minBuildingY = await getBuildingMinY(sample)
+            if (cancelled) return { variance, buildingMinY: minBuildingY, delta: null }
+            if (minBuildingY !== null && Number.isFinite(minBuildingY)) {
+              const delta = minBuildingY - sample.minTopHeight + 1.0
+              if (Math.abs(delta) > 0.01) {
+                for (const p of sample.topLocalPositions) {
+                  p.z += delta
+                }
+                sample.minTopHeight += delta
+                for (let i = 0; i < sample.topLocalPositions.length; i++) {
+                  const local = sample.topLocalPositions[i]
+                  const ecef = Matrix4.multiplyByPoint(
+                    sample.centerMatrix,
+                    local,
+                    new Cartesian3()
+                  )
+                  sample.topEcefValues[i * 3] = ecef.x
+                  sample.topEcefValues[i * 3 + 1] = ecef.y
+                  sample.topEcefValues[i * 3 + 2] = ecef.z
+                }
+                console.log(
+                  `[Preview3D] Terrain aligned (isFallback=${(sample as any).isFallback}, variance=${variance.toFixed(4)}) shifted by ${delta.toFixed(2)}m to building minY ${minBuildingY.toFixed(2)}m`
+                )
+                return { variance, buildingMinY: minBuildingY, delta }
+              }
+              return { variance, buildingMinY: minBuildingY, delta: 0 }
+            }
+            return { variance, buildingMinY: minBuildingY, delta: null }
+          }
+
           let sample = terrainSampleCacheRef.current
-          if (!sample || !sameBounds(sample.bounds, bounds)) {
+          let debugVariance = 0
+          let debugBuildingMinY: number | null = null
+          let debugDelta: number | null = null
+          const needsFetch = !sample || !sameBounds(sample.bounds, bounds)
+          if (needsFetch) {
             sample = await sampleTerrainData(bounds, terrainProvider!)
             if (cancelled) return
-            terrainSampleCacheRef.current = sample
+            const aligned = await maybeAlignSample(sample!)
+            if (cancelled) return
+            debugVariance = aligned.variance
+            debugBuildingMinY = aligned.buildingMinY
+            debugDelta = aligned.delta
+            terrainSampleCacheRef.current = sample!
+          } else {
+            // キャッシュヒット時も flatなら再シフトを試みる
+            const aligned = await maybeAlignSample(sample!)
+            if (cancelled) return
+            debugVariance = aligned.variance
+            debugBuildingMinY = aligned.buildingMinY
+            debugDelta = aligned.delta
+            // shift後はキャッシュを更新（参照は同じだが明示）
+            terrainSampleCacheRef.current = sample!
           }
+          ;(window as any).__terrainSample = sample
           const params = latestTerrainParamsRef.current
-          const solidTerrain = buildSolidTerrainPrimitive(sample, {
+          const solidTerrain = buildSolidTerrainPrimitive(sample!, {
             terrainThickness: params.terrainThickness,
             flattenBottom: params.flattenBottom,
             terrainColor: params.terrainColor,
@@ -720,14 +1047,24 @@ export default function Preview3D({
           solidTerrainPrimitiveRef.current = solidTerrain.primitive
           appliedTerrainParamsRef.current = { ...params }
           terrainBoundingSphere = solidTerrain.boundingSphere
+          terrainBoundingSphereRef.current = terrainBoundingSphere
           clearGlobeClippingPlanes(viewer!.scene.globe)
           viewer!.scene.globe.show = false
           console.log('[Preview3D] Solid terrain mesh applied')
+          setDebugInfo({
+            isFallback: (sample as TerrainSampleData).isFallback ?? false,
+            minTopHeight: (sample as TerrainSampleData).minTopHeight,
+            variance: debugVariance,
+            buildingMinY: debugBuildingMinY,
+            delta: debugDelta,
+            terrainPrimitive: !!solidTerrainPrimitiveRef.current,
+          })
         } else {
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
           viewer!.scene.globe.show = true
           console.log('[Preview3D] Globe clipping planes applied')
+          setDebugInfo(null)
         }
 
         const flyLon = (bounds.west + bounds.east) / 2
@@ -798,7 +1135,7 @@ export default function Preview3D({
       cancelled = true
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, includeTerrain])
+  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain])
 
   useEffect(() => {
     forEachBuildingFeature((feature) => {
@@ -951,6 +1288,99 @@ export default function Preview3D({
   return (
     <div style={wrapperStyle}>
       <div ref={containerRef} style={containerStyle} />
+      <div
+        data-testid="preview-view-controls"
+        style={{
+          position: 'absolute',
+          top: '16px',
+          right: '16px',
+          zIndex: 20,
+          display: 'flex',
+          gap: '6px',
+          alignItems: 'center',
+        }}
+      >
+        <button
+          data-testid="projection-toggle"
+          onClick={toggleProjection}
+          style={{
+            background: isOrthographic ? 'var(--accent)' : 'var(--surface)',
+            color: isOrthographic ? '#fff' : 'var(--text)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: '6px',
+            padding: '6px 10px',
+            fontSize: '11px',
+            cursor: 'pointer',
+            backdropFilter: 'blur(4px)',
+            fontWeight: 600,
+            minWidth: '52px',
+          }}
+        >
+          {isOrthographic ? '透視' : '平行'}
+        </button>
+        <div
+          style={{
+            display: 'flex',
+            gap: '4px',
+            background: 'var(--surface)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: '6px',
+            padding: '4px',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          {(
+            [
+              ['top', '真上', 0, -90, true],
+              ['iso', '斜め', 35, -45, false],
+              ['south', '南', 0, -45, false],
+              ['north', '北', 180, -45, false],
+              ['east', '東', 90, -45, false],
+              ['west', '西', 270, -45, false],
+              ['side', '真横', 0, 0, false],
+            ] as const
+          ).map(([id, label, h, p, top]) => (
+            <button
+              key={id}
+              data-testid={`view-preset-${id}`}
+              onClick={() => applyPresetView(h, p, { useTop: !!top })}
+              style={{
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--border-strong)',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                fontSize: '11px',
+                cursor: 'pointer',
+                lineHeight: 1,
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {debugInfo && (
+        <div
+          data-testid="terrain-debug-info"
+          style={{
+            position: 'absolute',
+            top: '56px',
+            right: '16px',
+            zIndex: 20,
+            background: 'var(--surface)',
+            color: 'var(--text)',
+            fontSize: '10px',
+            padding: '4px 8px',
+            borderRadius: '4px',
+            backdropFilter: 'blur(4px)',
+            border: '1px solid var(--border-strong)',
+            pointerEvents: 'none',
+          }}
+        >
+          {`地形: ${debugInfo.isFallback ? 'フォールバック(平坦)' : '正常'} | minZ ${debugInfo.minTopHeight.toFixed(2)}m | ばらつき ${debugInfo.variance.toFixed(4)} | 建物最下 ${debugInfo.buildingMinY?.toFixed(2) ?? '--'}m | 補正 ${debugInfo.delta?.toFixed(2) ?? '0'}m | ${debugInfo.terrainPrimitive ? '表示中' : '非表示'}`}
+        </div>
+      )}
       {selectionBounds && (
         <div
           style={{

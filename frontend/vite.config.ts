@@ -4,6 +4,7 @@ import cesium from 'vite-plugin-cesium'
 import { resolve } from 'path'
 
 export default defineConfig({
+  envDir: '../',
   plugins: [
     react(),
     cesium({
@@ -32,7 +33,14 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
-    allowedHosts: ['localhost', '127.0.0.1', 'machimoki.aosy-minipc.theworkpc.com'],
+    // Tailscale IPや本番ドメインからのアクセスを許可
+    allowedHosts: [
+      'localhost',
+      '127.0.0.1',
+      'machimoki.aosy-minipc.theworkpc.com',
+      'machimoki.aosy.f5.si',
+      '100.86.253.43',
+    ],
     fs: {
       allow: ['..'],
     },

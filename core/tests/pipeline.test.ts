@@ -259,13 +259,13 @@ describe('buildPrintableModel', () => {
     expect(capturedMesh).not.toBeNull();
     const positions = capturedMesh!.positions;
     expect(positions[0]).toBeCloseTo(0);
-    expect(positions[1]).toBeCloseTo(0);
+    expect(positions[1]).toBeCloseTo(-0.6);
     expect(positions[2]).toBeCloseTo(0);
     expect(positions[3]).toBeCloseTo(2);
-    expect(positions[4]).toBeCloseTo(0);
+    expect(positions[4]).toBeCloseTo(-0.6);
     expect(positions[5]).toBeCloseTo(0);
     expect(positions[6]).toBeCloseTo(0);
-    expect(positions[7]).toBeCloseTo(0);
+    expect(positions[7]).toBeCloseTo(-0.6);
     expect(positions[8]).toBeCloseTo(2);
   });
 
