@@ -4,15 +4,14 @@ const STORAGE_KEY = 'machimoki:devMode'
 
 function getInitialValue(): boolean {
   if (typeof window === 'undefined') return false
-  // Vite devサーバーでは自動ON
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored === '0') return false
+    if (stored === '1') return true
+  } catch {}
   if (import.meta.env.DEV) return true
-  // ?dev=1 クエリがあればON (例: /?dev=1 → AIエージェント用)
   try {
     if (new URLSearchParams(window.location.search).has('dev')) return true
-  } catch {}
-  // localStorage による永続化
-  try {
-    if (localStorage.getItem(STORAGE_KEY) === '1') return true
   } catch {}
   return false
 }
