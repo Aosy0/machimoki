@@ -59,3 +59,15 @@ export { validateMesh } from './validate.js';
 
 export { parseSTL } from './stlParser.js';
 export { writeBinarySTL } from './stlWriter.js';
+
+export {
+  buildCoverageMap,
+  enrichGeoJsonFeatures,
+  generateCoverageJson,
+} from './coverage/index.js';
+export type {
+  CatalogDataset,
+  CoverageInfo,
+  CoverageMap,
+  GeoJsonFeature,
+} from './coverage/index.js';

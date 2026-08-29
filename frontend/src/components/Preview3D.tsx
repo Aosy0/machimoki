@@ -23,7 +23,7 @@ import type { BoundingSphere, Cartesian2, Cesium3DTile, Primitive, TerrainProvid
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
-import { resolveMuniCodes, findTilesetUrl, type Lod } from '../lib/catalogApi'
+import { resolveMuniCodes, findTilesetUrl, getCoverageDetails, type Lod } from '../lib/catalogApi'
 import {
   applyClippingToTileset,
   createGlobeClippingPlanes,
@@ -127,6 +127,7 @@ export default function Preview3D({
   const [loadedTiles, setLoadedTiles] = useState<number | null>(null)
   const [buildingLoadDetail, setBuildingLoadDetail] = useState<string | null>(null)
   const [buildingLoadProgress, setBuildingLoadProgress] = useState<number | null>(null)
+  const [coverageWarning, setCoverageWarning] = useState<string | null>(null)
   const maxTilesRef = useRef(0)
   const pendingMapRef = useRef<Map<Cesium3DTileset, number>>(new Map())
   const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
@@ -658,6 +659,7 @@ export default function Preview3D({
     setLoadedTiles(null)
     setBuildingLoadDetail(null)
     setBuildingLoadProgress(null)
+    setCoverageWarning(null)
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -738,19 +740,47 @@ export default function Preview3D({
         const urlPromises = muniCodes.map(async (code) => {
           try {
             const url = await findTilesetUrl(code, lod)
-            return url
+            return { code, url }
           } catch (err) {
             if (!firstUrlError && err instanceof Error) firstUrlError = err
-            return null
+            return { code, url: null }
           }
         })
-        const urls = (await Promise.all(urlPromises)).filter(
-          (u): u is string => u !== null
-        )
+        const results = await Promise.all(urlPromises)
+        const urls = results
+          .map((r) => r.url)
+          .filter((u): u is string => u !== null)
+        const failedMuniCodes = results
+          .filter((r) => r.url === null)
+          .map((r) => r.code)
         if (cancelled) return
 
         if (urls.length === 0) {
+          setCoverageWarning(null)
           throw firstUrlError ?? new Error('該当する3D Tilesデータセットが見つかりません')
+        }
+
+        if (failedMuniCodes.length > 0) {
+          let names: string[] = []
+          try {
+            const details = await getCoverageDetails()
+            names = failedMuniCodes
+              .map((code) => details.get(code)?.city)
+              .filter((n): n is string => typeof n === 'string' && n.length > 0)
+          } catch (err) {
+            console.warn('[Preview3D] カバレッジ詳細の取得に失敗:', err)
+          }
+          if (names.length > 0) {
+            setCoverageWarning(
+              `選択範囲の一部でPLATEAUデータが未整備です: ${names.join('、')}。整備済みエリアの建物のみ表示しています`
+            )
+          } else {
+            setCoverageWarning(
+              `選択範囲の一部(${failedMuniCodes.length}自治体)でPLATEAUデータが未整備です。整備済みエリアの建物のみ表示しています`
+            )
+          }
+        } else {
+          setCoverageWarning(null)
         }
 
         console.log('[Preview3D] Resolved tileset URLs:', urls)
@@ -1379,6 +1409,48 @@ export default function Preview3D({
           }}
         >
           {`地形: ${debugInfo.isFallback ? 'フォールバック(平坦)' : '正常'} | minZ ${debugInfo.minTopHeight.toFixed(2)}m | ばらつき ${debugInfo.variance.toFixed(4)} | 建物最下 ${debugInfo.buildingMinY?.toFixed(2) ?? '--'}m | 補正 ${debugInfo.delta?.toFixed(2) ?? '0'}m | ${debugInfo.terrainPrimitive ? '表示中' : '非表示'}`}
+        </div>
+      )}
+      {coverageWarning && (
+        <div
+          data-testid="coverage-warning"
+          style={{
+            position: 'absolute',
+            top: '56px',
+            left: '16px',
+            zIndex: 20,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: '#fff7d6',
+            color: '#7a5b00',
+            border: '1px solid #e6c200',
+            borderRadius: '6px',
+            padding: '8px 12px',
+            fontSize: '12px',
+            fontWeight: 500,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            maxWidth: '420px',
+          }}
+        >
+          <span>{coverageWarning}</span>
+          <button
+            data-testid="coverage-warning-close"
+            onClick={() => setCoverageWarning(null)}
+            aria-label="警告を閉じる"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#7a5b00',
+              cursor: 'pointer',
+              fontSize: '14px',
+              lineHeight: 1,
+              padding: '2px 4px',
+              flexShrink: 0,
+            }}
+          >
+            ✕
+          </button>
         </div>
       )}
       {selectionBounds && (

@@ -154,3 +154,154 @@ export async function getAvailableLods(
   const lodOrder: Lod[] = ['lod1', 'lod2', 'lod3', 'lod4']
   return lodOrder.filter((lod) => availableLods.has(lod))
 }
+
+/**
+ * カバレッジ情報（/api/coverage の Rich 形式）。
+ * キーは市区町村コード（政令指定都市は区コード）。
+ */
+interface CoverageEntry {
+  muniCode: string
+  name: string
+  prefecture: string
+  covered: boolean
+  lods: number[]
+}
+
+type CoverageMap = Record<string, CoverageEntry>
+
+let cachedCoverageMap: CoverageMap | null = null
+let cachedCoverageMapPromise: Promise<CoverageMap> | null = null
+
+/**
+ * /api/coverage のレスポンスを CoverageMap にパースする。
+ * Rich 形式 { muniCode: { name, prefecture, lods } } + meta を想定し、
+ * meta キーは無視する。covered が無い場合は lods の有無で判定する。
+ */
+function parseCoverageMap(data: unknown): CoverageMap {
+  const map: CoverageMap = {}
+  if (typeof data !== 'object' || data === null) return map
+
+  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+    if (key === 'meta') continue
+    if (typeof value !== 'object' || value === null) continue
+
+    const entry = value as Record<string, unknown>
+    const muniCode = typeof entry.muniCode === 'string' ? entry.muniCode : key
+    const name = typeof entry.name === 'string' ? entry.name : key
+    const prefecture = typeof entry.prefecture === 'string' ? entry.prefecture : ''
+    const lods = Array.isArray(entry.lods)
+      ? entry.lods.map((l) => Number(l)).filter((n) => Number.isFinite(n))
+      : []
+    const covered = typeof entry.covered === 'boolean' ? entry.covered : lods.length > 0
+
+    map[muniCode] = { muniCode, name, prefecture, covered, lods }
+  }
+
+  return map
+}
+
+async function fetchCoverageMap(): Promise<CoverageMap> {
+  if (cachedCoverageMap) return cachedCoverageMap
+  if (cachedCoverageMapPromise) return cachedCoverageMapPromise
+
+  cachedCoverageMapPromise = fetch('/api/coverage')
+    .then((res) => {
+      if (!res.ok) throw new Error(`カバレッジAPI失敗: ${res.status}`)
+      return res.json()
+    })
+    .then((data: unknown) => {
+      const map = parseCoverageMap(data)
+      cachedCoverageMap = map
+      return map
+    })
+    .finally(() => {
+      cachedCoverageMapPromise = null
+    })
+
+  return cachedCoverageMapPromise
+}
+
+/**
+ * 建築物モデル(3D Tiles)のカバレッジを持つ市区町村コードの集合を返す。
+ * /api/coverage（Worker + R2）を優先し、失敗時は従来のPLATEAUカタログ直接取得にフォールバックする。
+ * ward_code があればそちらを優先し、なければ city_code を使う。pref_code は含めない。
+ */
+export async function getCoverageMuniCodes(): Promise<Set<string>> {
+  try {
+    const map = await fetchCoverageMap()
+    const codes = new Set<string>()
+    for (const [code, info] of Object.entries(map)) {
+      if (info.covered) codes.add(code)
+    }
+    return codes
+  } catch (err) {
+    console.warn('[Coverage] /api/coverage取得失敗、PLATEAUカタログへフォールバック:', err)
+  }
+
+  const datasets = await fetchCatalogDatasets()
+
+  const codes = new Set<string>()
+  for (const d of datasets) {
+    if (d.format !== '3D Tiles') continue
+    if (d.type !== '建築物モデル') continue
+    codes.add(d.ward_code ?? d.city_code)
+  }
+
+  return codes
+}
+
+/**
+ * 建築物モデル(3D Tiles)のカバレッジ詳細を返す。
+ * /api/coverage（Worker + R2）を優先し、失敗時は従来のPLATEAUカタログ直接取得にフォールバックする。
+ * キーは市区町村コード（ward_code 優先、なければ city_code）、
+ * 値は市区町村名・都道府県名・利用可能なLOD一覧（lod1 → lod4 順）。
+ */
+export async function getCoverageDetails(): Promise<
+  Map<string, { city: string; pref: string; lods: string[] }>
+> {
+  try {
+    const map = await fetchCoverageMap()
+    const details = new Map<string, { city: string; pref: string; lods: string[] }>()
+    for (const [code, info] of Object.entries(map)) {
+      details.set(code, {
+        city: info.name,
+        pref: info.prefecture,
+        lods: info.lods.map((l) => `lod${l}`),
+      })
+    }
+    return details
+  } catch (err) {
+    console.warn('[Coverage] /api/coverage取得失敗、PLATEAUカタログへフォールバック:', err)
+  }
+
+  const datasets = await fetchCatalogDatasets()
+
+  const details = new Map<string, { city: string; pref: string; lods: string[] }>()
+  const lodOrder = ['1', '2', '3', '4']
+
+  for (const d of datasets) {
+    if (d.format !== '3D Tiles') continue
+    if (d.type !== '建築物モデル') continue
+    if (!lodOrder.includes(d.lod)) continue
+
+    const muniCode = d.ward_code ?? d.city_code
+    const lod = `lod${d.lod}`
+
+    const existing = details.get(muniCode)
+    if (existing) {
+      if (!existing.lods.includes(lod)) existing.lods.push(lod)
+    } else {
+      details.set(muniCode, {
+        city: d.ward ?? d.city,
+        pref: d.pref,
+        lods: [lod],
+      })
+    }
+  }
+
+  for (const detail of details.values()) {
+    detail.lods.sort((a, b) => lodOrder.indexOf(a.slice(3)) - lodOrder.indexOf(b.slice(3)))
+  }
+
+  return details
+}

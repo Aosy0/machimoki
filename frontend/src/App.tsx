@@ -29,7 +29,9 @@ import { useRectangleSelection } from './hooks/useRectangleSelection'
 import { usePointPicking, type PickPoint } from './hooks/usePointPicking'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
-import { getAvailableLods, type Lod } from './lib/catalogApi'
+import { getAvailableLods, getCoverageMuniCodes, type Lod } from './lib/catalogApi'
+import { createCoverageOverlay, type CoverageOverlayHandle } from './lib/coverageOverlay'
+import { createCoverageMvtLayer } from './lib/coverageMvtLayer'
 
 type Tab = 'map' | 'preview' | 'viewer'
 
@@ -39,6 +41,8 @@ function App() {
   const [isMapLoading, setIsMapLoading] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [coverageVisible, setCoverageVisible] = useState(true)
+  const [coverageLoading, setCoverageLoading] = useState(false)
 
   const [parameters, setParameters] = useState<Parameters>({
     terrainThickness: 10,
@@ -55,6 +59,8 @@ function App() {
 
   const cesiumContainer = useRef<HTMLDivElement>(null)
   const [viewer, setViewer] = useState<Viewer | null>(null)
+  const coverageOverlayRef = useRef<CoverageOverlayHandle | null>(null)
+  const coverageVisibleRef = useRef(true)
   const manifoldRef = useRef<any>(null)
   const pickMarkerEntitiesRef = useRef<Entity[]>([])
   const [pickPoints, setPickPoints] = useState<PickPoint[]>([])
@@ -198,6 +204,15 @@ function App() {
       } catch {}
     }
   }, [applyPreset])
+
+  const toggleCoverage = useCallback(() => {
+    setCoverageVisible((prev) => !prev)
+  }, [])
+
+  useEffect(() => {
+    coverageVisibleRef.current = coverageVisible
+    coverageOverlayRef.current?.setVisible(coverageVisible)
+  }, [coverageVisible])
 
   const handleExport = useCallback(async () => {
     if (!selectionBounds) {
@@ -364,7 +379,44 @@ function App() {
     setViewer(viewer)
     ;(window as any).__viewer = viewer
 
+    // カバレッジオーバーレイの初期化（MVTレイヤーを試し、失敗時はEntity方式へフォールバック）
+    let disposed = false
+    setCoverageLoading(true)
+
+    async function initCoverageOverlay(): Promise<CoverageOverlayHandle | null> {
+      try {
+        return await createCoverageMvtLayer(viewer, '/api/coverage/tiles/{z}/{x}/{y}')
+      } catch (err) {
+        console.warn('[Coverage] MVTレイヤー初期化失敗、Entityフォールバックへ:', err)
+        if (disposed || viewer.isDestroyed()) return null
+        try {
+          const coverage = await getCoverageMuniCodes()
+          return await createCoverageOverlay(viewer, coverage)
+        } catch (fallbackErr) {
+          console.warn('[CoverageOverlay] フォールバック初期化失敗:', fallbackErr)
+          return null
+        }
+      }
+    }
+
+    initCoverageOverlay()
+      .then((handle) => {
+        if (disposed || !handle) return
+        if (viewer.isDestroyed()) {
+          handle.remove()
+          return
+        }
+        coverageOverlayRef.current = handle
+        handle.setVisible(coverageVisibleRef.current)
+      })
+      .finally(() => {
+        if (!disposed) setCoverageLoading(false)
+      })
+
     return () => {
+      disposed = true
+      coverageOverlayRef.current?.remove()
+      coverageOverlayRef.current = null
       setViewer(null)
       viewer.destroy()
     }
@@ -711,6 +763,83 @@ function App() {
               >
                 適用
               </button>
+            </div>
+            {/* Coverage overlay panel */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                backdropFilter: 'blur(4px)',
+                padding: '10px',
+                borderRadius: '6px',
+                fontSize: '12px',
+                zIndex: 100,
+                width: '200px',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: '8px',
+                }}
+              >
+                <span style={{ fontWeight: 'bold' }}>カバレッジ表示</span>
+                <button
+                  onClick={toggleCoverage}
+                  title={coverageVisible ? 'カバレッジ表示をオフにする' : 'カバレッジ表示をオンにする'}
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    background: coverageVisible ? 'var(--accent)' : 'var(--border)',
+                    color: 'var(--text)',
+                    border: coverageVisible ? '1px solid var(--accent)' : '1px solid var(--border-strong)',
+                    borderRadius: '3px',
+                    fontWeight: 600,
+                  }}
+                >
+                  {coverageVisible ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              {coverageLoading && (
+                <div style={{ color: 'var(--text-muted)', fontSize: '11px', marginBottom: '6px' }}>
+                  カバレッジデータを読み込み中...
+                </div>
+              )}
+              {coverageVisible && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div
+                      style={{
+                        width: '18px',
+                        height: '12px',
+                        border: '2px solid #4fc3f7',
+                        borderRadius: '2px',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>整備済みエリア</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <div
+                      style={{
+                        width: '18px',
+                        height: '12px',
+                        background: 'rgba(128,128,128,0.35)',
+                        borderRadius: '2px',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>未整備エリア</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

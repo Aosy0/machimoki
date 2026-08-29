@@ -9,6 +9,12 @@
       "id": "f2e7e6e725d64bbe8800ead054a4388b"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "COVERAGE_BUCKET",
+      "bucket_name": "machimoki-coverage"
+    }
+  ],
   "vars": {
     "ORIGIN_URL": ""
   },

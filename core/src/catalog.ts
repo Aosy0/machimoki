@@ -102,21 +102,23 @@ export async function resolveMuniCodes(bounds: {
     { lat: centerLat, lon: centerLon },
   ];
 
-  const results = await Promise.all(
-    points.map(async ({ lat, lon }) => {
-      try {
-        return await resolveMuniCode(lat, lon);
-      } catch {
-        return null;
-      }
-    }),
+  const results = await Promise.allSettled(
+    points.map(({ lat, lon }) => resolveMuniCode(lat, lon)),
   );
 
-  const unique = [...new Set(results.filter((code): code is string => code !== null))];
-  if (unique.length === 0) {
+  const codes = new Set<string>();
+  let anySuccess = false;
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      codes.add(result.value);
+      anySuccess = true;
+    }
+  }
+
+  if (!anySuccess) {
     throw new Error('選択範囲の自治体コードが取得できません');
   }
-  return unique;
+  return Array.from(codes);
 }
 
 export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string> {
