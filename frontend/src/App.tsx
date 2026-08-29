@@ -73,10 +73,10 @@ function App() {
   const { isDevMode } = useDeveloperMode()
 
   const [manualCoords, setManualCoords] = useState({
-    west: '139.8053',
-    south: '35.7470',
-    east: '139.8080',
-    north: '35.7495',
+    west: '',
+    south: '',
+    east: '',
+    north: '',
   })
 
   const {
