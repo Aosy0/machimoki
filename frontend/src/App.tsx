@@ -27,6 +27,7 @@ import { exportModel } from './lib/apiClient'
 import { runWorkerExport, triggerDownload } from './lib/workerExport'
 import { useRectangleSelection } from './hooks/useRectangleSelection'
 import { usePointPicking, type PickPoint } from './hooks/usePointPicking'
+import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
 import { getAvailableLods, type Lod } from './lib/catalogApi'
 
@@ -69,6 +70,7 @@ function App() {
 
   const [scale, setScale] = useState(1)
   const [availableLods, setAvailableLods] = useState<Lod[]>(['lod1', 'lod2'])
+  const { isDevMode } = useDeveloperMode()
 
   const [manualCoords, setManualCoords] = useState({
     west: '139.8053',
@@ -187,6 +189,15 @@ function App() {
     setSelectionBounds(preset)
     setErrorMessage(null)
   }, [setSelectionBounds])
+
+  useEffect(() => {
+    ;(window as any).__applyPreset = applyPreset
+    return () => {
+      try {
+        delete (window as any).__applyPreset
+      } catch {}
+    }
+  }, [applyPreset])
 
   const handleExport = useCallback(async () => {
     if (!selectionBounds) {
@@ -377,9 +388,30 @@ function App() {
             fontWeight: 700,
             color: 'var(--accent)',
             letterSpacing: '0.04em',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
           }}
         >
           Machimoki
+          {isDevMode && (
+            <span
+              data-testid="dev-badge"
+              title="開発者モード有効 (Ctrl+Shift+Dで切替 / __dev.disable()で無効化)"
+              style={{
+                fontSize: '10px',
+                fontWeight: 600,
+                letterSpacing: '0.06em',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                background: 'rgba(255, 193, 7, 0.15)',
+                color: '#ffc107',
+                border: '1px solid rgba(255, 193, 7, 0.3)',
+              }}
+            >
+              DEV
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex' }}>
           {([
@@ -611,53 +643,58 @@ function App() {
                   </div>
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
-                <button
-                  onClick={() => applyPreset({ west: 139.8053, south: 35.7470, east: 139.8080, north: 35.7495 })}
-                  style={{
-                    flex: 1,
-                    padding: '4px',
-                    fontSize: '10px',
-                    background: 'var(--border)',
-                    color: 'var(--text)',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  足立区
-                </button>
-                <button
-                  onClick={() => applyPreset({ west: 139.6899, south: 35.7029, east: 139.6932, north: 35.7070 })}
-                  style={{
-                    flex: 1,
-                    padding: '4px',
-                    fontSize: '10px',
-                    background: 'var(--border)',
-                    color: 'var(--text)',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  新宿
-                </button>
-                <button
-                  onClick={() => applyPreset({ west: 139.7639, south: 35.6764, east: 139.7708, north: 35.6855 })}
-                  style={{
-                    flex: 1,
-                    padding: '4px',
-                    fontSize: '10px',
-                    background: 'var(--border)',
-                    color: 'var(--text)',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  東京駅
-                </button>
-              </div>
+              {isDevMode && (
+                <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
+                  <button
+                    data-testid="preset-adachi"
+                    onClick={() => applyPreset({ west: 139.8053, south: 35.7470, east: 139.8080, north: 35.7495 })}
+                    style={{
+                      flex: 1,
+                      padding: '4px',
+                      fontSize: '10px',
+                      background: 'var(--border)',
+                      color: 'var(--text)',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    足立区
+                  </button>
+                  <button
+                    data-testid="preset-shinjuku"
+                    onClick={() => applyPreset({ west: 139.6899, south: 35.7029, east: 139.6932, north: 35.7070 })}
+                    style={{
+                      flex: 1,
+                      padding: '4px',
+                      fontSize: '10px',
+                      background: 'var(--border)',
+                      color: 'var(--text)',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    新宿
+                  </button>
+                  <button
+                    data-testid="preset-tokyo"
+                    onClick={() => applyPreset({ west: 139.7639, south: 35.6764, east: 139.7708, north: 35.6855 })}
+                    style={{
+                      flex: 1,
+                      padding: '4px',
+                      fontSize: '10px',
+                      background: 'var(--border)',
+                      color: 'var(--text)',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    東京駅
+                  </button>
+                </div>
+              )}
               <button
                 onClick={handleManualSelect}
                 style={{
