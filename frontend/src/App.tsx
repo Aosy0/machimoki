@@ -371,7 +371,26 @@ function App() {
     ssec.inertiaZoom = 0.4
     ssec.inertiaTranslate = 0.4
     ssec.inertiaSpin = 0
-    ;(ssec as any).zoomFactor = 1.3
+    ;(ssec as any).zoomFactor = 3.0
+
+    // 勢いに応じた可変ズーム: ゆっくりは小さく、勢いよく回すと大きく
+    {
+      const canvas = viewer.scene.canvas as HTMLCanvasElement
+      let lastWheelTime = 0
+      canvas.addEventListener(
+        'wheel',
+        (e: WheelEvent) => {
+          const now = Date.now()
+          const delta = Math.abs(e.deltaY)
+          const dt = Math.max(1, now - lastWheelTime)
+          const velocity = delta / dt
+          const factor = Math.min(4.0, Math.max(2.0, 1.8 + velocity * 0.35))
+          ;(ssec as any).zoomFactor = factor
+          lastWheelTime = now
+        },
+        { passive: true },
+      )
+    }
 
     viewer.camera.setView({
       destination: Cartesian3.fromDegrees(139.6917, 35.6895, 1500.0),
