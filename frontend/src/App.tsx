@@ -368,11 +368,10 @@ function App() {
     ssec.enableLook = false
     ssec.minimumZoomDistance = 300
     ssec.maximumZoomDistance = 5000000
-    // Google Maps風のホイール操作: 慣性を無効化し、1ノッチのズーム量を小さく
-    ssec.inertiaZoom = 0
-    ssec.inertiaTranslate = 0
+    ssec.inertiaZoom = 0.4
+    ssec.inertiaTranslate = 0.4
     ssec.inertiaSpin = 0
-    ;(ssec as any).zoomFactor = 1.15
+    ;(ssec as any).zoomFactor = 1.3
 
     viewer.camera.setView({
       destination: Cartesian3.fromDegrees(139.6917, 35.6895, 1500.0),
