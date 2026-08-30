@@ -384,7 +384,7 @@ function App() {
           const delta = Math.abs(e.deltaY)
           const dt = Math.max(1, now - lastWheelTime)
           const velocity = delta / dt
-          const factor = Math.min(4.0, Math.max(2.0, 1.8 + velocity * 0.35))
+          const factor = Math.min(10.0, Math.max(2.0, 1.8 + velocity * 0.35))
           ;(ssec as any).zoomFactor = factor
           lastWheelTime = now
         },
