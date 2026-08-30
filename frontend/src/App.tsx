@@ -366,6 +366,11 @@ function App() {
     ssec.enableTilt = false
     ssec.enableRotate = false
     ssec.enableLook = false
+    // z14相当より拡大できないように制限（MVTの最大ズームに合わせる）
+    // 2Dモードでは cameraの高度でズームが決まるため、minimumZoomDistanceで下限を設定
+    // 1500mが初期表示、300mがz14相当の最拡大
+    ssec.minimumZoomDistance = 300
+    ssec.maximumZoomDistance = 5000000
 
     viewer.camera.setView({
       destination: Cartesian3.fromDegrees(139.6917, 35.6895, 1500.0),

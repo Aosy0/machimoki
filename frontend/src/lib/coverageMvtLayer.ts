@@ -96,9 +96,11 @@ export async function createCoverageMvtLayer(
     urlTemplate: resolvedTemplate as CoverageUrlTemplate,
     layerName: COVERAGE_LAYER_NAME,
     style: coverageStyle,
-    // @ts-ignore - cesium-mvt-imagery-provider supports these props, but types may be outdated
+    // @ts-ignore - cesium-mvt-imagery-provider uses Mapbox zoom, Cesium uses level - set both for overzoom support
     maximumZoom: 14,
     minimumZoom: 4,
+    maximumLevel: 14,
+    minimumLevel: 4,
   } as any)
 
   const layer = viewer.imageryLayers.addImageryProvider(provider)
