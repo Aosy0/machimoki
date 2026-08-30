@@ -181,10 +181,11 @@ function runTippecanoe(enrichedPath: string, tilesDir: string): Promise<boolean>
         '-e',
         tilesDir,
         '-Z4',
-        '-z10',
+        '-z14',
         '-l',
         'coverage',
         '--no-tile-compression',
+        '--drop-densest-as-needed',
         '-y',
         'covered',
         '-y',
@@ -368,15 +369,16 @@ export async function generateCoverage(
   await writeFile(join(outputDir, 'coverage.json'), coverageJsonString);
   console.error(`coverage.json を書き出しました: ${join(outputDir, 'coverage.json')}`);
 
-  // 7. R2 アップロード
+  // 7. R2 アップロード（S3互換APIを優先、失敗時はCloudflare APIにフォールバック）
   let uploaded = 0;
   const r2Config = getR2ConfigFromEnv();
-  if (!r2Config) {
+  const cfToken = process.env.CLOUDFLARE_API_TOKEN;
+  const cfAccountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? r2Config?.accountId;
+  if (!r2Config && !cfToken) {
     console.error(
-      'R2環境変数（R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY）が未設定のためアップロードをスキップします',
+      'R2環境変数（R2_* または CLOUDFLARE_API_TOKEN）が未設定のためアップロードをスキップします',
     );
   } else {
-    const client = createS3Client(r2Config);
     const entries: UploadEntry[] = [];
 
     if (tilesGenerated) {
@@ -397,8 +399,50 @@ export async function generateCoverage(
       contentType: JSON_CONTENT_TYPE,
     });
 
-    uploaded = await uploadWithConcurrency(client, r2Config.bucket, entries, concurrency);
-    console.error(`R2へ ${uploaded} ファイルをアップロードしました`);
+    // S3互換APIを試す
+    let s3Failed = false;
+    if (r2Config) {
+      try {
+        const client = createS3Client(r2Config);
+        uploaded = await uploadWithConcurrency(client, r2Config.bucket, entries, concurrency);
+        console.error(`R2へ ${uploaded} ファイルをアップロードしました（S3 API）`);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`Warning: S3 API アップロード失敗、Cloudflare APIにフォールバックします: ${msg}`);
+        s3Failed = true;
+      }
+    } else {
+      s3Failed = true;
+    }
+
+    // フォールバック: Cloudflare API (api.cloudflare.com) でput
+    if (s3Failed && cfToken && cfAccountId) {
+      const bucket = r2Config?.bucket ?? process.env.R2_BUCKET ?? 'machimoki-coverage';
+      console.error('Cloudflare APIでアップロードを試行します...');
+      let cfUploaded = 0;
+      for (const entry of entries) {
+        const res = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/r2/buckets/${bucket}/objects/${entry.key}`,
+          {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${cfToken}`,
+              'Content-Type': entry.contentType,
+            },
+            body: entry.body as unknown as BodyInit,
+          },
+        );
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`Cloudflare API PUT ${entry.key} 失敗: ${res.status} ${text.slice(0, 200)}`);
+        }
+        cfUploaded += 1;
+      }
+      uploaded = cfUploaded;
+      console.error(`R2へ ${uploaded} ファイルをアップロードしました（Cloudflare API）`);
+    } else if (s3Failed) {
+      console.error('Cloudflare APIトークン（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）が未設定のためフォールバックできません');
+    }
   }
 
   return {

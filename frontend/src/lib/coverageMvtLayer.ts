@@ -70,20 +70,36 @@ type CoverageUrlTemplate = `${`http${'s' | ''}://` | ''}${string}/{z}/{x}/{y}${s
  * 事前に /api/coverage をプローブし、Worker/R2 がカバレッジを配信していない場合は
  * 例外を投げる（呼び出し側で Entity フォールバックに切り替える）。
  */
+const COVERAGE_API_BASE =
+  (import.meta.env.VITE_COVERAGE_API_BASE as string | undefined) ??
+  (typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? 'https://machimoki.aosy.f5.si'
+    : '')
+
+function coverageApiUrl(path: string): string {
+  return `${COVERAGE_API_BASE}${path}`
+}
+
 export async function createCoverageMvtLayer(
   viewer: Viewer,
   urlTemplate: string
 ): Promise<MvtLayerHandle> {
-  const probe = await fetch('/api/coverage')
+  const resolvedTemplate = urlTemplate.startsWith('http')
+    ? urlTemplate
+    : coverageApiUrl(urlTemplate)
+  const probe = await fetch(coverageApiUrl('/api/coverage'))
   if (!probe.ok) {
     throw new Error(`カバレッジAPIが利用できません: ${probe.status}`)
   }
 
   const provider = new CesiumMVTImageryProvider({
-    urlTemplate: urlTemplate as CoverageUrlTemplate,
+    urlTemplate: resolvedTemplate as CoverageUrlTemplate,
     layerName: COVERAGE_LAYER_NAME,
     style: coverageStyle,
-  })
+    // @ts-ignore - cesium-mvt-imagery-provider supports these props, but types may be outdated
+    maximumZoom: 14,
+    minimumZoom: 4,
+  } as any)
 
   const layer = viewer.imageryLayers.addImageryProvider(provider)
 
