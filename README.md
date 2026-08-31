@@ -1,6 +1,13 @@
 # machimoki
 
-PLATEAU 3D Tiles + Cesium World Terrain から 3Dプリント可能な 3MF / STL を生成するツール。地理的な矩形選択から建物と地形を統合した watertight なモデルを出力し、manifold-3d による検証までを一貫して行う。
+PLATEAU 3D Tiles + PLATEAU Terrain（地理院タイル背景）から 3Dプリント可能な 3MF / STL を生成するツール。地理的な矩形選択から建物と地形を統合した watertight なモデルを出力し、manifold-3d による検証までを一貫して行う。
+
+> **ライセンス / 帰属（商用利用について）**
+> - 本アプリは **Cesium Ion を一切使用しません**。CesiumJS（Apache 2.0）のみを使用し、地形は `https://tile.plateauview.mlit.go.jp/terrain` の quantized-mesh 直配信、3D TilesはPLATEAU配信、背景地図は国土地理院タイル（`https://cyberjapandata.gsi.go.jp/xyz/{std,pale,seamlessphoto}/{z}/{x}/{y}.png|jpg`）を使用します。そのため **Cesium Ionの商用制限の対象外**です。
+> - 背景地図の出典: `© 国土地理院`（地理院タイル利用規約に準拠。アプリ内で常時表示）
+> - 3Dデータの出典: `© PLATEAU`（国土交通省 Project PLATEAU）
+> - 地図エンジン: `© Cesium`（Apache 2.0）
+> - 商用販売・サブスク等の収益化は、上記帰属表示を維持する限り自由に行えます。OSM公式タイルサーバー（`tile.openstreetmap.org`）は使用していません。
 
 ## アーキテクチャ
 

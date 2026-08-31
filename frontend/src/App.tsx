@@ -3,14 +3,18 @@ import * as Cesium from 'cesium'
 import {
   Viewer,
   Cartesian3,
+  Cartographic,
   Color,
   type Entity,
   Math as CesiumMath,
-  UrlTemplateImageryProvider,
   SceneMode,
   WebMercatorProjection,
+  Ion,
 } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
+
+// Ionを明示的に無効化（Ionトークン不要で動作させる）
+Ion.defaultAccessToken = undefined as unknown as string
 
 if (typeof window !== 'undefined') {
   ;(window as unknown as Record<string, unknown>).Cesium = Cesium
@@ -32,6 +36,18 @@ import type { PipelineState } from './types/pipeline'
 import { getAvailableLods, getCoverageMuniCodes, type Lod } from './lib/catalogApi'
 import { createCoverageOverlay, type CoverageOverlayHandle } from './lib/coverageOverlay'
 import { createCoverageMvtLayer } from './lib/coverageMvtLayer'
+import {
+  createGsiImageryProvider,
+  loadGsiStyle,
+  saveGsiStyle,
+  GSI_TILE_LABELS,
+  GSI_ATTRIBUTION,
+  GSI_TILE_STYLES,
+  GSI_STORAGE_KEY,
+  isContourStyle,
+  type GsiTileStyle,
+} from './lib/gsiTileConfig'
+import { ContourImageryProvider } from './lib/contourImageryProvider'
 
 type Tab = 'map' | 'preview' | 'viewer'
 
@@ -43,6 +59,7 @@ function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [coverageVisible, setCoverageVisible] = useState(true)
   const [coverageLoading, setCoverageLoading] = useState(false)
+  const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
 
   const [parameters, setParameters] = useState<Parameters>({
     terrainThickness: 10,
@@ -59,6 +76,10 @@ function App() {
 
   const cesiumContainer = useRef<HTMLDivElement>(null)
   const [viewer, setViewer] = useState<Viewer | null>(null)
+  const gsiLayerRef = useRef<Cesium.ImageryLayer | null>(null)
+  const contourLayerRef = useRef<Cesium.ImageryLayer | null>(null)
+  const gsiStyleRef = useRef(gsiStyle)
+  useEffect(() => { gsiStyleRef.current = gsiStyle }, [gsiStyle])
   const coverageOverlayRef = useRef<CoverageOverlayHandle | null>(null)
   const coverageVisibleRef = useRef(true)
   const manifoldRef = useRef<any>(null)
@@ -77,6 +98,8 @@ function App() {
   const [scale, setScale] = useState(1)
   const [availableLods, setAvailableLods] = useState<Lod[]>(['lod1', 'lod2'])
   const { isDevMode } = useDeveloperMode()
+  const [contourDebug, setContourDebug] = useState<ContourDebugInfo | null>(null)
+  const [contourDebugCollapsed, setContourDebugCollapsed] = useState(false)
 
   const [manualCoords, setManualCoords] = useState({
     west: '',
@@ -208,6 +231,197 @@ function App() {
   const toggleCoverage = useCallback(() => {
     setCoverageVisible((prev) => !prev)
   }, [])
+
+  const applyContour = useCallback((v: Viewer, style: GsiTileStyle) => {
+    if (contourLayerRef.current) {
+      v.imageryLayers.remove(contourLayerRef.current, true)
+      contourLayerRef.current = null
+    }
+    const globe: any = v.scene.globe
+    globe.material = undefined
+    if (!isContourStyle(style)) return
+    const baseIndex = gsiLayerRef.current ? v.imageryLayers.indexOf(gsiLayerRef.current) : -1
+    const index = baseIndex >= 0 ? baseIndex + 1 : 0
+    contourLayerRef.current = v.imageryLayers.addImageryProvider(new ContourImageryProvider(), index)
+  }, [])
+
+interface ContourDebugInfo {
+  mode: string
+  cartoHeight: number | null
+  magHeight: number | null
+  posZ: number | null
+  rectHeight: number | null
+  gsiStyle: string
+  materialType: string | null
+  spacing: number | null
+  width: number | null
+  color: string | null
+  terrainType: string
+  isEllipsoid: boolean
+  hasAvailability: boolean
+  terrainReady: boolean
+  contourActive: boolean
+  contourReason: string
+  spacingUsed: number | null
+}
+
+function collectContourDebugInfo(v: Viewer, style: GsiTileStyle): ContourDebugInfo {
+  const globe: any = v.scene.globe
+  const tp: any = globe.terrainProvider
+  const isEllipsoid = !tp || tp.constructor?.name === 'EllipsoidTerrainProvider' || tp.availability === undefined
+  const mat: any = globe.material
+  const camera = v.camera
+  const mode =
+    v.scene.mode === SceneMode.SCENE2D ? '2D' : v.scene.mode === SceneMode.SCENE3D ? '3D' : v.scene.mode === SceneMode.COLUMBUS_VIEW ? 'CV' : 'MORPH'
+
+  const carto = camera.positionCartographic
+  const cartoHeight = carto ? carto.height : null
+
+  let magHeight: number | null = null
+  try {
+    const mag = (camera as any).getMagnitude?.()
+    if (typeof mag === 'number' && Number.isFinite(mag)) magHeight = mag - 6378137
+  } catch {}
+
+  const posZ = camera.position ? camera.position.z : null
+
+  let rectHeight: number | null = null
+  try {
+    if (v.scene.mode === SceneMode.SCENE2D) {
+      const f = camera.frustum as any
+      if (typeof f?.right === 'number' && typeof f?.left === 'number' && typeof f?.top === 'number' && typeof f?.bottom === 'number') {
+        rectHeight = Math.max(f.right - f.left, f.top - f.bottom)
+      }
+    } else {
+      const rect = camera.computeViewRectangle()
+      if (rect) {
+        const dest = camera.getRectangleCameraCoordinates(rect)
+        if (dest) rectHeight = Cartographic.fromCartesian(dest).height
+      }
+    }
+  } catch {}
+
+  const materialType = mat?.type ?? null
+  const spacing = mat?.uniforms?.spacing ?? null
+  const width = mat?.uniforms?.width ?? null
+  const color = mat?.uniforms?.color
+    ? `rgba(${Math.round(mat.uniforms.color.red * 255)},${Math.round(mat.uniforms.color.green * 255)},${Math.round(mat.uniforms.color.blue * 255)},${mat.uniforms.color.alpha.toFixed(2)})`
+    : null
+
+  const terrainType = tp?.constructor?.name ?? 'none'
+  const hasAvailability = tp?.availability !== undefined
+  const terrainReady = tp?.ready ?? false
+
+  // App（2D）は imagery方式（DEMタイル等高線）。styleがcontourなら常に有効。
+  const contourActive = isContourStyle(style)
+  const contourReason = contourActive
+    ? 'imagery方式（DEMタイル等高線）で適用中'
+    : `style=${style} は等高線スタイルではない`
+  const spacingUsed: number | null = null
+
+  return {
+    mode,
+    cartoHeight,
+    magHeight,
+    posZ,
+    rectHeight,
+    gsiStyle: style,
+    materialType,
+    spacing,
+    width,
+    color,
+    terrainType,
+    isEllipsoid,
+    hasAvailability,
+    terrainReady,
+    contourActive,
+    contourReason,
+    spacingUsed,
+  }
+}
+
+function fmtNum(n: number | null): string {
+  return n == null || !Number.isFinite(n) ? '--' : Math.round(n).toLocaleString()
+}
+
+function ContourDebugPanel({
+  info,
+  collapsed,
+  onToggle,
+}: {
+  info: ContourDebugInfo | null
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  if (!info) return null
+  return (
+    <div
+      data-testid="contour-debug"
+      style={{
+        position: 'absolute',
+        top: '60px',
+        left: '16px',
+        zIndex: 200,
+        background: 'var(--surface)',
+        color: 'var(--text)',
+        border: '1px solid var(--border-strong)',
+        borderRadius: '6px',
+        padding: '6px 8px',
+        fontSize: '10px',
+        fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
+        backdropFilter: 'blur(4px)',
+        maxWidth: '380px',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+        <span style={{ fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-dim)' }}>
+          CONTOUR DEBUG ({info.mode})
+        </span>
+        <button
+          onClick={onToggle}
+          title={collapsed ? '展開' : '折りたたむ'}
+          style={{
+            background: 'var(--border)',
+            color: 'var(--text)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: '3px',
+            padding: '1px 6px',
+            fontSize: '10px',
+            cursor: 'pointer',
+            lineHeight: 1.4,
+          }}
+        >
+          {collapsed ? '▸' : '▾'}
+        </button>
+      </div>
+      {!collapsed && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', lineHeight: 1.5, marginTop: '4px' }}>
+          <div>
+            Height: <b>{fmtNum(info.cartoHeight)}m</b>{' '}
+            <span style={{ color: 'var(--text-muted)' }}>
+              (carto: {fmtNum(info.cartoHeight)}, mag: {fmtNum(info.magHeight)}
+              {info.mode === '2D' ? `, z: ${fmtNum(info.posZ)}` : ''}, rect: {fmtNum(info.rectHeight)})
+            </span>
+          </div>
+          <div>Style: {info.gsiStyle}</div>
+          <div>
+            Material: {info.materialType ?? 'none'}
+            {info.spacing != null && ` spacing:${info.spacing} width:${info.width}`}
+            {info.color != null && ` color:${info.color}`}
+          </div>
+          <div>
+            Terrain: {info.terrainType} ready:{info.terrainReady ? 'true' : 'false'} isEllipsoid:
+            {info.isEllipsoid ? 'true' : 'false'} availability:{info.hasAvailability ? '有' : '無'}
+          </div>
+          <div style={{ color: info.contourActive ? '#4caf50' : '#ff9800', fontWeight: 600 }}>
+            ContourActive: {info.contourActive ? 'true' : 'false'} ({info.contourReason})
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
   useEffect(() => {
     coverageVisibleRef.current = coverageVisible
@@ -354,11 +568,11 @@ function App() {
       skyBox: false,
     })
 
-    viewer.imageryLayers.addImageryProvider(
-      new UrlTemplateImageryProvider({
-        url: 'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      })
-    )
+    viewer.scene.globe.baseColor = Color.WHITE
+    viewer.scene.backgroundColor = Color.WHITE
+    gsiLayerRef.current = viewer.imageryLayers.addImageryProvider(createGsiImageryProvider(gsiStyle), 0)
+
+    applyContour(viewer, gsiStyle)
 
     setIsMapLoading(false)
 
@@ -393,7 +607,7 @@ function App() {
     }
 
     viewer.camera.setView({
-      destination: Cartesian3.fromDegrees(139.6917, 35.6895, 1500.0),
+      destination: Cartesian3.fromDegrees(139.6917, 35.6895, 8000.0),
       orientation: {
         heading: CesiumMath.toRadians(0.0),
         pitch: CesiumMath.toRadians(-90.0),
@@ -406,6 +620,7 @@ function App() {
 
     // カバレッジオーバーレイの初期化（MVTレイヤーを試し、失敗時はEntity方式へフォールバック）
     let disposed = false
+
     setCoverageLoading(true)
 
     async function initCoverageOverlay(): Promise<CoverageOverlayHandle | null> {
@@ -424,8 +639,33 @@ function App() {
       }
     }
 
-    initCoverageOverlay()
-      .then((handle) => {
+    // GSIタイルの読み込み完了を待ってからカバレッジを初期化する（ロード直後は白地図のみ表示）
+    const waitForTilesLoaded = () =>
+      new Promise<void>((resolve) => {
+        let resolved = false
+        const done = () => {
+          if (resolved) return
+          resolved = true
+          resolve()
+        }
+        const check = () => {
+          if (resolved) return
+          if (viewer.scene.globe.tilesLoaded) {
+            done()
+            return
+          }
+          requestAnimationFrame(check)
+        }
+        // 最初のフレーム描画後にタイル読み込みが開始されるため、1フレーム待ってから確認する
+        requestAnimationFrame(check)
+        // フォールバック: 3秒タイムアウトで resolve
+        setTimeout(done, 3000)
+      })
+
+    waitForTilesLoaded()
+      .then(async () => {
+        if (disposed || viewer.isDestroyed()) return
+        const handle = await initCoverageOverlay()
         if (disposed || !handle) return
         if (viewer.isDestroyed()) {
           handle.remove()
@@ -440,12 +680,61 @@ function App() {
 
     return () => {
       disposed = true
+      if (contourLayerRef.current) {
+        try { viewer.imageryLayers.remove(contourLayerRef.current, true) } catch {}
+        contourLayerRef.current = null
+      }
       coverageOverlayRef.current?.remove()
       coverageOverlayRef.current = null
+      gsiLayerRef.current = null
       setViewer(null)
       viewer.destroy()
     }
   }, [activeTab])
+
+  // gsiStyle変更時にGSIレイヤーを差し替える（カバレッジMVTレイヤーには触れない）
+  useEffect(() => {
+    if (!viewer) return
+    const oldLayer = gsiLayerRef.current
+    if (oldLayer) {
+      viewer.imageryLayers.remove(oldLayer, true)
+    }
+    gsiLayerRef.current = viewer.imageryLayers.addImageryProvider(createGsiImageryProvider(gsiStyle), 0)
+    applyContour(viewer, gsiStyle)
+  }, [viewer, gsiStyle])
+
+  // 等高線デバッグパネル用のリアルタイム更新ループ（値が変わった時のみ再レンダリング）
+  useEffect(() => {
+    if (!viewer) return
+    let raf = 0
+    let lastJson = ''
+    const update = () => {
+      if (!viewer.isDestroyed()) {
+        const info = collectContourDebugInfo(viewer, gsiStyleRef.current)
+        const json = JSON.stringify(info)
+        if (json !== lastJson) {
+          lastJson = json
+          setContourDebug(info)
+        }
+      }
+      raf = requestAnimationFrame(update)
+    }
+    raf = requestAnimationFrame(update)
+    return () => cancelAnimationFrame(raf)
+  }, [viewer])
+
+  // 他タブ（Preview3D等）とlocalStorage経由でスタイルを同期する
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== GSI_STORAGE_KEY) return
+      const v = e.newValue as GsiTileStyle | null
+      if (v && GSI_TILE_STYLES.includes(v)) {
+        setGsiStyle(v)
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -585,6 +874,44 @@ function App() {
                 zIndex: 100,
               }}
             >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'var(--surface)',
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  backdropFilter: 'blur(4px)',
+                }}
+              >
+                <span style={{ color: 'var(--text-dim)' }}>地図タイル</span>
+                <select
+                  data-testid="gsi-style-select"
+                  value={gsiStyle}
+                  onChange={(e) => {
+                    const style = e.target.value as GsiTileStyle
+                    setGsiStyle(style)
+                    saveGsiStyle(style)
+                  }}
+                  style={{
+                    background: 'var(--border)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: '3px',
+                    fontSize: '11px',
+                    padding: '2px 4px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {GSI_TILE_STYLES.map((s) => (
+                    <option key={s} value={s}>
+                      {GSI_TILE_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div
                 style={{
                   background: 'var(--surface)',
@@ -789,6 +1116,24 @@ function App() {
                 適用
               </button>
             </div>
+            {/* Attribution bar */}
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '26px',
+                right: '4px',
+                fontSize: '10px',
+                color: 'var(--text-dim)',
+                background: 'rgba(0, 0, 0, 0.35)',
+                padding: '2px 6px',
+                borderRadius: '3px',
+                zIndex: 90,
+                pointerEvents: 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {GSI_ATTRIBUTION} / © PLATEAU / © Cesium
+            </div>
             {/* Coverage overlay panel */}
             <div
               style={{
@@ -866,6 +1211,11 @@ function App() {
                 </div>
               )}
             </div>
+            <ContourDebugPanel
+              info={contourDebug}
+              collapsed={contourDebugCollapsed}
+              onToggle={() => setContourDebugCollapsed((v) => !v)}
+            />
           </div>
         )}
         {activeTab === 'preview' && (
