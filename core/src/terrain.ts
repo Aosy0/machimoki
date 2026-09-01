@@ -14,9 +14,9 @@ import type { Bounds, RawMesh } from './types';
 
 const TERRAIN_GRID_SIZE = 128;
 const DIRECT_TERRAIN_URL =
-  (typeof process !== 'undefined' && (process as any).env?.TERRAIN_URL) ??
-  (typeof process !== 'undefined' && (process as any).env?.VITE_TERRAIN_URL) ??
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_TERRAIN_URL) ??
+  (typeof process !== 'undefined' ? (process as any).env?.TERRAIN_URL : undefined) ??
+  (typeof process !== 'undefined' ? (process as any).env?.VITE_TERRAIN_URL : undefined) ??
+  (typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_TERRAIN_URL : undefined) ??
   'https://tile.plateauview.mlit.go.jp/terrain';
 
 function enuToEngine(x: number, y: number, z: number): { x: number; y: number; z: number } {
