@@ -459,6 +459,7 @@ function ContourDebugPanel({
       excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
     }
     const useWorker = exportOptions.format !== 'machimoki'
+    let workerError: unknown = null
     if (useWorker) {
       try {
         setPipelineState({ phase: 'acquiring', progress: 5, message: '建物データ取得中...', error: null })
@@ -480,6 +481,7 @@ function ContourDebugPanel({
         setIsExporting(false)
         return
       } catch (err) {
+        workerError = err
         console.warn('[Machimoki] Workerエクスポート失敗、APIフォールバックへ:', err)
         setPipelineState({ phase: 'composing', progress: 50, message: 'Worker失敗、サーバーで再試行中...', error: null })
       }
@@ -503,7 +505,11 @@ function ContourDebugPanel({
       setPipelineState({ phase: 'complete', progress: 100, message: '完了', error: null })
       setTimeout(() => setPipelineState({ phase: 'idle', progress: 0, message: '', error: null }), 2000)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'エクスポートに失敗しました'
+      let msg = err instanceof Error ? err.message : 'エクスポートに失敗しました'
+      if (msg.includes('Origin server not configured') && workerError) {
+        const wMsg = workerError instanceof Error ? workerError.message : String(workerError)
+        msg = `ブラウザ側エクスポート失敗: ${wMsg}（サーバーフォールバックも利用不可のため範囲を小さくして再試行してください）`
+      }
       setErrorMessage(msg)
       setPipelineState({ phase: 'error', progress: 0, message: '', error: msg })
     } finally {

@@ -45,7 +45,7 @@ app.post('/api/export', async (c) => {
         return c.json({ error: 'Validation failed', warnings, validation }, 422);
       }
 
-      return new Response(buffer, {
+      return new Response(buffer as unknown as BodyInit, {
         headers: {
           'Content-Type': 'application/octet-stream',
           'Content-Disposition': 'attachment; filename="model.machimoki"',
@@ -63,7 +63,7 @@ app.post('/api/export', async (c) => {
     }
 
     const extension = options.format === 'stl' ? 'stl' : '3mf';
-    return new Response(buffer, {
+    return new Response(buffer as unknown as BodyInit, {
       headers: {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="model.${extension}"`,

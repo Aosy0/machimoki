@@ -124,9 +124,18 @@ function originUrl(origin: string, path: string): string {
 // The heavy pipeline (mesh fetch + manifold + .machimoki assembly) runs on the
 // origin core API server; this Worker only forwards the request and streams the
 // resulting binary (3MF / STL / .machimoki) back to the client.
+// If ORIGIN_URL is not configured, try to handle client-side fallback gracefully:
+// return 503 with a message that the browser-side WASM export should be used.
 app.post('/api/export', async (c) => {
   if (!c.env.ORIGIN_URL) {
-    return c.json({ error: 'Origin server not configured' }, 503)
+    return c.json(
+      {
+        error:
+          'Origin server not configured. ブラウザ側のWASMエクスポートが失敗した場合のみこのエラーが表示されます。範囲を小さく（0.02度以内）して再試行するか、開発者に連絡してください。',
+        hint: 'workerExport_failed',
+      },
+      503
+    )
   }
 
   const ip = c.req.header('CF-Connecting-IP') || 'unknown'
@@ -141,7 +150,14 @@ app.post('/api/export', async (c) => {
 // Fallback proxy for validation (rate limited)
 app.post('/api/validate', async (c) => {
   if (!c.env.ORIGIN_URL) {
-    return c.json({ error: 'Origin server not configured' }, 503)
+    return c.json(
+      {
+        error:
+          'Origin server not configured. ブラウザ側での検証が失敗した場合のみこのエラーが表示されます。',
+        hint: 'workerExport_failed',
+      },
+      503
+    )
   }
 
   const ip = c.req.header('CF-Connecting-IP') || 'unknown'
