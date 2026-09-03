@@ -1,25 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import * as Cesium from 'cesium'
-import {
-  Viewer,
-  Cartesian3,
-  Cartographic,
-  Color,
-  type Entity,
-  Math as CesiumMath,
-  SceneMode,
-  WebMercatorProjection,
-  Ion,
-} from 'cesium'
-import 'cesium/Build/Cesium/Widgets/widgets.css'
-
-// Ionを明示的に無効化（Ionトークン不要で動作させる）
-Ion.defaultAccessToken = undefined as unknown as string
-
-if (typeof window !== 'undefined') {
-  ;(window as unknown as Record<string, unknown>).Cesium = Cesium
-}
-
+import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import Preview3D from './components/Preview3D'
 import ModelViewer from './components/ModelViewer'
 import ParameterPanel from './components/ParameterPanel'
@@ -27,61 +7,59 @@ import type { Parameters } from './components/ParameterPanel'
 import LoadingOverlay from './components/LoadingOverlay'
 import ErrorToast from './components/ErrorToast'
 import HelpPanel from './components/HelpPanel'
+import Map2D from './components/Map2D'
 import { exportModel } from './lib/apiClient'
 import { runWorkerExport, triggerDownload } from './lib/workerExport'
-import { useRectangleSelection } from './hooks/useRectangleSelection'
-import { usePointPicking, type PickPoint } from './hooks/usePointPicking'
+import { useMapLibreRectangleSelection } from './hooks/useMapLibreRectangleSelection'
+import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
-import { getAvailableLods, getCoverageMuniCodes, type Lod } from './lib/catalogApi'
-import { createCoverageOverlay, type CoverageOverlayHandle } from './lib/coverageOverlay'
-import { createCoverageMvtLayer } from './lib/coverageMvtLayer'
+import { getAvailableLods, type Lod } from './lib/catalogApi'
 import { LOD_CATEGORY_ORDER, LOD_CATEGORY_STYLES } from './lib/coverageCategories'
+import { BUILDING_OVERLAY_MIN_ZOOM } from './lib/buildingOverlayZoom'
 import {
-  BUILDING_OVERLAY_MIN_ZOOM,
-  isBuildingOverlayZoomedIn,
-} from './lib/buildingOverlayZoom'
+  ensureCoverageLayer,
+  syncCoverageZoom,
+} from './lib/coverageMapLibre'
 import {
-  createGsiImageryProvider,
-  loadGsiStyle,
-  saveGsiStyle,
-  GSI_TILE_LABELS,
-  GSI_ATTRIBUTION,
-  GSI_TILE_STYLES,
-  GSI_STORAGE_KEY,
-  isContourStyle,
-  type GsiTileStyle,
-} from './lib/gsiTileConfig'
-import { ContourImageryProvider } from './lib/contourImageryProvider'
+  ensurePickOverlay,
+  ensureSelectionOverlay,
+  type PickPoint,
+} from './lib/mapSelectionLayers'
+import {
+  coerceCurrentViewBounds,
+  coercePresetBounds,
+  parseManualCoords,
+} from './lib/mapSelectionInput'
 
 type Tab = 'map' | 'preview' | 'viewer'
 
-/**
- * MVTハンドルの詳細/簡易モードを反映する。
- * Entityフォールバックには setDetailedMode が無いため存在チェックで分岐し、
- * フォールバック時は表示/非表示（setVisible）のみ従来通りとする。
- */
-function applyCoverageDetailedMode(
-  handle: CoverageOverlayHandle,
-  detailed: boolean,
-): void {
-  const candidate = handle as CoverageOverlayHandle & {
-    setDetailedMode?: (detailed: boolean) => void
+/** カバレッジ配信のベースURL（coverageMvtLayerと同規則）。 */
+function coverageApiBase(): string {
+  const envBase = (
+    import.meta as { env?: { VITE_COVERAGE_API_BASE?: string } }
+  ).env?.VITE_COVERAGE_API_BASE
+  if (envBase !== undefined && envBase !== '') {
+    return envBase
   }
-  if (typeof candidate.setDetailedMode === 'function') {
-    candidate.setDetailedMode(detailed)
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hostname === 'localhost'
+  ) {
+    return 'https://machimoki.aosy.f5.si'
   }
+  return ''
 }
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('map')
   const [isWasmLoading, setIsWasmLoading] = useState(true)
-  const [isMapLoading, setIsMapLoading] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [coverageVisible, setCoverageVisible] = useState(true)
   const [coverageLoading, setCoverageLoading] = useState(false)
-  const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
+  const [mapLibreMap, setMapLibreMap] = useState<MapLibreMap | null>(null)
+  const [mapFailed, setMapFailed] = useState(false)
 
   const [parameters, setParameters] = useState<Parameters>({
     terrainThickness: 10,
@@ -96,16 +74,9 @@ function App() {
     includeSpanningBuildings: false,
   })
 
-  const cesiumContainer = useRef<HTMLDivElement>(null)
-  const [viewer, setViewer] = useState<Viewer | null>(null)
-  const gsiLayerRef = useRef<Cesium.ImageryLayer | null>(null)
-  const contourLayerRef = useRef<Cesium.ImageryLayer | null>(null)
-  const gsiStyleRef = useRef(gsiStyle)
-  useEffect(() => { gsiStyleRef.current = gsiStyle }, [gsiStyle])
-  const coverageOverlayRef = useRef<CoverageOverlayHandle | null>(null)
-  const coverageVisibleRef = useRef(true)
+  const coverageAvailableRef = useRef(false)
+  const coverageProbedMapRef = useRef<MapLibreMap | null>(null)
   const manifoldRef = useRef<any>(null)
-  const pickMarkerEntitiesRef = useRef<Entity[]>([])
   const [pickPoints, setPickPoints] = useState<PickPoint[]>([])
   const [excludedBuildingIds, setExcludedBuildingIds] = useState<string[]>([])
   const [isPickMode, setIsPickMode] = useState(false)
@@ -120,8 +91,6 @@ function App() {
   const [scale, setScale] = useState(1)
   const [availableLods, setAvailableLods] = useState<Lod[]>(['lod1', 'lod2'])
   const { isDevMode } = useDeveloperMode()
-  const [contourDebug, setContourDebug] = useState<ContourDebugInfo | null>(null)
-  const [contourDebugCollapsed, setContourDebugCollapsed] = useState(false)
 
   const [manualCoords, setManualCoords] = useState({
     west: '',
@@ -135,7 +104,7 @@ function App() {
     setSelectionBounds,
     errorMessage: selectionErrorMessage,
     clearError: clearSelectionError,
-  } = useRectangleSelection(viewer)
+  } = useMapLibreRectangleSelection(mapLibreMap)
 
   const handlePickPoint = useCallback((point: PickPoint) => {
     setPickPoints((prev) => [...prev, point])
@@ -145,37 +114,19 @@ function App() {
     setPickPoints([])
   }, [])
 
-  usePointPicking(viewer, isPickMode, handlePickPoint)
-
   useEffect(() => {
     setExcludedBuildingIds([])
   }, [selectionBounds])
 
   useEffect(() => {
-    if (!viewer || activeTab !== 'map') return
-    for (const entity of pickMarkerEntitiesRef.current) {
-      viewer.entities.remove(entity)
-    }
-    pickMarkerEntitiesRef.current = []
-    for (const p of pickPoints) {
-      const entity = viewer.entities.add({
-        position: Cartesian3.fromDegrees(p.lon, p.lat, 0),
-        point: {
-          pixelSize: 12,
-          color: Color.RED,
-          outlineColor: Color.WHITE,
-          outlineWidth: 2,
-        },
-      })
-      pickMarkerEntitiesRef.current.push(entity)
-    }
-    return () => {
-      for (const entity of pickMarkerEntitiesRef.current) {
-        viewer?.entities?.remove(entity)
-      }
-      pickMarkerEntitiesRef.current = []
-    }
-  }, [viewer, activeTab, pickPoints])
+    if (!mapLibreMap) return
+    ensureSelectionOverlay(mapLibreMap, selectionBounds)
+  }, [mapLibreMap, selectionBounds])
+
+  useEffect(() => {
+    if (!mapLibreMap) return
+    ensurePickOverlay(mapLibreMap, pickPoints)
+  }, [mapLibreMap, pickPoints])
 
   useEffect(() => {
     if (!selectionBounds) return
@@ -214,39 +165,52 @@ function App() {
   }, [availableLods, parameters.lod])
 
   const handleManualSelect = useCallback(() => {
-    const w = parseFloat(manualCoords.west)
-    const s = parseFloat(manualCoords.south)
-    const e = parseFloat(manualCoords.east)
-    const n = parseFloat(manualCoords.north)
-    if ([w, s, e, n].some(isNaN)) {
-      setErrorMessage('座標値が無効です。数値を入力してください')
+    const result = parseManualCoords(manualCoords)
+    if (!result.ok) {
+      setErrorMessage(result.error)
       return
     }
-    if (w >= e || s >= n) {
-      setErrorMessage('西端は東端より、南端は北端より小さい値を指定してください')
-      return
-    }
-    setSelectionBounds({ west: w, south: s, east: e, north: n })
+    setSelectionBounds(result.bounds)
     setErrorMessage(null)
   }, [manualCoords, setSelectionBounds])
 
   const applyPreset = useCallback((preset: { west: number; south: number; east: number; north: number }) => {
-    setManualCoords({
-      west: preset.west.toString(),
-      south: preset.south.toString(),
-      east: preset.east.toString(),
-      north: preset.north.toString(),
-    })
-    setSelectionBounds(preset)
+    try {
+      const bounds = coercePresetBounds(preset)
+      setManualCoords({
+        west: bounds.west.toString(),
+        south: bounds.south.toString(),
+        east: bounds.east.toString(),
+        north: bounds.north.toString(),
+      })
+      setSelectionBounds(bounds)
+      setErrorMessage(null)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'プリセットの適用に失敗しました')
+    }
+  }, [setSelectionBounds])
+
+  const handleSelectCurrentBounds = useCallback((bounds: { west: number; south: number; east: number; north: number }) => {
+    const result = coerceCurrentViewBounds(bounds)
+    if (!result.ok) {
+      setErrorMessage(result.error)
+      return
+    }
+    setSelectionBounds(result.bounds)
     setErrorMessage(null)
   }, [setSelectionBounds])
 
   useEffect(() => {
-    ;(window as any).__applyPreset = applyPreset
+    const target = window as unknown as {
+      __applyPreset?: (preset: SelectionBounds) => void
+    }
+    target.__applyPreset = applyPreset
     return () => {
       try {
-        delete (window as any).__applyPreset
-      } catch {}
+        delete target.__applyPreset
+      } catch {
+        /* ignore */
+      }
     }
   }, [applyPreset])
 
@@ -254,212 +218,10 @@ function App() {
     setCoverageVisible((prev) => !prev)
   }, [])
 
-  const applyContour = useCallback((v: Viewer, style: GsiTileStyle) => {
-    if (contourLayerRef.current) {
-      v.imageryLayers.remove(contourLayerRef.current, true)
-      contourLayerRef.current = null
-    }
-    const globe: any = v.scene.globe
-    globe.material = undefined
-    if (!isContourStyle(style)) return
-    const baseIndex = gsiLayerRef.current ? v.imageryLayers.indexOf(gsiLayerRef.current) : -1
-    const index = baseIndex >= 0 ? baseIndex + 1 : 0
-    contourLayerRef.current = v.imageryLayers.addImageryProvider(new ContourImageryProvider(), index)
-  }, [])
-
-interface ContourDebugInfo {
-  mode: string
-  cartoHeight: number | null
-  magHeight: number | null
-  posZ: number | null
-  rectHeight: number | null
-  gsiStyle: string
-  materialType: string | null
-  spacing: number | null
-  width: number | null
-  color: string | null
-  terrainType: string
-  isEllipsoid: boolean
-  hasAvailability: boolean
-  terrainReady: boolean
-  contourActive: boolean
-  contourReason: string
-  spacingUsed: number | null
-}
-
-function collectContourDebugInfo(v: Viewer, style: GsiTileStyle): ContourDebugInfo {
-  const globe: any = v.scene.globe
-  const tp: any = globe.terrainProvider
-  const isEllipsoid = !tp || tp.constructor?.name === 'EllipsoidTerrainProvider' || tp.availability === undefined
-  const mat: any = globe.material
-  const camera = v.camera
-  const mode =
-    v.scene.mode === SceneMode.SCENE2D ? '2D' : v.scene.mode === SceneMode.SCENE3D ? '3D' : v.scene.mode === SceneMode.COLUMBUS_VIEW ? 'CV' : 'MORPH'
-
-  const carto = camera.positionCartographic
-  const cartoHeight = carto ? carto.height : null
-
-  let magHeight: number | null = null
-  try {
-    const mag = (camera as any).getMagnitude?.()
-    if (typeof mag === 'number' && Number.isFinite(mag)) magHeight = mag - 6378137
-  } catch {}
-
-  const posZ = camera.position ? camera.position.z : null
-
-  let rectHeight: number | null = null
-  try {
-    if (v.scene.mode === SceneMode.SCENE2D) {
-      const f = camera.frustum as any
-      if (typeof f?.right === 'number' && typeof f?.left === 'number' && typeof f?.top === 'number' && typeof f?.bottom === 'number') {
-        rectHeight = Math.max(f.right - f.left, f.top - f.bottom)
-      }
-    } else {
-      const rect = camera.computeViewRectangle()
-      if (rect) {
-        const dest = camera.getRectangleCameraCoordinates(rect)
-        if (dest) rectHeight = Cartographic.fromCartesian(dest).height
-      }
-    }
-  } catch {}
-
-  const materialType = mat?.type ?? null
-  const spacing = mat?.uniforms?.spacing ?? null
-  const width = mat?.uniforms?.width ?? null
-  const color = mat?.uniforms?.color
-    ? `rgba(${Math.round(mat.uniforms.color.red * 255)},${Math.round(mat.uniforms.color.green * 255)},${Math.round(mat.uniforms.color.blue * 255)},${mat.uniforms.color.alpha.toFixed(2)})`
-    : null
-
-  const terrainType = tp?.constructor?.name ?? 'none'
-  const hasAvailability = tp?.availability !== undefined
-  const terrainReady = tp?.ready ?? false
-
-  // App（2D）は imagery方式（DEMタイル等高線）。styleがcontourなら常に有効。
-  const contourActive = isContourStyle(style)
-  const contourReason = contourActive
-    ? 'imagery方式（DEMタイル等高線）で適用中'
-    : `style=${style} は等高線スタイルではない`
-  const spacingUsed: number | null = null
-
-  return {
-    mode,
-    cartoHeight,
-    magHeight,
-    posZ,
-    rectHeight,
-    gsiStyle: style,
-    materialType,
-    spacing,
-    width,
-    color,
-    terrainType,
-    isEllipsoid,
-    hasAvailability,
-    terrainReady,
-    contourActive,
-    contourReason,
-    spacingUsed,
-  }
-}
-
-function fmtNum(n: number | null): string {
-  return n == null || !Number.isFinite(n) ? '--' : Math.round(n).toLocaleString()
-}
-
-function ContourDebugPanel({
-  info,
-  collapsed,
-  onToggle,
-}: {
-  info: ContourDebugInfo | null
-  collapsed: boolean
-  onToggle: () => void
-}) {
-  if (!info) return null
-  return (
-    <div
-      data-testid="contour-debug"
-      style={{
-        position: 'absolute',
-        top: '60px',
-        left: '16px',
-        zIndex: 200,
-        background: 'var(--surface)',
-        color: 'var(--text)',
-        border: '1px solid var(--border-strong)',
-        borderRadius: '6px',
-        padding: '6px 8px',
-        fontSize: '10px',
-        fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
-        backdropFilter: 'blur(4px)',
-        maxWidth: '380px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-        <span style={{ fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-dim)' }}>
-          CONTOUR DEBUG ({info.mode})
-        </span>
-        <button
-          onClick={onToggle}
-          title={collapsed ? '展開' : '折りたたむ'}
-          style={{
-            background: 'var(--border)',
-            color: 'var(--text)',
-            border: '1px solid var(--border-strong)',
-            borderRadius: '3px',
-            padding: '1px 6px',
-            fontSize: '10px',
-            cursor: 'pointer',
-            lineHeight: 1.4,
-          }}
-        >
-          {collapsed ? '▸' : '▾'}
-        </button>
-      </div>
-      {!collapsed && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', lineHeight: 1.5, marginTop: '4px' }}>
-          <div>
-            Height: <b>{fmtNum(info.cartoHeight)}m</b>{' '}
-            <span style={{ color: 'var(--text-muted)' }}>
-              (carto: {fmtNum(info.cartoHeight)}, mag: {fmtNum(info.magHeight)}
-              {info.mode === '2D' ? `, z: ${fmtNum(info.posZ)}` : ''}, rect: {fmtNum(info.rectHeight)})
-            </span>
-          </div>
-          <div>Style: {info.gsiStyle}</div>
-          <div>
-            Material: {info.materialType ?? 'none'}
-            {info.spacing != null && ` spacing:${info.spacing} width:${info.width}`}
-            {info.color != null && ` color:${info.color}`}
-          </div>
-          <div>
-            Terrain: {info.terrainType} ready:{info.terrainReady ? 'true' : 'false'} isEllipsoid:
-            {info.isEllipsoid ? 'true' : 'false'} availability:{info.hasAvailability ? '有' : '無'}
-          </div>
-          <div style={{ color: info.contourActive ? '#4caf50' : '#ff9800', fontWeight: 600 }}>
-            ContourActive: {info.contourActive ? 'true' : 'false'} ({info.contourReason})
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
   useEffect(() => {
-    coverageVisibleRef.current = coverageVisible
-    // 表示ON/OFFはユーザー設定、詳細/簡易はズームに連動。
-    // viewer未生成時はユーザー設定のみ反映する。
-    const v = (window as unknown as { __viewer?: Viewer }).__viewer
-    const handle = coverageOverlayRef.current
-    if (v && !v.isDestroyed()) {
-      handle?.setVisible(coverageVisible)
-      if (handle) {
-        applyCoverageDetailedMode(handle, isBuildingOverlayZoomedIn(v))
-      }
-    } else {
-      handle?.setVisible(coverageVisible)
-    }
-  }, [coverageVisible])
+    if (!mapLibreMap) return
+    syncCoverageZoom(mapLibreMap, coverageVisible, BUILDING_OVERLAY_MIN_ZOOM)
+  }, [mapLibreMap, coverageVisible])
 
   const handleExport = useCallback(async () => {
     if (!selectionBounds) {
@@ -585,212 +347,110 @@ function ContourDebugPanel({
       })
   }, [])
 
+  const handleMapReady = useCallback((map: MapLibreMap) => {
+    setMapFailed(false)
+    setMapLibreMap(map)
+  }, [])
+
+  const handleMapUnload = useCallback(() => {
+    setMapLibreMap(null)
+  }, [])
+
+  const handleWebGLFailure = useCallback(() => {
+    setMapFailed(true)
+  }, [])
+
   useEffect(() => {
-    if (!cesiumContainer.current || activeTab !== 'map') {
-      return
-    }
-
-    setIsMapLoading(true)
-
-    const viewer = new Viewer(cesiumContainer.current, {
-      shouldAnimate: true,
-      timeline: false,
-      animation: false,
-      baseLayerPicker: false,
-      geocoder: false,
-      homeButton: false,
-      sceneModePicker: false,
-      navigationHelpButton: false,
-      baseLayer: false,
-      sceneMode: SceneMode.SCENE2D,
-      mapProjection: new WebMercatorProjection(),
-      skyBox: false,
-    })
-
-    viewer.scene.globe.baseColor = Color.WHITE
-    viewer.scene.backgroundColor = Color.WHITE
-    gsiLayerRef.current = viewer.imageryLayers.addImageryProvider(createGsiImageryProvider(gsiStyle), 0)
-
-    applyContour(viewer, gsiStyle)
-
-    setIsMapLoading(false)
-
-    const ssec = viewer.scene.screenSpaceCameraController
-    ssec.enableTilt = false
-    ssec.enableRotate = false
-    ssec.enableLook = false
-    ssec.minimumZoomDistance = 300
-    ssec.maximumZoomDistance = 5000000
-    ssec.inertiaZoom = 0.4
-    ssec.inertiaTranslate = 0.4
-    ssec.inertiaSpin = 0
-    ;(ssec as any).zoomFactor = 3.0
-
-    // 勢いに応じた可変ズーム: ゆっくりは小さく、勢いよく回すと大きく
-    {
-      const canvas = viewer.scene.canvas as HTMLCanvasElement
-      let lastWheelTime = 0
-      canvas.addEventListener(
-        'wheel',
-        (e: WheelEvent) => {
-          const now = Date.now()
-          const delta = Math.abs(e.deltaY)
-          const dt = Math.max(1, now - lastWheelTime)
-          const velocity = delta / dt
-          const factor = Math.min(10.0, Math.max(2.0, 1.8 + velocity * 0.35))
-          ;(ssec as any).zoomFactor = factor
-          lastWheelTime = now
-        },
-        { passive: true },
-      )
-    }
-
-    viewer.camera.setView({
-      destination: Cartesian3.fromDegrees(139.6917, 35.6895, 8000.0),
-      orientation: {
-        heading: CesiumMath.toRadians(0.0),
-        pitch: CesiumMath.toRadians(-90.0),
-        roll: 0.0,
-      },
-    })
-
-    setViewer(viewer)
-    ;(window as any).__viewer = viewer
-
-    // カバレッジオーバーレイの初期化（MVTレイヤーを試し、失敗時はEntity方式へフォールバック）
+    if (!mapLibreMap || activeTab !== 'map') return
+    const map = mapLibreMap
     let disposed = false
 
-    const applyCoverageZoomVisibility = () => {
-      if (disposed || viewer.isDestroyed()) return
-      const handle = coverageOverlayRef.current
-      if (!handle) return
-      handle.setVisible(coverageVisibleRef.current)
-      applyCoverageDetailedMode(handle, isBuildingOverlayZoomedIn(viewer))
-    }
-    viewer.camera.moveEnd.addEventListener(applyCoverageZoomVisibility)
-
-    setCoverageLoading(true)
-
-    async function initCoverageOverlay(): Promise<CoverageOverlayHandle | null> {
-      try {
-        return await createCoverageMvtLayer(
-          viewer,
-          '/api/coverage/tiles/{z}/{x}/{y}',
-          isBuildingOverlayZoomedIn(viewer),
-        )
-      } catch (err) {
-        console.warn('[Coverage] MVTレイヤー初期化失敗、Entityフォールバックへ:', err)
-        if (disposed || viewer.isDestroyed()) return null
-        try {
-          const coverage = await getCoverageMuniCodes()
-          return await createCoverageOverlay(viewer, coverage)
-        } catch (fallbackErr) {
-          console.warn('[CoverageOverlay] フォールバック初期化失敗:', fallbackErr)
-          return null
-        }
+    const applyZoom = (): void => {
+      if (!disposed) {
+        syncCoverageZoom(map, coverageVisible, BUILDING_OVERLAY_MIN_ZOOM)
       }
     }
 
-    // GSIタイルの読み込み完了を待ってからカバレッジを初期化する（ロード直後は白地図のみ表示）
-    const waitForTilesLoaded = () =>
-      new Promise<void>((resolve) => {
-        let resolved = false
-        const done = () => {
-          if (resolved) return
-          resolved = true
-          resolve()
-        }
-        const check = () => {
-          if (resolved) return
-          if (viewer.scene.globe.tilesLoaded) {
-            done()
-            return
-          }
-          requestAnimationFrame(check)
-        }
-        // 最初のフレーム描画後にタイル読み込みが開始されるため、1フレーム待ってから確認する
-        requestAnimationFrame(check)
-        // フォールバック: 3秒タイムアウトで resolve
-        setTimeout(done, 3000)
-      })
+    const reapplyAfterStyleChange = (): void => {
+      if (disposed) return
+      ensureSelectionOverlay(map, selectionBounds)
+      ensurePickOverlay(map, pickPoints)
+      if (coverageAvailableRef.current) {
+        ensureCoverageLayer(map, { visible: coverageVisible, detailed: true })
+        syncCoverageZoom(map, coverageVisible, BUILDING_OVERLAY_MIN_ZOOM)
+      }
+    }
 
-    waitForTilesLoaded()
-      .then(async () => {
-        if (disposed || viewer.isDestroyed()) return
-        const handle = await initCoverageOverlay()
-        if (disposed || !handle) return
-        if (viewer.isDestroyed()) {
-          handle.remove()
-          return
+    map.on('moveend', applyZoom)
+    map.on('styledata', reapplyAfterStyleChange)
+
+    if (coverageProbedMapRef.current !== map) {
+      coverageProbedMapRef.current = map
+      coverageAvailableRef.current = false
+      setCoverageLoading(true)
+      const init = (): void => {
+        fetch(`${coverageApiBase()}/api/coverage`)
+          .then((res) => {
+            if (!res.ok || disposed) return
+            const ok = ensureCoverageLayer(map, {
+              visible: coverageVisible,
+              detailed: true,
+            })
+            coverageAvailableRef.current = ok
+            syncCoverageZoom(map, coverageVisible, BUILDING_OVERLAY_MIN_ZOOM)
+          })
+          .catch(() => {
+            /* カバレッジ取得の失敗は表示のみ。exportはブロックしない */
+          })
+          .finally(() => {
+            if (!disposed) setCoverageLoading(false)
+          })
+      }
+      try {
+        if (map.loaded()) {
+          init()
+        } else {
+          map.once('load', () => {
+            if (!disposed) {
+              init()
+            }
+          })
         }
-        coverageOverlayRef.current = handle
-        handle.setVisible(coverageVisibleRef.current)
-        applyCoverageDetailedMode(handle, isBuildingOverlayZoomedIn(viewer))
-      })
-      .finally(() => {
-        if (!disposed) setCoverageLoading(false)
-      })
+      } catch {
+        setCoverageLoading(false)
+      }
+    }
 
     return () => {
       disposed = true
       try {
-        viewer.camera.moveEnd.removeEventListener(applyCoverageZoomVisibility)
-      } catch {}
-      if (contourLayerRef.current) {
-        try { viewer.imageryLayers.remove(contourLayerRef.current, true) } catch {}
-        contourLayerRef.current = null
+        map.off('moveend', applyZoom)
+      } catch {
+        /* ignore */
       }
-      coverageOverlayRef.current?.remove()
-      coverageOverlayRef.current = null
-      gsiLayerRef.current = null
-      setViewer(null)
-      viewer.destroy()
-    }
-  }, [activeTab])
-
-  // gsiStyle変更時にGSIレイヤーを差し替える（カバレッジMVTレイヤーには触れない）
-  useEffect(() => {
-    if (!viewer) return
-    const oldLayer = gsiLayerRef.current
-    if (oldLayer) {
-      viewer.imageryLayers.remove(oldLayer, true)
-    }
-    gsiLayerRef.current = viewer.imageryLayers.addImageryProvider(createGsiImageryProvider(gsiStyle), 0)
-    applyContour(viewer, gsiStyle)
-  }, [viewer, gsiStyle])
-
-  // 等高線デバッグパネル用のリアルタイム更新ループ（値が変わった時のみ再レンダリング）
-  useEffect(() => {
-    if (!viewer) return
-    let raf = 0
-    let lastJson = ''
-    const update = () => {
-      if (!viewer.isDestroyed()) {
-        const info = collectContourDebugInfo(viewer, gsiStyleRef.current)
-        const json = JSON.stringify(info)
-        if (json !== lastJson) {
-          lastJson = json
-          setContourDebug(info)
-        }
-      }
-      raf = requestAnimationFrame(update)
-    }
-    raf = requestAnimationFrame(update)
-    return () => cancelAnimationFrame(raf)
-  }, [viewer])
-
-  // 他タブ（Preview3D等）とlocalStorage経由でスタイルを同期する
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== GSI_STORAGE_KEY) return
-      const v = e.newValue as GsiTileStyle | null
-      if (v && GSI_TILE_STYLES.includes(v)) {
-        setGsiStyle(v)
+      try {
+        map.off('styledata', reapplyAfterStyleChange)
+      } catch {
+        /* ignore */
       }
     }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [])
+  }, [mapLibreMap, activeTab, selectionBounds, pickPoints, coverageVisible])
+
+  useEffect(() => {
+    if (!mapLibreMap || activeTab !== 'map' || !isPickMode) return
+    const handleMapClick = (event: MapMouseEvent): void => {
+      if (event.originalEvent.shiftKey) return
+      handlePickPoint({ lon: event.lngLat.lng, lat: event.lngLat.lat })
+    }
+    mapLibreMap.on('click', handleMapClick)
+    return () => {
+      try {
+        mapLibreMap.off('click', handleMapClick)
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [mapLibreMap, activeTab, isPickMode, handlePickPoint])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -907,7 +567,6 @@ function ContourDebugPanel({
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {activeTab === 'map' && (
           <div
-            ref={cesiumContainer}
             style={{
               width: '100%',
               height: '100%',
@@ -916,8 +575,31 @@ function ContourDebugPanel({
               left: 0,
             }}
           >
-            <LoadingOverlay message="PLATEAUデータを読み込み中..." visible={isMapLoading} />
-            {/* Left cluster: raised above Cesium attribution */}
+            <Map2D
+              onMapReady={handleMapReady}
+              onMapUnload={handleMapUnload}
+              onWebGLFailure={handleWebGLFailure}
+              onSelectCurrentBounds={handleSelectCurrentBounds}
+            />
+            {mapFailed && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '16px',
+                  left: '16px',
+                  background: 'var(--surface)',
+                  color: 'var(--text-dim)',
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  zIndex: 100,
+                  backdropFilter: 'blur(4px)',
+                }}
+              >
+                地図描画に失敗しました。座標入力・プリセットで範囲を指定できます。
+              </div>
+            )}
+            {/* Left cluster: raised above attribution */}
             <div
               style={{
                 position: 'absolute',
@@ -930,44 +612,6 @@ function ContourDebugPanel({
                 zIndex: 100,
               }}
             >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  background: 'var(--surface)',
-                  padding: '6px 12px',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  backdropFilter: 'blur(4px)',
-                }}
-              >
-                <span style={{ color: 'var(--text-dim)' }}>地図タイル</span>
-                <select
-                  data-testid="gsi-style-select"
-                  value={gsiStyle}
-                  onChange={(e) => {
-                    const style = e.target.value as GsiTileStyle
-                    setGsiStyle(style)
-                    saveGsiStyle(style)
-                  }}
-                  style={{
-                    background: 'var(--border)',
-                    color: 'var(--text)',
-                    border: '1px solid var(--border-strong)',
-                    borderRadius: '3px',
-                    fontSize: '11px',
-                    padding: '2px 4px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {GSI_TILE_STYLES.map((s) => (
-                    <option key={s} value={s}>
-                      {GSI_TILE_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </div>
               <div
                 style={{
                   background: 'var(--surface)',
@@ -1172,24 +816,6 @@ function ContourDebugPanel({
                 適用
               </button>
             </div>
-            {/* Attribution bar */}
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '26px',
-                right: '4px',
-                fontSize: '10px',
-                color: 'var(--text-dim)',
-                background: 'rgba(0, 0, 0, 0.35)',
-                padding: '2px 6px',
-                borderRadius: '3px',
-                zIndex: 90,
-                pointerEvents: 'none',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {GSI_ATTRIBUTION} / © PLATEAU / © Cesium
-            </div>
             {/* Coverage overlay panel */}
             <div
               style={{
@@ -1265,17 +891,12 @@ function ContourDebugPanel({
                 </div>
               )}
             </div>
-            <ContourDebugPanel
-              info={contourDebug}
-              collapsed={contourDebugCollapsed}
-              onToggle={() => setContourDebugCollapsed((v) => !v)}
-            />
           </div>
         )}
         {activeTab === 'preview' && (
           <div style={{ display: 'flex', width: '100%', height: '100%' }}>
             <div style={{ flex: 1, position: 'relative' }}>
-              {!selectionBounds && !isMapLoading && (
+              {!selectionBounds && (
                 <div
                   style={{
                     position: 'absolute',
