@@ -4,6 +4,14 @@
  * PLATEAUカタログ + N03 GeoJSON からカバレッジMVTタイルと coverage.json を生成し、
  * R2（S3互換）へアップロードする。自宅サーバーのcron（03:00 JST）で実行する。
  *
+ * マニフェスト方式の差分生成・差分アップロード:
+ * - 出力dir直下の manifest.json（アップロード対象外）に、入力ハッシュ・CODE_VERSION・
+ *   各キーのSHA-256を記録する。
+ * - 入力（カタログJSON＋N03 GeoJSON）不変・タイル実在・CODE_VERSION一致なら
+ *   tippecanoe再生成とR2アップロードをスキップする。
+ * - 入力が変わった場合は差分のみPUTし、消滅したキーはR2からDELETEする。
+ * - 初回（マニフェスト無し）は従来通り全量アップロードする。
+ *
  * カバレッジ定義:
  *   type_en === 'bldg'（建築物モデル）かつ
  *   format === '3D Tiles' かつ
@@ -18,12 +26,13 @@
  *   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET (default: machimoki-coverage)
  */
 
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import {
   buildCoverageMap,
   enrichGeoJsonFeatures,
@@ -42,6 +51,15 @@ const DEFAULT_GEOJSON_URL =
 const DEFAULT_OUTPUT_DIR = './tmp/coverage';
 const DEFAULT_CACHE_FILE = './cache/n03.geojson';
 const DEFAULT_CONCURRENCY = 20;
+
+/**
+ * 生成ロジックのバージョン。マニフェストの codeVersion と比較し、
+ * 不一致なら入力不変でも全量再生成を強制する。
+ * tippecanoe引数・カバレッジ定義・タイル生成/差分ロジックを変更した場合は
+ * 必ずこの値を更新すること。
+ */
+const CODE_VERSION = '2026-09-03-1';
+export { CODE_VERSION };
 
 const MVT_CONTENT_TYPE = 'application/vnd.mapbox-vector-tile';
 const JSON_CONTENT_TYPE = 'application/json';
@@ -71,6 +89,14 @@ export interface GenerateCoverageResult {
   tilesGenerated: boolean;
   uploaded: number;
   source: string;
+  /** 今回PUTしたファイル数 */
+  putCount: number;
+  /** 今回DELETEしたファイル数 */
+  deleteCount: number;
+  /** 差分なしでスキップしたファイル数 */
+  skipCount: number;
+  /** 入力不変により生成とアップロードをスキップしたか */
+  generationSkipped: boolean;
 }
 
 export function parseArgs(argv: string[]): GenerateCoverageOptions {
@@ -125,6 +151,118 @@ export function normalizeMuniCode(value: unknown): string | null {
     return null;
   }
   return null;
+}
+
+/**
+ * SHA-256 ハッシュを16進文字列で返す。
+ */
+export function sha256Hex(data: Uint8Array | string): string {
+  return createHash('sha256').update(data).digest('hex');
+}
+
+/**
+ * 入力ハッシュを計算する。カタログJSONとenrich後のN03 GeoJSON
+ * （enriched.geojson の実体）を連結して SHA-256 を取る。
+ * enrich はカタログとGeoJSONの決定関数なので、入力が不変ならハッシュも不変。
+ */
+export function computeInputHash(
+  catalog: CatalogDataset[],
+  features: GeoJsonFeature[],
+): string {
+  const hash = createHash('sha256');
+  hash.update(JSON.stringify(catalog));
+  hash.update(JSON.stringify(features));
+  return hash.digest('hex');
+}
+
+/**
+ * 差分生成・差分アップロード用のマニフェスト。
+ * - version: マニフェスト形式のバージョン
+ * - codeVersion: 生成ロジックのバージョン（CODE_VERSION）
+ * - inputHash: 入力（カタログJSON＋N03 GeoJSON）のSHA-256
+ * - generatedAt: 生成日時
+ * - files: R2上のキー → ファイル内容のSHA-256
+ */
+export interface CoverageManifest {
+  version: 1;
+  codeVersion: string;
+  inputHash: string;
+  generatedAt: string;
+  files: Record<string, string>;
+}
+
+/**
+ * マニフェストを読み込む。存在しない・壊れている場合は null を返す。
+ */
+export async function readManifest(
+  manifestPath: string,
+): Promise<CoverageManifest | null> {
+  try {
+    const raw = await readFile(manifestPath, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<CoverageManifest>;
+    if (
+      parsed === null ||
+      typeof parsed !== 'object' ||
+      parsed.version !== 1 ||
+      typeof parsed.codeVersion !== 'string' ||
+      typeof parsed.inputHash !== 'string' ||
+      typeof parsed.generatedAt !== 'string' ||
+      typeof parsed.files !== 'object' ||
+      parsed.files === null ||
+      !Object.values(parsed.files).every((value) => typeof value === 'string')
+    ) {
+      return null;
+    }
+    return parsed as CoverageManifest;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * マニフェストを書き出す。
+ */
+export async function writeManifest(
+  manifestPath: string,
+  manifest: CoverageManifest,
+): Promise<void> {
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+}
+
+export interface DiffResult {
+  toPut: string[];
+  toDelete: string[];
+  skipped: number;
+}
+
+/**
+ * 前回マニフェストのファイル一覧と現在のファイル一覧から差分を算出する。
+ * - 新規・ハッシュが変わったキー → toPut
+ * - 前回にあり現在にないキー → toDelete
+ * - ハッシュが一致するキー → skipped
+ */
+export function computeDiff(
+  previousFiles: Record<string, string>,
+  currentFiles: Record<string, string>,
+): DiffResult {
+  const toPut: string[] = [];
+  const toDelete: string[] = [];
+  let skipped = 0;
+
+  for (const [key, hash] of Object.entries(currentFiles)) {
+    if (previousFiles[key] === hash) {
+      skipped += 1;
+    } else {
+      toPut.push(key);
+    }
+  }
+  for (const key of Object.keys(previousFiles)) {
+    if (!(key in currentFiles)) {
+      toDelete.push(key);
+    }
+  }
+
+  return { toPut, toDelete, skipped };
 }
 
 async function fetchCatalog(catalogUrl: string): Promise<CatalogDataset[]> {
@@ -280,6 +418,32 @@ async function uploadWithConcurrency(
   return uploaded;
 }
 
+/**
+ * R2 からキーを並列削除する。削除した件数を返す。
+ */
+async function deleteWithConcurrency(
+  client: S3Client,
+  bucket: string,
+  keys: string[],
+  concurrency: number,
+): Promise<number> {
+  let index = 0;
+  let deleted = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, keys.length));
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (index < keys.length) {
+      const key = keys[index];
+      index += 1;
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      deleted += 1;
+    }
+  });
+
+  await Promise.all(workers);
+  return deleted;
+}
+
 async function collectPbfFiles(dir: string): Promise<string[]> {
   const results: string[] = [];
   async function walk(current: string): Promise<void> {
@@ -298,14 +462,29 @@ async function collectPbfFiles(dir: string): Promise<string[]> {
 }
 
 /**
+ * タイルディレクトリに .pbf ファイルが1つ以上存在するかを確認する。
+ */
+async function hasPbfFiles(dir: string): Promise<boolean> {
+  try {
+    const files = await collectPbfFiles(dir);
+    return files.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * カバレッジ生成のオーケストレーション。
  * 1. カタログ取得 → CoverageMap 生成（ward_code ?? city_code、区/市を区別）
  * 2. N03 GeoJSON 取得（失敗時キャッシュ）
  * 3. N03_007 正規化 + enrichGeoJsonFeatures
- * 4. enriched.geojson 書き出し
- * 5. tippecanoe で MVT タイル生成（失敗時は警告して続行）
- * 6. coverage.json 生成（meta: source, generatedAt, coverageDefinition）
- * 7. R2 へ tiles/{z}/{x}/{y}.pbf と coverage.json をアップロード（concurrency 20）
+ * 4. 入力ハッシュ計算 + マニフェスト読込。入力不変・タイル実在・CODE_VERSION一致なら
+ *    tippecanoe再生成とR2アップロードをスキップ
+ * 5. enriched.geojson 書き出し
+ * 6. tippecanoe で MVT タイル生成（失敗時は警告して続行）
+ * 7. coverage.json 生成（meta: source, generatedAt, coverageDefinition）
+ * 8. マニフェストとの差分を算出し、変更分のみ PUT・消滅分は DELETE（concurrency 20）
+ * 9. アップロード成功時のみマニフェストを更新
  */
 export async function generateCoverage(
   options: GenerateCoverageOptions,
@@ -340,7 +519,38 @@ export async function generateCoverage(
   }
   const enriched = enrichGeoJsonFeatures(features, catalog);
 
-  // 4. enriched.geojson 書き出し
+  // 4. 入力ハッシュ計算 + マニフェスト読込
+  const inputHash = computeInputHash(catalog, enriched);
+  const manifestPath = join(outputDir, 'manifest.json');
+  const previousManifest = await readManifest(manifestPath);
+
+  // 5. 入力不変・タイル実在・CODE_VERSION一致なら生成とアップロードをスキップ
+  const tilesDir = join(outputDir, 'tiles');
+  const generationSkipped =
+    previousManifest !== null &&
+    previousManifest.codeVersion === CODE_VERSION &&
+    previousManifest.inputHash === inputHash &&
+    (await hasPbfFiles(tilesDir));
+
+  if (generationSkipped) {
+    const skipCount = Object.keys(previousManifest.files).length;
+    console.error(
+      `入力不変のためtippecanoe再生成とR2アップロードをスキップします（${skipCount} ファイル）`,
+    );
+    return {
+      coverageMap,
+      featureCount: enriched.length,
+      tilesGenerated: true,
+      uploaded: 0,
+      source: geojsonUrl,
+      putCount: 0,
+      deleteCount: 0,
+      skipCount,
+      generationSkipped: true,
+    };
+  }
+
+  // 6. enriched.geojson 書き出し
   await mkdir(outputDir, { recursive: true });
   const enrichedPath = join(outputDir, 'enriched.geojson');
   await writeFile(
@@ -349,14 +559,13 @@ export async function generateCoverage(
   );
   console.error(`enriched.geojson を書き出しました: ${enrichedPath}`);
 
-  // 5. tippecanoe で MVT タイル生成（失敗時は警告して続行）
-  const tilesDir = join(outputDir, 'tiles');
+  // 7. tippecanoe で MVT タイル生成（失敗時は警告して続行）
   const tilesGenerated = await runTippecanoe(enrichedPath, tilesDir);
   if (tilesGenerated) {
     console.error(`MVTタイルを生成しました: ${tilesDir}`);
   }
 
-  // 6. coverage.json 生成
+  // 8. coverage.json 生成
   const coverageJson = {
     ...(JSON.parse(generateCoverageJson(coverageMap)) as Record<string, unknown>),
     meta: {
@@ -369,8 +578,11 @@ export async function generateCoverage(
   await writeFile(join(outputDir, 'coverage.json'), coverageJsonString);
   console.error(`coverage.json を書き出しました: ${join(outputDir, 'coverage.json')}`);
 
-  // 7. R2 アップロード（S3互換APIを優先、失敗時はCloudflare APIにフォールバック）
+  // 9. R2 アップロード（差分。S3互換APIを優先、失敗時はCloudflare APIにフォールバック）
   let uploaded = 0;
+  let deleteCount = 0;
+  let skipCount = 0;
+  let uploadSucceeded = false;
   const r2Config = getR2ConfigFromEnv();
   const cfToken = process.env.CLOUDFLARE_API_TOKEN;
   const cfAccountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? r2Config?.accountId;
@@ -399,13 +611,29 @@ export async function generateCoverage(
       contentType: JSON_CONTENT_TYPE,
     });
 
+    // 現在のファイルハッシュを計算し、前回マニフェストとの差分を算出
+    const currentFiles: Record<string, string> = {};
+    for (const entry of entries) {
+      currentFiles[entry.key] = sha256Hex(entry.body);
+    }
+    const previousFiles = previousManifest?.files ?? {};
+    const diff = computeDiff(previousFiles, currentFiles);
+    const toPutEntries = entries.filter((entry) => diff.toPut.includes(entry.key));
+    // tippecanoe失敗時はタイルの状態が不明なため削除しない（coverage.jsonのみ更新）
+    const toDelete = tilesGenerated ? diff.toDelete : [];
+    skipCount = diff.skipped;
+
     // S3互換APIを試す
     let s3Failed = false;
     if (r2Config) {
       try {
         const client = createS3Client(r2Config);
-        uploaded = await uploadWithConcurrency(client, r2Config.bucket, entries, concurrency);
-        console.error(`R2へ ${uploaded} ファイルをアップロードしました（S3 API）`);
+        uploaded = await uploadWithConcurrency(client, r2Config.bucket, toPutEntries, concurrency);
+        deleteCount = await deleteWithConcurrency(client, r2Config.bucket, toDelete, concurrency);
+        console.error(
+          `R2へ ${uploaded} ファイルをアップロード、${deleteCount} ファイルを削除、${skipCount} ファイルをスキップしました（S3 API）`,
+        );
+        uploadSucceeded = true;
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.error(`Warning: S3 API アップロード失敗、Cloudflare APIにフォールバックします: ${msg}`);
@@ -415,12 +643,12 @@ export async function generateCoverage(
       s3Failed = true;
     }
 
-    // フォールバック: Cloudflare API (api.cloudflare.com) でput
+    // フォールバック: Cloudflare API (api.cloudflare.com) でput/delete
     if (s3Failed && cfToken && cfAccountId) {
       const bucket = r2Config?.bucket ?? process.env.R2_BUCKET ?? 'machimoki-coverage';
       console.error('Cloudflare APIでアップロードを試行します...');
       let cfUploaded = 0;
-      for (const entry of entries) {
+      for (const entry of toPutEntries) {
         const res = await fetch(
           `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/r2/buckets/${bucket}/objects/${entry.key}`,
           {
@@ -438,10 +666,52 @@ export async function generateCoverage(
         }
         cfUploaded += 1;
       }
+      for (const key of toDelete) {
+        const res = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/r2/buckets/${bucket}/objects/${key}`,
+          {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${cfToken}` },
+          },
+        );
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`Cloudflare API DELETE ${key} 失敗: ${res.status} ${text.slice(0, 200)}`);
+        }
+        deleteCount += 1;
+      }
       uploaded = cfUploaded;
-      console.error(`R2へ ${uploaded} ファイルをアップロードしました（Cloudflare API）`);
+      console.error(
+        `R2へ ${uploaded} ファイルをアップロード、${deleteCount} ファイルを削除、${skipCount} ファイルをスキップしました（Cloudflare API）`,
+      );
+      uploadSucceeded = true;
     } else if (s3Failed) {
       console.error('Cloudflare APIトークン（CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID）が未設定のためフォールバックできません');
+    }
+
+    // 10. アップロード成功時のみマニフェストを更新
+    if (uploadSucceeded) {
+      const newManifestFiles: Record<string, string> = {};
+      if (tilesGenerated) {
+        for (const entry of entries) {
+          newManifestFiles[entry.key] = currentFiles[entry.key];
+        }
+      } else {
+        // tippecanoe失敗時はタイルのエントリを維持し、coverage.jsonのみ更新
+        for (const [key, hash] of Object.entries(previousFiles)) {
+          if (key.startsWith('tiles/')) newManifestFiles[key] = hash;
+        }
+        newManifestFiles['coverage.json'] = currentFiles['coverage.json'];
+      }
+      const newManifest: CoverageManifest = {
+        version: 1,
+        codeVersion: CODE_VERSION,
+        inputHash,
+        generatedAt: new Date().toISOString(),
+        files: newManifestFiles,
+      };
+      await writeManifest(manifestPath, newManifest);
+      console.error(`マニフェストを書き出しました: ${manifestPath}`);
     }
   }
 
@@ -451,6 +721,10 @@ export async function generateCoverage(
     tilesGenerated,
     uploaded,
     source: geojsonUrl,
+    putCount: uploaded,
+    deleteCount,
+    skipCount,
+    generationSkipped: false,
   };
 }
 

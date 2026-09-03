@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } fr
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 vi.mock('node:fs/promises', () => ({
@@ -14,12 +14,20 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('@aws-sdk/client-s3', () => ({
   S3Client: vi.fn(),
   PutObjectCommand: vi.fn(),
+  DeleteObjectCommand: vi.fn(),
 }));
 
 import {
   generateCoverage,
   parseArgs,
   normalizeMuniCode,
+  computeDiff,
+  computeInputHash,
+  readManifest,
+  writeManifest,
+  sha256Hex,
+  CODE_VERSION,
+  type CoverageManifest,
 } from '../../src/cli/generateCoverage.js';
 
 const CATALOG_URL = 'https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets';
@@ -49,6 +57,14 @@ const feature = {
   geometry: { type: 'Polygon', coordinates: [] },
   properties: { N03_001: '東京都', N03_003: '千代田区', N03_007: '13101' },
 };
+
+function makeFeature(): typeof feature {
+  return {
+    type: 'Feature',
+    geometry: { type: 'Polygon', coordinates: [] },
+    properties: { N03_001: '東京都', N03_003: '千代田区', N03_007: '13101' },
+  };
+}
 
 function mockFetchCatalogAndGeoJson(): MockInstance<typeof globalThis.fetch> {
   const fetchMock = vi.mocked(fetch);
@@ -123,6 +139,9 @@ describe('generateCoverage CLI', () => {
     vi.mocked(PutObjectCommand).mockImplementation(
       ((input: unknown) => input) as unknown as typeof PutObjectCommand,
     );
+    vi.mocked(DeleteObjectCommand).mockImplementation(
+      ((input: unknown) => input) as unknown as typeof DeleteObjectCommand,
+    );
     vi.stubGlobal('fetch', vi.fn());
     delete process.env.R2_ACCOUNT_ID;
     delete process.env.R2_ACCESS_KEY_ID;
@@ -177,7 +196,7 @@ describe('generateCoverage CLI', () => {
         '-e',
         expect.stringContaining('tiles'),
         '-Z4',
-        '-z10',
+        '-z14',
         '-l',
         'coverage',
         '--no-tile-compression',
@@ -345,6 +364,145 @@ describe('generateCoverage CLI', () => {
     };
     expect(enriched.features[0].properties.N03_007).toBe('01101');
   });
+
+  it('入力不変・タイル実在なら2回目以降は生成とアップロードをスキップする', async () => {
+    process.env.R2_ACCOUNT_ID = 'acct';
+    process.env.R2_ACCESS_KEY_ID = 'key';
+    process.env.R2_SECRET_ACCESS_KEY = 'secret';
+    process.env.R2_BUCKET = 'machimoki-coverage';
+
+    // 1回目: マニフェスト無し → 全量生成・アップロード
+    mockFetchCatalogAndGeoJson();
+    mockSpawnClose(0);
+    mockTilesWalk();
+    vi.mocked(readFile).mockImplementation(async (path) => {
+      if (String(path).endsWith('.pbf')) return new Uint8Array([1, 2, 3]);
+      return '';
+    });
+    const first = await generateCoverage({
+      outputDir: OUTPUT_DIR,
+      geojsonUrl: GEOJSON_URL,
+      cacheFile: CACHE_FILE,
+    });
+    expect(first.generationSkipped).toBe(false);
+    expect(first.putCount).toBe(2);
+
+    const manifestWrite = findWrite('manifest.json');
+    expect(manifestWrite).toBeDefined();
+    const manifestJson = String(manifestWrite![1]);
+
+    // 2回目: 入力不変・タイル実在 → スキップ
+    mockFetchCatalogAndGeoJson();
+    vi.mocked(readFile).mockImplementation(async (path) => {
+      if (String(path).endsWith('manifest.json')) return manifestJson;
+      if (String(path).endsWith('.pbf')) return new Uint8Array([1, 2, 3]);
+      return '';
+    });
+    const second = await generateCoverage({
+      outputDir: OUTPUT_DIR,
+      geojsonUrl: GEOJSON_URL,
+      cacheFile: CACHE_FILE,
+    });
+
+    expect(second.generationSkipped).toBe(true);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(S3Client).toHaveBeenCalledTimes(1);
+    expect(second.putCount).toBe(0);
+    expect(second.deleteCount).toBe(0);
+    expect(second.skipCount).toBe(2);
+  });
+
+  it('入力が変わると差分のみPUTし、消滅分はDELETEする', async () => {
+    process.env.R2_ACCOUNT_ID = 'acct';
+    process.env.R2_ACCESS_KEY_ID = 'key';
+    process.env.R2_SECRET_ACCESS_KEY = 'secret';
+    process.env.R2_BUCKET = 'machimoki-coverage';
+
+    mockFetchCatalogAndGeoJson();
+    mockSpawnClose(0);
+    mockTilesWalk();
+    const manifest: CoverageManifest = {
+      version: 1,
+      codeVersion: CODE_VERSION,
+      inputHash: 'stale-input-hash',
+      generatedAt: '2026-09-02T00:00:00.000Z',
+      files: {
+        'tiles/4/5/6.pbf': 'old-hash',
+        'tiles/4/5/7.pbf': 'deleted-hash',
+        'coverage.json': 'old-coverage-hash',
+      },
+    };
+    vi.mocked(readFile).mockImplementation(async (path) => {
+      if (String(path).endsWith('manifest.json')) return JSON.stringify(manifest);
+      if (String(path).endsWith('.pbf')) return new Uint8Array([1, 2, 3]);
+      return '';
+    });
+
+    const result = await generateCoverage({
+      outputDir: OUTPUT_DIR,
+      geojsonUrl: GEOJSON_URL,
+      cacheFile: CACHE_FILE,
+    });
+
+    const putKeys = vi
+      .mocked(PutObjectCommand)
+      .mock.calls.map(([input]) => (input as { Key: string }).Key);
+    expect(putKeys).toContain('tiles/4/5/6.pbf');
+    expect(putKeys).toContain('coverage.json');
+    expect(putKeys).not.toContain('tiles/4/5/7.pbf');
+
+    const deleteKeys = vi
+      .mocked(DeleteObjectCommand)
+      .mock.calls.map(([input]) => (input as { Key: string }).Key);
+    expect(deleteKeys).toEqual(['tiles/4/5/7.pbf']);
+
+    expect(result.generationSkipped).toBe(false);
+    expect(result.putCount).toBe(2);
+    expect(result.deleteCount).toBe(1);
+    expect(result.skipCount).toBe(0);
+
+    // 新マニフェストには消滅分が含まれない
+    const manifestWrite = findWrite('manifest.json');
+    expect(manifestWrite).toBeDefined();
+    const newManifest = JSON.parse(String(manifestWrite![1])) as {
+      files: Record<string, string>;
+    };
+    expect(newManifest.files['tiles/4/5/7.pbf']).toBeUndefined();
+    expect(newManifest.files['tiles/4/5/6.pbf']).toBeDefined();
+  });
+
+  it('CODE_VERSIONが変わると入力不変でも再生成する', async () => {
+    process.env.R2_ACCOUNT_ID = 'acct';
+    process.env.R2_ACCESS_KEY_ID = 'key';
+    process.env.R2_SECRET_ACCESS_KEY = 'secret';
+    process.env.R2_BUCKET = 'machimoki-coverage';
+
+    mockFetchCatalogAndGeoJson();
+    mockSpawnClose(0);
+    mockTilesWalk();
+    const manifest: CoverageManifest = {
+      version: 1,
+      codeVersion: 'old-code-version',
+      inputHash: computeInputHash([catalogDataset], [makeFeature()]),
+      generatedAt: '2026-09-02T00:00:00.000Z',
+      files: { 'tiles/4/5/6.pbf': 'h1', 'coverage.json': 'h2' },
+    };
+    vi.mocked(readFile).mockImplementation(async (path) => {
+      if (String(path).endsWith('manifest.json')) return JSON.stringify(manifest);
+      if (String(path).endsWith('.pbf')) return new Uint8Array([1, 2, 3]);
+      return '';
+    });
+
+    const result = await generateCoverage({
+      outputDir: OUTPUT_DIR,
+      geojsonUrl: GEOJSON_URL,
+      cacheFile: CACHE_FILE,
+    });
+
+    expect(result.generationSkipped).toBe(false);
+    expect(spawn).toHaveBeenCalled();
+    expect(result.putCount).toBe(2);
+  });
 });
 
 describe('parseArgs', () => {
@@ -391,5 +549,88 @@ describe('normalizeMuniCode', () => {
     expect(normalizeMuniCode('123456')).toBeNull();
     expect(normalizeMuniCode(null)).toBeNull();
     expect(normalizeMuniCode(undefined)).toBeNull();
+  });
+});
+
+describe('computeDiff', () => {
+  it('新規・変更を toPut、消滅を toDelete に分類する', () => {
+    const diff = computeDiff(
+      { 'a.pbf': 'h1', 'b.pbf': 'h2', 'c.pbf': 'h3' },
+      { 'a.pbf': 'h1', 'b.pbf': 'h2-changed', 'd.pbf': 'h4' },
+    );
+    expect(diff.toPut).toEqual(['b.pbf', 'd.pbf']);
+    expect(diff.toDelete).toEqual(['c.pbf']);
+    expect(diff.skipped).toBe(1);
+  });
+
+  it('完全一致なら toPut/toDelete が空になる', () => {
+    const diff = computeDiff({ 'a.pbf': 'h1' }, { 'a.pbf': 'h1' });
+    expect(diff.toPut).toEqual([]);
+    expect(diff.toDelete).toEqual([]);
+    expect(diff.skipped).toBe(1);
+  });
+
+  it('前回マニフェストが無い場合は全件 toPut になる', () => {
+    const diff = computeDiff({}, { 'a.pbf': 'h1', 'b.pbf': 'h2' });
+    expect(diff.toPut).toEqual(['a.pbf', 'b.pbf']);
+    expect(diff.toDelete).toEqual([]);
+    expect(diff.skipped).toBe(0);
+  });
+});
+
+describe('manifest round-trip', () => {
+  it('writeManifest → readManifest で同一のマニフェストが復元できる', async () => {
+    const manifest: CoverageManifest = {
+      version: 1,
+      codeVersion: CODE_VERSION,
+      inputHash: 'abc123',
+      generatedAt: '2026-09-03T00:00:00.000Z',
+      files: { 'tiles/4/5/6.pbf': 'hash1', 'coverage.json': 'hash2' },
+    };
+    await writeManifest('/tmp/coverage/manifest.json', manifest);
+
+    const writeCall = vi
+      .mocked(writeFile)
+      .mock.calls.find(([p]) => String(p).endsWith('manifest.json'));
+    expect(writeCall).toBeDefined();
+    expect(JSON.parse(String(writeCall![1]))).toEqual(manifest);
+
+    vi.mocked(readFile).mockResolvedValueOnce(String(writeCall![1]));
+    const read = await readManifest('/tmp/coverage/manifest.json');
+    expect(read).toEqual(manifest);
+  });
+
+  it('マニフェストが無い・壊れている場合は null を返す', async () => {
+    vi.mocked(readFile).mockResolvedValueOnce('');
+    expect(await readManifest('/tmp/coverage/manifest.json')).toBeNull();
+
+    vi.mocked(readFile).mockResolvedValueOnce('not json');
+    expect(await readManifest('/tmp/coverage/manifest.json')).toBeNull();
+
+    vi.mocked(readFile).mockResolvedValueOnce(
+      JSON.stringify({ version: 1, codeVersion: 'v', inputHash: 'h', files: 'invalid' }),
+    );
+    expect(await readManifest('/tmp/coverage/manifest.json')).toBeNull();
+  });
+});
+
+describe('sha256Hex / computeInputHash', () => {
+  it('sha256Hex はSHA-256の16進文字列を返す', () => {
+    expect(sha256Hex('abc')).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
+    expect(sha256Hex(new TextEncoder().encode('abc'))).toBe(sha256Hex('abc'));
+  });
+
+  it('computeInputHash は入力が変わると変化する', () => {
+    const f = makeFeature();
+    const h1 = computeInputHash([catalogDataset], [f]);
+    const h2 = computeInputHash([{ ...catalogDataset, lod: '2' }], [f]);
+    const h3 = computeInputHash([catalogDataset], [
+      { ...f, properties: { ...f.properties, N03_007: '13102' } },
+    ]);
+    expect(h1).toMatch(/^[0-9a-f]{64}$/);
+    expect(h2).not.toBe(h1);
+    expect(h3).not.toBe(h1);
   });
 });
