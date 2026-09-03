@@ -1,63 +1,84 @@
-import { Viewer } from 'cesium'
-import CesiumMVTImageryProvider from 'cesium-mvt-imagery-provider'
+import type { Viewer } from 'cesium'
+import CesiumMVTImageryProvider, {
+  type ImageryProviderOption,
+} from 'cesium-mvt-imagery-provider'
+import { LOD_CATEGORY_STYLES, resolveLodCategory } from './coverageCategories'
 
 /**
  * PLATEAUデータカバレッジのMVTタイルレイヤー。
  *
  * サーバーサイド（Worker + R2）が配信する MVT タイルを
  * cesium-mvt-imagery-provider で描画する。
- * covered=1 の市区町村は「透明 + 青枠」、covered=0 は「半透明グレー」で塗り分ける。
- * 既存の Entity 方式（coverageOverlay.ts）と同じスタイルを踏襲する。
+ * フィーチャの properties.lods（例 "lod1,lod2"、空文字は建物なし）から
+ * 最大 LoD を求める。描画は詳細/簡易の2モードを持つ:
+ * - 詳細（ズームイン時）: なし/LoD1/LoD2/LoD3+/LoD4 の5色に塗り分ける
+ * - 簡易（ズームアウト時）: 整備済み=透明＋#4fc3f7枠、未整備=グレー塗りの二値
+ * モード切替は MvtLayerHandle.setDetailedMode で imagery レイヤーを作り直し、
+ * レイヤーの表示/非表示（setVisible）とは独立している（setVisible は作り直し後に引き継ぐ）。
+ * 色定義は coverageCategories.ts の LOD_CATEGORY_STYLES が唯一の定義元。
+ * 既存の Entity 方式（coverageOverlay.ts）は二値のまま対象外とする。
  *
  * データソース:
  *  - /api/coverage/tiles/{z}/{x}/{y}（tippecanoe で生成した MVT、layerName: coverage）
  *  - 事前に /api/coverage をプローブし、Worker/R2 が配信していない場合は例外を投げる
  */
 
-const COVERED_OUTLINE_COLOR = '#4fc3f7'
-const UNCOVERED_FILL_COLOR = 'rgba(128, 128, 128, 0.35)'
-const UNCOVERED_OUTLINE_COLOR = 'rgba(128, 128, 128, 0.5)'
-
 const COVERAGE_LAYER_NAME = 'coverage'
+
+/** 簡易モードの整備済み塗り（透明） */
+const COVERED_BINARY_FILL = 'rgba(0, 0, 0, 0)'
+/** 簡易モードの整備済み枠（従来の整備済みブルー） */
+const COVERED_BINARY_OUTLINE = '#4fc3f7'
 
 export interface MvtLayerHandle {
   /** レイヤーを削除する */
   remove: () => void
   /** 表示/非表示を切り替える */
   setVisible: (visible: boolean) => void
+  /** 詳細（LoD5色）/簡易（二値）描画を切り替える */
+  setDetailedMode: (detailed: boolean) => void
 }
 
-/** @mapbox/vector-tile の VectorTileFeature の最小構造（型定義が無いため構造的型で受ける） */
-interface MvtFeatureLike {
+/** style解決が受けるフィーチャの最小構造 */
+export interface CoverageMvtFeature {
   properties?: Record<string, unknown>
-  type?: number
 }
 
-interface MvtStyle {
+export interface CoverageMvtStyle {
   fillStyle?: string
   strokeStyle?: string
   lineWidth?: number
   lineJoin?: CanvasLineJoin
 }
 
-function isCovered(feature: MvtFeatureLike): boolean {
-  const covered = feature.properties?.covered
-  return covered === 1 || covered === '1' || covered === true
-}
-
-function coverageStyle(feature: MvtFeatureLike): MvtStyle {
-  if (isCovered(feature)) {
-    // 整備済み: 透明 + 青枠
+/**
+ * フィーチャとモードからMVT描画スタイルを解決する pure 関数（単体テスト可能）。
+ * - detailed=false（簡易・縮小時）: 整備済み=透明＋#4fc3f7枠、未整備=グレー塗り
+ * - detailed=true（詳細・拡大時）: coverageCategories の5色
+ */
+export function resolveCoverageMvtStyle(
+  feature: CoverageMvtFeature,
+  detailed: boolean,
+): CoverageMvtStyle {
+  const category = resolveLodCategory(feature.properties)
+  if (!detailed) {
+    if (category === 'none') {
+      return {
+        fillStyle: LOD_CATEGORY_STYLES.none.fill,
+        strokeStyle: LOD_CATEGORY_STYLES.none.outline,
+        lineWidth: 1,
+      }
+    }
     return {
-      fillStyle: 'rgba(0, 0, 0, 0)',
-      strokeStyle: COVERED_OUTLINE_COLOR,
+      fillStyle: COVERED_BINARY_FILL,
+      strokeStyle: COVERED_BINARY_OUTLINE,
       lineWidth: 1,
     }
   }
-  // 未整備: 半透明グレー
+  const style = LOD_CATEGORY_STYLES[category]
   return {
-    fillStyle: UNCOVERED_FILL_COLOR,
-    strokeStyle: UNCOVERED_OUTLINE_COLOR,
+    fillStyle: style.fill,
+    strokeStyle: style.outline,
     lineWidth: 1,
   }
 }
@@ -71,7 +92,8 @@ type CoverageUrlTemplate = `${`http${'s' | ''}://` | ''}${string}/{z}/{x}/{y}${s
  * 例外を投げる（呼び出し側で Entity フォールバックに切り替える）。
  */
 const COVERAGE_API_BASE =
-  (import.meta.env.VITE_COVERAGE_API_BASE as string | undefined) ??
+  (import.meta as { env?: { VITE_COVERAGE_API_BASE?: string } }).env
+    ?.VITE_COVERAGE_API_BASE ??
   (typeof window !== 'undefined' && window.location.hostname === 'localhost'
     ? 'https://machimoki.aosy.f5.si'
     : '')
@@ -82,7 +104,8 @@ function coverageApiUrl(path: string): string {
 
 export async function createCoverageMvtLayer(
   viewer: Viewer,
-  urlTemplate: string
+  urlTemplate: string,
+  initialDetailed = true,
 ): Promise<MvtLayerHandle> {
   const resolvedTemplate = urlTemplate.startsWith('http')
     ? urlTemplate
@@ -92,18 +115,24 @@ export async function createCoverageMvtLayer(
     throw new Error(`カバレッジAPIが利用できません: ${probe.status}`)
   }
 
-  const provider = new CesiumMVTImageryProvider({
-    urlTemplate: resolvedTemplate as CoverageUrlTemplate,
-    layerName: COVERAGE_LAYER_NAME,
-    style: coverageStyle,
-    // @ts-ignore - cesium-mvt-imagery-provider uses Mapbox zoom, Cesium uses level - set both for overzoom support
-    maximumZoom: 14,
-    minimumZoom: 4,
-    maximumLevel: 14,
-    minimumLevel: 4,
-  } as any)
+  let detailedMode = initialDetailed
+  let currentVisible = true
+  const buildProvider = (
+    detailed: boolean,
+  ): CesiumMVTImageryProvider => {
+    const options: ImageryProviderOption = {
+      urlTemplate: resolvedTemplate as CoverageUrlTemplate,
+      layerName: COVERAGE_LAYER_NAME,
+      style: (feature) => resolveCoverageMvtStyle(feature, detailed),
+      minimumLevel: 4,
+      maximumLevel: 14,
+    }
+    return new CesiumMVTImageryProvider(options)
+  }
 
-  const layer = viewer.imageryLayers.addImageryProvider(provider)
+  let layer = viewer.imageryLayers.addImageryProvider(
+    buildProvider(detailedMode),
+  )
 
   return {
     remove: () => {
@@ -114,7 +143,21 @@ export async function createCoverageMvtLayer(
       }
     },
     setVisible: (visible: boolean) => {
+      currentVisible = visible
       layer.show = visible
+    },
+    setDetailedMode: (detailed: boolean) => {
+      if (detailed === detailedMode) return
+      detailedMode = detailed
+      try {
+        viewer.imageryLayers.remove(layer)
+      } catch {
+        /* ignore */
+      }
+      layer = viewer.imageryLayers.addImageryProvider(
+        buildProvider(detailedMode),
+      )
+      layer.show = currentVisible
     },
   }
 }

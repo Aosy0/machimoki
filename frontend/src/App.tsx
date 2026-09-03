@@ -36,6 +36,7 @@ import type { PipelineState } from './types/pipeline'
 import { getAvailableLods, getCoverageMuniCodes, type Lod } from './lib/catalogApi'
 import { createCoverageOverlay, type CoverageOverlayHandle } from './lib/coverageOverlay'
 import { createCoverageMvtLayer } from './lib/coverageMvtLayer'
+import { LOD_CATEGORY_ORDER, LOD_CATEGORY_STYLES } from './lib/coverageCategories'
 import {
   BUILDING_OVERLAY_MIN_ZOOM,
   isBuildingOverlayZoomedIn,
@@ -54,6 +55,23 @@ import {
 import { ContourImageryProvider } from './lib/contourImageryProvider'
 
 type Tab = 'map' | 'preview' | 'viewer'
+
+/**
+ * MVTハンドルの詳細/簡易モードを反映する。
+ * Entityフォールバックには setDetailedMode が無いため存在チェックで分岐し、
+ * フォールバック時は表示/非表示（setVisible）のみ従来通りとする。
+ */
+function applyCoverageDetailedMode(
+  handle: CoverageOverlayHandle,
+  detailed: boolean,
+): void {
+  const candidate = handle as CoverageOverlayHandle & {
+    setDetailedMode?: (detailed: boolean) => void
+  }
+  if (typeof candidate.setDetailedMode === 'function') {
+    candidate.setDetailedMode(detailed)
+  }
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('map')
@@ -429,12 +447,17 @@ function ContourDebugPanel({
 
   useEffect(() => {
     coverageVisibleRef.current = coverageVisible
-    // 最終表示 = ユーザーON && ズームイン。viewer未生成時はユーザー設定のみ反映する。
+    // 表示ON/OFFはユーザー設定、詳細/簡易はズームに連動。
+    // viewer未生成時はユーザー設定のみ反映する。
     const v = (window as unknown as { __viewer?: Viewer }).__viewer
+    const handle = coverageOverlayRef.current
     if (v && !v.isDestroyed()) {
-      coverageOverlayRef.current?.setVisible(coverageVisible && isBuildingOverlayZoomedIn(v))
+      handle?.setVisible(coverageVisible)
+      if (handle) {
+        applyCoverageDetailedMode(handle, isBuildingOverlayZoomedIn(v))
+      }
     } else {
-      coverageOverlayRef.current?.setVisible(coverageVisible)
+      handle?.setVisible(coverageVisible)
     }
   }, [coverageVisible])
 
@@ -641,7 +664,8 @@ function ContourDebugPanel({
       if (disposed || viewer.isDestroyed()) return
       const handle = coverageOverlayRef.current
       if (!handle) return
-      handle.setVisible(coverageVisibleRef.current && isBuildingOverlayZoomedIn(viewer))
+      handle.setVisible(coverageVisibleRef.current)
+      applyCoverageDetailedMode(handle, isBuildingOverlayZoomedIn(viewer))
     }
     viewer.camera.moveEnd.addEventListener(applyCoverageZoomVisibility)
 
@@ -649,7 +673,11 @@ function ContourDebugPanel({
 
     async function initCoverageOverlay(): Promise<CoverageOverlayHandle | null> {
       try {
-        return await createCoverageMvtLayer(viewer, '/api/coverage/tiles/{z}/{x}/{y}')
+        return await createCoverageMvtLayer(
+          viewer,
+          '/api/coverage/tiles/{z}/{x}/{y}',
+          isBuildingOverlayZoomedIn(viewer),
+        )
       } catch (err) {
         console.warn('[Coverage] MVTレイヤー初期化失敗、Entityフォールバックへ:', err)
         if (disposed || viewer.isDestroyed()) return null
@@ -696,7 +724,8 @@ function ContourDebugPanel({
           return
         }
         coverageOverlayRef.current = handle
-        handle.setVisible(coverageVisibleRef.current && isBuildingOverlayZoomedIn(viewer))
+        handle.setVisible(coverageVisibleRef.current)
+        applyCoverageDetailedMode(handle, isBuildingOverlayZoomedIn(viewer))
       })
       .finally(() => {
         if (!disposed) setCoverageLoading(false)
@@ -1211,32 +1240,27 @@ function ContourDebugPanel({
               )}
               {coverageVisible && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <div
-                      style={{
-                        width: '18px',
-                        height: '12px',
-                        border: '2px solid #4fc3f7',
-                        borderRadius: '2px',
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>整備済みエリア</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <div
-                      style={{
-                        width: '18px',
-                        height: '12px',
-                        background: 'rgba(128,128,128,0.35)',
-                        borderRadius: '2px',
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>未整備エリア</span>
-                  </div>
+                  {LOD_CATEGORY_ORDER.map((category) => {
+                    const style = LOD_CATEGORY_STYLES[category]
+                    return (
+                      <div key={category} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div
+                          style={{
+                            width: '18px',
+                            height: '12px',
+                            background: style.fill,
+                            border: `2px solid ${style.outline}`,
+                            borderRadius: '2px',
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>{style.label}</span>
+                      </div>
+                    )
+                  })}
                   <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
-                    拡大（ズーム{BUILDING_OVERLAY_MIN_ZOOM}以上）すると建物の有無を表示します
+                    縮小時は整備済み/未整備のみ表示し、拡大（ズーム{BUILDING_OVERLAY_MIN_ZOOM}
+                    以上）でLoD別に色分けします
                   </div>
                 </div>
               )}
