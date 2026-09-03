@@ -37,6 +37,10 @@ import { getAvailableLods, getCoverageMuniCodes, type Lod } from './lib/catalogA
 import { createCoverageOverlay, type CoverageOverlayHandle } from './lib/coverageOverlay'
 import { createCoverageMvtLayer } from './lib/coverageMvtLayer'
 import {
+  BUILDING_OVERLAY_MIN_ZOOM,
+  isBuildingOverlayZoomedIn,
+} from './lib/buildingOverlayZoom'
+import {
   createGsiImageryProvider,
   loadGsiStyle,
   saveGsiStyle,
@@ -425,7 +429,13 @@ function ContourDebugPanel({
 
   useEffect(() => {
     coverageVisibleRef.current = coverageVisible
-    coverageOverlayRef.current?.setVisible(coverageVisible)
+    // 最終表示 = ユーザーON && ズームイン。viewer未生成時はユーザー設定のみ反映する。
+    const v = (window as unknown as { __viewer?: Viewer }).__viewer
+    if (v && !v.isDestroyed()) {
+      coverageOverlayRef.current?.setVisible(coverageVisible && isBuildingOverlayZoomedIn(v))
+    } else {
+      coverageOverlayRef.current?.setVisible(coverageVisible)
+    }
   }, [coverageVisible])
 
   const handleExport = useCallback(async () => {
@@ -627,6 +637,14 @@ function ContourDebugPanel({
     // カバレッジオーバーレイの初期化（MVTレイヤーを試し、失敗時はEntity方式へフォールバック）
     let disposed = false
 
+    const applyCoverageZoomVisibility = () => {
+      if (disposed || viewer.isDestroyed()) return
+      const handle = coverageOverlayRef.current
+      if (!handle) return
+      handle.setVisible(coverageVisibleRef.current && isBuildingOverlayZoomedIn(viewer))
+    }
+    viewer.camera.moveEnd.addEventListener(applyCoverageZoomVisibility)
+
     setCoverageLoading(true)
 
     async function initCoverageOverlay(): Promise<CoverageOverlayHandle | null> {
@@ -678,7 +696,7 @@ function ContourDebugPanel({
           return
         }
         coverageOverlayRef.current = handle
-        handle.setVisible(coverageVisibleRef.current)
+        handle.setVisible(coverageVisibleRef.current && isBuildingOverlayZoomedIn(viewer))
       })
       .finally(() => {
         if (!disposed) setCoverageLoading(false)
@@ -686,6 +704,9 @@ function ContourDebugPanel({
 
     return () => {
       disposed = true
+      try {
+        viewer.camera.moveEnd.removeEventListener(applyCoverageZoomVisibility)
+      } catch {}
       if (contourLayerRef.current) {
         try { viewer.imageryLayers.remove(contourLayerRef.current, true) } catch {}
         contourLayerRef.current = null
@@ -1213,6 +1234,9 @@ function ContourDebugPanel({
                       }}
                     />
                     <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>未整備エリア</span>
+                  </div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
+                    拡大（ズーム{BUILDING_OVERLAY_MIN_ZOOM}以上）すると建物の有無を表示します
                   </div>
                 </div>
               )}
