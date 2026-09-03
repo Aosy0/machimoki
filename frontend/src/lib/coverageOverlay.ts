@@ -6,11 +6,21 @@ import {
   Cartesian3,
   type Entity,
 } from 'cesium'
+import {
+  LOD_CATEGORY_STYLES,
+  maxLodToCategory,
+  parseLodsString,
+  type LodCategory,
+} from './coverageCategories'
 
 /**
- * PLATEAU整備済みエリアのカバレッジオーバーレイ。
+ * PLATEAU整備済みエリアのカバレッジオーバーレイ（Entityフォールバック）。
  *
- * 整備済み市区町村を「透明 + 薄い青枠」、未整備の市区町村を「半透明グレー」で塗り分ける。
+ * LoD付きカバレッジマップ（getCoverageDetails() の戻り
+ * Map<string, { city; pref; lods: string[] }>）を受け取り、市区町村ポリゴンを
+ * LOD_CATEGORY_STYLES（coverageCategories.ts、唯一の定義元）の5色
+ *（none/lod1/lod2/lod3plus/lod4）で塗り分ける。凡例の5色と一致させる。
+ * 後方互換のため Set<string>（整備済みコード集合）も受け付ける。
  *
  * データソース:
  *  - 市区町村ポリゴン: smartnews-smri/japan-topography
@@ -20,10 +30,6 @@ import {
 
 const MUNI_GEOJSON_URL =
   'https://raw.githubusercontent.com/smartnews-smri/japan-topography/main/data/municipality/geojson/s0001/N03-21_210101.json'
-
-const COVERED_OUTLINE_COLOR = Color.fromCssColorString('#4fc3f7')
-const UNCOVERED_FILL_COLOR = Color.GRAY.withAlpha(0.35)
-const UNCOVERED_OUTLINE_COLOR = Color.GRAY.withAlpha(0.5)
 
 const FETCH_TIMEOUT_MS = 20000
 const BATCH_SIZE = 150
@@ -135,22 +141,81 @@ async function fetchMunicipalityFeatures(): Promise<GeoJsonFeature[]> {
   return cachedMuniPromise
 }
 
+/** getCoverageDetails() の戻りと同じ形状の LoD 付きカバレッジマップ */
+export type CoverageDetailsMap = Map<string, { city: string; pref: string; lods: string[] }>
+
+/** createCoverageOverlay が受け付ける入力（LoD付きマップまたは整備済みコード集合） */
+export type CoverageOverlayInput = CoverageDetailsMap | Set<string>
+
+/** カテゴリの序列（フォールバック解決で最大 LoD 側を優先するために使用） */
+const CATEGORY_RANK: Record<LodCategory, number> = {
+  none: 0,
+  lod1: 1,
+  lod2: 2,
+  lod3plus: 3,
+  lod4: 4,
+}
+
 /**
- * 市区町村コードがカバレッジ集合に含まれるかを判定する。
- * 政令指定都市の区（例: 14101）と市本体（例: 14100）の両方を考慮する。
+ * lods 配列（例 ["lod1", "lod2"]）から最大 LoD を求める。
+ * 空・不正のみの場合は null（建物なし）を返す。
  */
-function isMuniCovered(code: string, coverage: Set<string>): boolean {
-  if (coverage.has(code)) return true
-  if (code.endsWith('00')) {
-    // 市本体のコード: いずれかの区がカバレッジに含まれていれば整備済み扱い
-    const prefix = code.slice(0, 3)
-    for (const c of coverage) {
-      if (c.startsWith(prefix)) return true
+function maxLodFromLods(lods: string[]): number | null {
+  const parsed = parseLodsString(lods.join(','))
+  if (parsed.length === 0) return null
+  return Math.max(...parsed)
+}
+
+/**
+ * 入力をコード→カテゴリのマップに正規化する。
+ * Set<string>（後方互換）は整備済みコードを lod1 扱いに変換する。
+ */
+function normalizeCoverageToCategories(input: CoverageOverlayInput): Map<string, LodCategory> {
+  const categories = new Map<string, LodCategory>()
+  if (input instanceof Set) {
+    for (const code of input) {
+      categories.set(code, 'lod1')
     }
-    return false
+    return categories
   }
-  // 区のコード: 親市本体がカバレッジに含まれていれば整備済み扱い
-  return coverage.has(code.slice(0, 3) + '00')
+  for (const [code, info] of input) {
+    categories.set(code, maxLodToCategory(maxLodFromLods(info.lods)))
+  }
+  return categories
+}
+
+/**
+ * 市区町村コードの LoD カテゴリを解決する。
+ * 政令指定都市の区（例: 14101）と市本体（例: 14100）の両方向を考慮し、
+ * 候補が複数ある場合は最大 LoD 側のカテゴリを返す。
+ */
+function resolveMuniCategory(code: string, categories: Map<string, LodCategory>): LodCategory {
+  const candidates: LodCategory[] = []
+  const direct = categories.get(code)
+  if (direct !== undefined) candidates.push(direct)
+  if (code.endsWith('00')) {
+    // 市本体のコード: いずれかの区のカテゴリがあれば候補にする
+    const prefix = code.slice(0, 3)
+    for (const [key, category] of categories) {
+      if (key !== code && key.startsWith(prefix)) candidates.push(category)
+    }
+  } else {
+    // 区のコード: 親市本体のカテゴリがあれば候補にする
+    const parent = categories.get(code.slice(0, 3) + '00')
+    if (parent !== undefined) candidates.push(parent)
+  }
+  if (candidates.length === 0) return 'none'
+  let best: LodCategory = 'none'
+  for (const candidate of candidates) {
+    if (CATEGORY_RANK[candidate] > CATEGORY_RANK[best]) best = candidate
+  }
+  return best
+}
+
+/** テスト用: 市区町村GeoJSONキャッシュをクリアする */
+export function __resetCoverageOverlayCacheForTest(): void {
+  cachedMuniFeatures = null
+  cachedMuniPromise = null
 }
 
 function extractPolygons(geometry: GeoJsonFeature['geometry']): PolygonSpec[] {
@@ -197,37 +262,47 @@ function makeHandle(viewer: Viewer, entities: Entity[]): CoverageOverlayHandle {
 /**
  * カバレッジオーバーレイを生成する。
  * 市区町村ポリゴンの取得に失敗した場合は都道府県の近似矩形で代替する。
+ * LoD付きマップ・整備済みコード集合のどちらも受け付ける（後者は後方互換）。
  */
 export async function createCoverageOverlay(
   viewer: Viewer,
-  coverage: Set<string>
+  details: CoverageDetailsMap,
+): Promise<CoverageOverlayHandle>
+export async function createCoverageOverlay(
+  viewer: Viewer,
+  coverage: Set<string>,
+): Promise<CoverageOverlayHandle>
+export async function createCoverageOverlay(
+  viewer: Viewer,
+  coverage: CoverageOverlayInput,
 ): Promise<CoverageOverlayHandle> {
+  const categories = normalizeCoverageToCategories(coverage)
   try {
     const features = await fetchMunicipalityFeatures()
-    return await buildMunicipalityOverlay(viewer, coverage, features)
+    return await buildMunicipalityOverlay(viewer, categories, features)
   } catch (err) {
     console.warn('[CoverageOverlay] 市区町村GeoJSONの取得に失敗しました。都道府県近似で表示します:', err)
   }
-  return buildPrefectureBBoxOverlay(viewer, coverage)
+  return buildPrefectureBBoxOverlay(viewer, categories)
 }
 
 async function buildMunicipalityOverlay(
   viewer: Viewer,
-  coverage: Set<string>,
+  categories: Map<string, LodCategory>,
   features: GeoJsonFeature[]
 ): Promise<CoverageOverlayHandle> {
   const entities: Entity[] = []
-  const specs: { outer: number[][]; inners: number[][][]; covered: boolean }[] = []
+  const specs: { outer: number[][]; inners: number[][][]; category: LodCategory }[] = []
 
   for (const feature of features) {
     const code = feature.properties?.N03_007
     if (!code) continue
     const polygons = extractPolygons(feature.geometry)
     if (polygons.length === 0) continue
-    const covered = isMuniCovered(code, coverage)
+    const category = resolveMuniCategory(code, categories)
     for (const poly of polygons) {
       if (poly.outer.length < 3) continue
-      specs.push({ outer: poly.outer, inners: poly.inners, covered })
+      specs.push({ outer: poly.outer, inners: poly.inners, category })
     }
   }
 
@@ -237,6 +312,7 @@ async function buildMunicipalityOverlay(
     const chunk = specs.slice(i, i + BATCH_SIZE)
     for (const spec of chunk) {
       try {
+        const style = LOD_CATEGORY_STYLES[spec.category]
         const polygonOptions: {
           hierarchy: PolygonHierarchy
           height: number
@@ -250,11 +326,9 @@ async function buildMunicipalityOverlay(
           ),
           // height: 0 を明示して地形クランプを無効化し、2Dモードでも確実に描画する
           height: 0,
-          material: spec.covered ? Color.TRANSPARENT : UNCOVERED_FILL_COLOR,
-        }
-        if (spec.covered) {
-          polygonOptions.outline = true
-          polygonOptions.outlineColor = COVERED_OUTLINE_COLOR
+          material: Color.fromCssColorString(style.fill),
+          outline: true,
+          outlineColor: Color.fromCssColorString(style.outline),
         }
         entities.push(viewer.entities.add({ polygon: polygonOptions }))
       } catch {
@@ -270,25 +344,30 @@ async function buildMunicipalityOverlay(
 
 function buildPrefectureBBoxOverlay(
   viewer: Viewer,
-  coverage: Set<string>
+  categories: Map<string, LodCategory>
 ): CoverageOverlayHandle {
   const entities: Entity[] = []
-  const coveredPrefs = new Set<string>()
-  for (const code of coverage) {
-    coveredPrefs.add(code.slice(0, 2))
+  const prefCategories = new Map<string, LodCategory>()
+  for (const [code, category] of categories) {
+    const prefCode = code.slice(0, 2)
+    const current = prefCategories.get(prefCode)
+    if (current === undefined || CATEGORY_RANK[category] > CATEGORY_RANK[current]) {
+      prefCategories.set(prefCode, category)
+    }
   }
 
   for (const [prefCode, bbox] of Object.entries(PREFECTURE_BBOXES)) {
-    const covered = coveredPrefs.has(prefCode)
+    const category = prefCategories.get(prefCode) ?? 'none'
+    const style = LOD_CATEGORY_STYLES[category]
     try {
       entities.push(
         viewer.entities.add({
           rectangle: {
             coordinates: Rectangle.fromDegrees(bbox.west, bbox.south, bbox.east, bbox.north),
             height: 0,
-            material: covered ? Color.TRANSPARENT : UNCOVERED_FILL_COLOR,
+            material: Color.fromCssColorString(style.fill),
             outline: true,
-            outlineColor: covered ? COVERED_OUTLINE_COLOR : UNCOVERED_OUTLINE_COLOR,
+            outlineColor: Color.fromCssColorString(style.outline),
           },
         })
       )
