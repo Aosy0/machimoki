@@ -26,6 +26,7 @@ describe('catalog', () => {
     expect(result).toBe('13101');
     expect(fetchSpy).toHaveBeenCalledWith(
       'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=35.6895&lon=139.6917',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -46,6 +47,27 @@ describe('catalog', () => {
 
     const { resolveMuniCode } = await import('../src/catalog');
     await expect(resolveMuniCode(35.6895, 139.6917)).rejects.toThrow('逆ジオコーディング失敗');
+  });
+
+  it('resolveMuniCode aborts the fetch signal and throws a timeout error', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    fetchSpy.mockImplementationOnce((_input, init) => {
+      capturedSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        capturedSignal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+        });
+      });
+    });
+
+    const { resolveMuniCode } = await import('../src/catalog');
+    const promise = resolveMuniCode(35.6895, 139.6917, 50);
+
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    expect(capturedSignal?.aborted).toBe(false);
+
+    await expect(promise).rejects.toThrow('逆ジオコーディングがタイムアウト');
+    expect(capturedSignal?.aborted).toBe(true);
   });
 
   it('findTilesetUrl returns the URL for a matching dataset', async () => {

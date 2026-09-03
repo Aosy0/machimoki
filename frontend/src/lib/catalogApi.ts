@@ -1,5 +1,6 @@
 const GSI_REVERSE_GEOCODER_URL = 'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress'
 const PLATEAU_CATALOG_URL = 'https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets'
+const GSI_REVERSE_GEOCODER_TIMEOUT_MS = 10_000
 
 export type Lod = 'lod1' | 'lod2' | 'lod3' | 'lod4'
 
@@ -51,9 +52,21 @@ async function fetchCatalogDatasets(): Promise<PlateauDataset[]> {
   return cachedDatasetsPromise
 }
 
-export async function resolveMuniCode(lat: number, lon: number): Promise<string> {
+export async function resolveMuniCode(
+  lat: number,
+  lon: number,
+  timeoutMs: number = GSI_REVERSE_GEOCODER_TIMEOUT_MS,
+): Promise<string> {
   const url = `${GSI_REVERSE_GEOCODER_URL}?lat=${lat}&lon=${lon}`
-  const res = await fetch(url)
+  let res: Response
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new Error('逆ジオコーディングがタイムアウトしました')
+    }
+    throw err
+  }
   if (!res.ok) throw new Error(`逆ジオコーディング失敗: ${res.status}`)
   const data: GsiReverseGeocodeResult = await res.json()
   if (!data.results?.muniCd) throw new Error('市区町村コードが取得できません')
