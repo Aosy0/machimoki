@@ -58,7 +58,7 @@ const DEFAULT_CONCURRENCY = 20;
  * tippecanoe引数・カバレッジ定義・タイル生成/差分ロジックを変更した場合は
  * 必ずこの値を更新すること。
  */
-const CODE_VERSION = '2026-09-03-1';
+const CODE_VERSION = '2026-09-03-2';
 export { CODE_VERSION };
 
 const MVT_CONTENT_TYPE = 'application/vnd.mapbox-vector-tile';
@@ -309,7 +309,9 @@ async function fetchGeoJson(
 
 /**
  * tippecanoe で enriched.geojson から MVT タイルを生成する。
+ * タイルは gzip 圧縮される（--no-tile-compression を付けない）。
  * tippecanoe が無い・失敗した場合は警告して false を返す（coverage.json 生成は続行）。
+ * 成功時は要約1行のみ、失敗時は出力の末尾30行を表示する（cronログ肥大防止）。
  */
 function runTippecanoe(enrichedPath: string, tilesDir: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -322,19 +324,29 @@ function runTippecanoe(enrichedPath: string, tilesDir: string): Promise<boolean>
         '-z14',
         '-l',
         'coverage',
-        '--no-tile-compression',
         '--drop-densest-as-needed',
         '-y',
         'covered',
         '-y',
         'lods',
         '-y',
+        'maxLod',
+        '-y',
         'N03_007',
         '-f',
         enrichedPath,
       ],
-      { stdio: 'inherit' },
+      { stdio: ['ignore', 'pipe', 'pipe'] },
     );
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
 
     child.on('error', (error) => {
       console.error(`Warning: tippecanoe を実行できませんでした: ${error.message}`);
@@ -342,9 +354,16 @@ function runTippecanoe(enrichedPath: string, tilesDir: string): Promise<boolean>
     });
     child.on('close', (code) => {
       if (code === 0) {
+        console.error(`tippecanoe: MVTタイルを生成しました（${tilesDir}）`);
         resolve(true);
       } else {
+        const output = (stderr || stdout).trim();
+        const lines = output.split(/\r?\n/).filter((line) => line.length > 0);
+        const tail = lines.slice(-30).join('\n');
         console.error(`Warning: tippecanoe が終了コード ${code} で失敗しました`);
+        if (tail) {
+          console.error(`tippecanoe 出力（末尾30行）:\n${tail}`);
+        }
         resolve(false);
       }
     });
@@ -561,9 +580,6 @@ export async function generateCoverage(
 
   // 7. tippecanoe で MVT タイル生成（失敗時は警告して続行）
   const tilesGenerated = await runTippecanoe(enrichedPath, tilesDir);
-  if (tilesGenerated) {
-    console.error(`MVTタイルを生成しました: ${tilesDir}`);
-  }
 
   // 8. coverage.json 生成
   const coverageJson = {

@@ -57,6 +57,30 @@ describe('enrichGeoJsonFeatures', () => {
     expect(result[0].properties?.lods).toBe('lod1,lod2');
   });
 
+  it('maxLod を整数で付与する（lods 文字列と併存）', () => {
+    const features = [makeFeature('13101')];
+    const catalog = [
+      makeDataset({ lod: '1' }),
+      makeDataset({ id: '2', lod: '2' }),
+      makeDataset({ id: '3', lod: '4' }),
+    ];
+
+    const result = enrichGeoJsonFeatures(features, catalog);
+
+    expect(result[0].properties?.maxLod).toBe(4);
+    expect(result[0].properties?.lods).toBe('lod1,lod2,lod4');
+  });
+
+  it('建物なしの場合は maxLod=0 になる', () => {
+    const features = [makeFeature('99999')];
+    const catalog = [makeDataset()];
+
+    const result = enrichGeoJsonFeatures(features, catalog);
+
+    expect(result[0].properties?.maxLod).toBe(0);
+    expect(result[0].properties?.lods).toBe('');
+  });
+
   it('LOD1 のみでも covered になる', () => {
     const features = [makeFeature('13101')];
     const catalog = [makeDataset({ lod: '1' })];
@@ -132,7 +156,7 @@ describe('enrichGeoJsonFeatures', () => {
     expect(result[0].properties?.lods).toBe('');
   });
 
-  it('properties が null の Feature にも covered/lods を付与する', () => {
+  it('properties が null の Feature にも covered/lods/maxLod を付与する', () => {
     const catalog = [makeDataset()];
     const features: GeoJsonFeature[] = [
       { type: 'Feature', geometry: null, properties: null },
@@ -142,6 +166,7 @@ describe('enrichGeoJsonFeatures', () => {
 
     expect(result[0].properties?.covered).toBe(0);
     expect(result[0].properties?.lods).toBe('');
+    expect(result[0].properties?.maxLod).toBe(0);
   });
 });
 

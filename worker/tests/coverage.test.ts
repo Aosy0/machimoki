@@ -66,6 +66,7 @@ describe('GET /api/coverage/tiles/:z/:x/:y', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('application/vnd.mapbox-vector-tile')
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400')
+    expect(res.headers.get('Content-Encoding')).toBe('gzip')
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(tilePbf))
   })
 

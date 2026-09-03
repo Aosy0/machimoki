@@ -9,8 +9,9 @@ import { LOD_CATEGORY_STYLES, resolveLodCategory } from './coverageCategories'
  *
  * サーバーサイド（Worker + R2）が配信する MVT タイルを
  * cesium-mvt-imagery-provider で描画する。
- * フィーチャの properties.lods（例 "lod1,lod2"、空文字は建物なし）から
- * 最大 LoD を求める。描画は詳細/簡易の2モードを持つ:
+ * フィーチャの properties.maxLod（整数 0=建物なし〜4）から最大 LoD を求める。
+ * 旧タイル互換のため lods 文字列（例 "lod1,lod2"、空文字は建物なし）にもフォールバックする。
+ * 描画は詳細/簡易の2モードを持つ:
  * - 詳細（ズームイン時）: なし/LoD1/LoD2/LoD3+/LoD4 の5色に塗り分ける
  * - 簡易（ズームアウト時）: 整備済み=透明＋#4fc3f7枠、未整備=グレー塗りの二値
  * モード切替は MvtLayerHandle.setDetailedMode で imagery レイヤーを作り直し、

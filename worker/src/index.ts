@@ -98,6 +98,7 @@ app.get('/api/coverage/tiles/:z/:x/:y', async (c) => {
   return c.body(body, 200, {
     'Content-Type': 'application/vnd.mapbox-vector-tile',
     'Cache-Control': 'public, max-age=86400',
+    'Content-Encoding': 'gzip',
   })
 })
 

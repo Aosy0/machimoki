@@ -1,8 +1,9 @@
 /**
  * PLATEAU建物有無オーバーレイ（MVT）の LoD 別カテゴリ定義。
  *
- * MVT フィーチャの properties.lods（enrich が付与する "lod1,lod2" 形式。
- * 空文字は建物なし）から最大 LoD を求め、5カテゴリに塗り分ける。
+ * MVT フィーチャの properties.maxLod（enrich が付与する整数 0=建物なし〜4）から
+ * 最大 LoD を求め、5カテゴリに塗り分ける。旧タイル互換のため
+ * lods 文字列（"lod1,lod2" 形式。空文字は建物なし）にもフォールバックする。
  * MVT描画（coverageMvtLayer.ts）と凡例（App.tsx）の双方がこの定数を参照し、
  * 色の二重定義を禁止する。
  *
@@ -97,16 +98,36 @@ function isCoveredValue(value: unknown): boolean {
 }
 
 /**
+ * MVT フィーチャの properties から最大 LoD を解決する。
+ * properties.maxLod（整数 0=建物なし〜4）を優先し、
+ * 旧タイル互換のため lods 文字列（"lod1,lod2"）にフォールバックする。
+ * 建物なし・不明は null を返す。
+ */
+export function resolveMaxLod(
+  properties: Record<string, unknown> | undefined,
+): number | null {
+  const maxLod = properties?.maxLod
+  if (typeof maxLod === 'number' && Number.isFinite(maxLod)) {
+    return maxLod
+  }
+  const lods = parseLodsString(properties?.lods)
+  if (lods.length > 0) {
+    return Math.max(...lods)
+  }
+  return null
+}
+
+/**
  * MVT フィーチャの properties から LoD カテゴリを解決する。
- * properties.lods があれば最大 LoD を使い、
- * lods 欠落時は properties.covered===1 なら lod1 扱いのフォールバックを返す。
+ * properties.maxLod（整数）を優先し、旧タイル互換のため lods 文字列にフォールバックする。
+ * どちらも無い場合は properties.covered===1 なら lod1 扱いのフォールバックを返す。
  */
 export function resolveLodCategory(
   properties: Record<string, unknown> | undefined,
 ): LodCategory {
-  const lods = parseLodsString(properties?.lods)
-  if (lods.length > 0) {
-    return maxLodToCategory(Math.max(...lods))
+  const max = resolveMaxLod(properties)
+  if (max !== null) {
+    return maxLodToCategory(max)
   }
   if (isCoveredValue(properties?.covered)) {
     return 'lod1'

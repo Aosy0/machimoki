@@ -11,6 +11,7 @@ import {
   maxLodToCategory,
   parseLodsString,
   resolveLodCategory,
+  resolveMaxLod,
 } from './coverageCategories'
 
 describe('parseLodsString', () => {
@@ -69,12 +70,37 @@ describe('maxLodToCategory', () => {
   })
 })
 
+describe('resolveMaxLod', () => {
+  it('maxLod 数値を優先する', () => {
+    assert.equal(resolveMaxLod({ maxLod: 4, lods: 'lod1,lod2' }), 4)
+    assert.equal(resolveMaxLod({ maxLod: 0, lods: 'lod1' }), 0)
+    assert.equal(resolveMaxLod({ maxLod: 2 }), 2)
+  })
+
+  it('maxLod 欠落時は lods 文字列にフォールバックする', () => {
+    assert.equal(resolveMaxLod({ lods: 'lod1,lod2' }), 2)
+    assert.equal(resolveMaxLod({ lods: '' }), null)
+  })
+
+  it('どちらも無い場合は null を返す', () => {
+    assert.equal(resolveMaxLod({}), null)
+    assert.equal(resolveMaxLod(undefined), null)
+    assert.equal(resolveMaxLod({ covered: 1 }), null)
+  })
+})
+
 describe('resolveLodCategory', () => {
   it('lods から最大LoDを解決する', () => {
     assert.equal(resolveLodCategory({ lods: 'lod1,lod2' }), 'lod2')
     assert.equal(resolveLodCategory({ lods: 'lod3' }), 'lod3plus')
     assert.equal(resolveLodCategory({ lods: 'lod1,lod2,lod3,lod4' }), 'lod4')
     assert.equal(resolveLodCategory({ lods: '' }), 'none')
+  })
+
+  it('maxLod 数値を優先してカテゴリを解決する', () => {
+    assert.equal(resolveLodCategory({ maxLod: 2, lods: 'lod1' }), 'lod2')
+    assert.equal(resolveLodCategory({ maxLod: 0, lods: 'lod1' }), 'none')
+    assert.equal(resolveLodCategory({ maxLod: 4 }), 'lod4')
   })
 
   it('lods 欠落時は covered===1 なら lod1 フォールバック', () => {

@@ -82,6 +82,27 @@ function mockFetchCatalogAndGeoJson(): MockInstance<typeof globalThis.fetch> {
 
 function mockSpawnClose(code: number): void {
   const child = {
+    stdout: { on: vi.fn() },
+    stderr: { on: vi.fn() },
+    on: vi.fn((event: string, cb: (arg?: unknown) => void) => {
+      if (event === 'close') cb(code);
+      return child;
+    }),
+  };
+  vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
+}
+
+function mockSpawnCloseWithStderr(code: number, lines: string[]): void {
+  const child = {
+    stdout: { on: vi.fn() },
+    stderr: {
+      on: vi.fn((event: string, cb: (chunk: Buffer) => void) => {
+        if (event === 'data') {
+          for (const line of lines) cb(Buffer.from(`${line}\n`));
+        }
+        return child.stderr;
+      }),
+    },
     on: vi.fn((event: string, cb: (arg?: unknown) => void) => {
       if (event === 'close') cb(code);
       return child;
@@ -92,6 +113,8 @@ function mockSpawnClose(code: number): void {
 
 function mockSpawnError(message: string): void {
   const child = {
+    stdout: { on: vi.fn() },
+    stderr: { on: vi.fn() },
     on: vi.fn((event: string, cb: (arg?: unknown) => void) => {
       if (event === 'error') cb(new Error(message));
       return child;
@@ -180,7 +203,7 @@ describe('generateCoverage CLI', () => {
     expect(fetch).toHaveBeenCalledWith(CATALOG_URL);
     expect(fetch).toHaveBeenCalledWith(GEOJSON_URL);
 
-    // enriched.geojson に covered/lods が付与される
+    // enriched.geojson に covered/lods/maxLod が付与される
     const enrichedWrite = findWrite('enriched.geojson');
     expect(enrichedWrite).toBeDefined();
     const enriched = JSON.parse(enrichedWrite![1]) as {
@@ -188,8 +211,10 @@ describe('generateCoverage CLI', () => {
     };
     expect(enriched.features[0].properties.covered).toBe(1);
     expect(enriched.features[0].properties.lods).toBe('lod1');
+    expect(enriched.features[0].properties.maxLod).toBe(1);
 
-    // tippecanoe に -y covered -y lods -y N03_007 が付与される
+    // tippecanoe に -y covered -y lods -y maxLod -y N03_007 が付与される
+    // （--no-tile-compression は外し gzip 圧縮を有効化）
     expect(spawn).toHaveBeenCalledWith(
       'tippecanoe',
       expect.arrayContaining([
@@ -199,16 +224,22 @@ describe('generateCoverage CLI', () => {
         '-z14',
         '-l',
         'coverage',
-        '--no-tile-compression',
         '-y',
         'covered',
         '-y',
         'lods',
         '-y',
+        'maxLod',
+        '-y',
         'N03_007',
         '-f',
       ]),
-      { stdio: 'inherit' },
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    expect(spawn).not.toHaveBeenCalledWith(
+      'tippecanoe',
+      expect.arrayContaining(['--no-tile-compression']),
+      expect.anything(),
     );
 
     // coverage.json に meta が含まれる
@@ -285,6 +316,23 @@ describe('generateCoverage CLI', () => {
     const coverageWrite = findWrite('coverage.json');
     expect(coverageWrite).toBeDefined();
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('tippecanoe'));
+  });
+
+  it('tippecanoe失敗時は出力の末尾30行のみ表示する', async () => {
+    mockFetchCatalogAndGeoJson();
+    const lines = Array.from({ length: 40 }, (_, i) => `tippecanoe line ${i}`);
+    mockSpawnCloseWithStderr(1, lines);
+
+    const result = await generateCoverage({
+      outputDir: OUTPUT_DIR,
+      geojsonUrl: GEOJSON_URL,
+      cacheFile: CACHE_FILE,
+    });
+
+    expect(result.tilesGenerated).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('終了コード 1'));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('tippecanoe line 10'));
+    expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining('tippecanoe line 0'));
   });
 
   it('R2環境変数が未設定の場合はアップロードをスキップする', async () => {

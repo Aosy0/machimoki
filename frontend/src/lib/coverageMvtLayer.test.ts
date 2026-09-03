@@ -70,6 +70,12 @@ describe('resolveCoverageMvtStyle 簡易モード（detailed=false）', () => {
     assert.equal(style.strokeStyle, '#4fc3f7')
   })
 
+  it('maxLod 数値でも整備済み判定になる', () => {
+    const style = resolveCoverageMvtStyle({ properties: { maxLod: 2 } }, false)
+    assert.equal(style.fillStyle, 'rgba(0, 0, 0, 0)')
+    assert.equal(style.strokeStyle, '#4fc3f7')
+  })
+
   it('未整備はグレー塗りのままになる', () => {
     for (const properties of [{ lods: '' }, {}, undefined]) {
       const style = resolveCoverageMvtStyle({ properties }, false)
@@ -90,6 +96,20 @@ describe('resolveCoverageMvtStyle 詳細モード（detailed=true）', () => {
     ] as const
     for (const { lods, fill, outline } of cases) {
       const style = resolveCoverageMvtStyle({ properties: { lods } }, true)
+      assert.equal(style.fillStyle, fill)
+      assert.equal(style.strokeStyle, outline)
+    }
+  })
+
+  it('maxLod 数値でカテゴリを解決する（旧タイル互換）', () => {
+    const cases = [
+      { maxLod: 0, fill: LOD_CATEGORY_STYLES.none.fill, outline: LOD_CATEGORY_STYLES.none.outline },
+      { maxLod: 1, fill: LOD_CATEGORY_STYLES.lod1.fill, outline: LOD_CATEGORY_STYLES.lod1.outline },
+      { maxLod: 3, fill: LOD_CATEGORY_STYLES.lod3plus.fill, outline: LOD_CATEGORY_STYLES.lod3plus.outline },
+      { maxLod: 4, fill: LOD_CATEGORY_STYLES.lod4.fill, outline: LOD_CATEGORY_STYLES.lod4.outline },
+    ] as const
+    for (const { maxLod, fill, outline } of cases) {
+      const style = resolveCoverageMvtStyle({ properties: { maxLod } }, true)
       assert.equal(style.fillStyle, fill)
       assert.equal(style.strokeStyle, outline)
     }

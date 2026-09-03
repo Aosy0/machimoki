@@ -48,7 +48,9 @@ function buildCoverageByMuni(
 }
 
 /**
- * GeoJSON Feature の properties に covered（0|1）と lods（"lod1,lod2" 形式）を付与する。
+ * GeoJSON Feature の properties に covered（0|1）、lods（"lod1,lod2" 形式）、
+ * maxLod（整数 0=建物なし〜4）を付与する。
+ * maxLod は既存の lods 文字列と併存で付与し、MVT 側では数値として扱えるようにする。
  * キーは Feature.properties.N03_007（5桁の市区町村コード）。
  * 入力の features をそのまま変更して返す。
  */
@@ -66,6 +68,7 @@ export function enrichGeoJsonFeatures(
     const properties = feature.properties ?? {};
     properties.covered = coverage ? 1 : 0;
     properties.lods = coverage ? coverage.lods.map((lod) => `lod${lod}`).join(',') : '';
+    properties.maxLod = coverage ? Math.max(...coverage.lods) : 0;
     feature.properties = properties;
   }
 
