@@ -710,6 +710,8 @@ export default function Preview3D({
     viewer.scene.globe.lightingFadeInDistance = 1000.0
     viewer.scene.globe.depthTestAgainstTerrain = true
 
+    viewer.scene.screenSpaceCameraController.maximumZoomDistance = 10000.0
+
     const directionalLight = new DirectionalLight({
       direction: new Cartesian3(0.5, -0.5, -1.0),
     })
@@ -949,7 +951,14 @@ export default function Preview3D({
       solidTerrainPrimitiveRef.current = null
     }
 
-    terrainSampleCacheRef.current = null
+    const cachedTerrainSample = terrainSampleCacheRef.current
+    if (
+      !selectionBounds ||
+      !cachedTerrainSample ||
+      !sameBounds(cachedTerrainSample.bounds, selectionBounds)
+    ) {
+      terrainSampleCacheRef.current = null
+    }
     appliedTerrainParamsRef.current = null
     terrainBoundingSphereRef.current = null
 
@@ -1086,7 +1095,12 @@ export default function Preview3D({
             return
           }
           try {
-            const tileset = await Cesium3DTileset.fromUrl(url)
+            const tileset = await Cesium3DTileset.fromUrl(url, {
+              // PLATEAUの粗い親タイルには建物がほぼ含まれないため、
+              // 距離で粗化すると建物が消える。常に最精細まで求めて全件表示する。
+              // 範囲外タイルの読込は applyClippingToTileset の update 抑止で抑える。
+              maximumScreenSpaceError: 0,
+            })
             if (cancelled) {
               for (const ts of loadedTilesets) {
                 try {
