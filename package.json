@@ -7,6 +7,7 @@
     "core"
   ],
   "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:api\"",
     "dev:frontend": "npm run dev -w frontend",
     "dev:worker": "npm run dev -w worker",
     "dev:api": "npm run dev -w core",
@@ -14,6 +15,7 @@
     "test": "npm run test -w core"
   },
   "devDependencies": {
+    "concurrently": "^9.1.2",
     "wrangler": "^4.127.0"
   }
 }
