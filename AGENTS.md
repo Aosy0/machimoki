@@ -10,21 +10,17 @@ HMRのため、毎回サーバーを再起動する必要はありません。�
 動作確認時に使用したスクリーンショットは、正しく動いていることを確認できるものだけを残し、
 バグやその他問題を確認したものは修正後に削除してください。
 
-クリッピングの動作確認を行うときは、
-選択範囲: W139.6903 S35.6997 E139.6906 N35.7000
-などの非常に狭い範囲の選択を行い、いくつかの建物だけが表示されていることを確認してください。
+## 実装について
+データの取得や描画が冗長的にならないようにしてください。
+到達不可能で死んでいるコードがないようにしてください。
 
 ## 開発サーバーの起動について
-herdrで別タブで起動/終了する。`Start-Process`/`&`/`pane split`は使わない。SKILL: `.agents/skills/herdr/SKILL.md`
+まずはすでにサーバーが起動していないか確認すること。
+サーバーの起動は別ダブなどバックグラウンドで起動すること。
 ```bash
-herdr tab create --cwd "$PWD" --label dev --no-focus  # → tab_id/pane_id取得
-herdr pane run <pane_id> "npm run dev:frontend 2>&1"
-herdr pane wait-output <pane_id> --match "ready in" --timeout 30000
-herdr pane read <pane_id> --source recent-unwrapped --lines 80  # ログ確認
-# 終了
-herdr pane send-keys <pane_id> ctrl+c
-herdr tab close <tab_id>
+npm run dev
 ```
+でWebサーバーとAPIサーバーの両方を起動できる。
 
 ## Core/CLI/API について
 
