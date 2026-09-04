@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
-import Preview3D from './components/Preview3D'
+import Preview3D, { DEFAULT_BUILDING_COLOR } from './components/Preview3D'
 import ModelViewer from './components/ModelViewer'
 import ParameterPanel from './components/ParameterPanel'
 import type { Parameters } from './components/ParameterPanel'
@@ -68,7 +68,7 @@ function App() {
     showTerrainImagery: false,
     lod: 'lod1',
     exportFormat: '3mf',
-    buildingColor: '#ffffff',
+    buildingColor: DEFAULT_BUILDING_COLOR,
     terrainColor: '#ffffff',
     upAxis: 'z-up',
     includeSpanningBuildings: false,

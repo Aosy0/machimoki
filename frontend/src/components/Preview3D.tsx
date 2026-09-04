@@ -9,10 +9,14 @@ import {
   SceneMode,
   CesiumTerrainProvider,
   ClippingPlaneCollection,
+  CustomShader,
+  CustomShaderMode,
+  CustomShaderTranslucencyMode,
   DirectionalLight,
   GridImageryProvider,
   HeadingPitchRange,
   Ion,
+  LightingModel,
   Matrix4,
   OrthographicFrustum,
   PerspectiveFrustum,
@@ -20,6 +24,8 @@ import {
   ScreenSpaceEventType,
   Cesium3DTileFeature,
   Material,
+  srgbToLinear,
+  UniformType,
 } from 'cesium'
 import type { BoundingSphere, Cartesian2, Cesium3DTile, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
@@ -55,6 +61,58 @@ import {
 } from '../lib/solidTerrain'
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
+
+// SELECTED_FEATURE_ID は Cesium が選択中の feature ID セットの変数名に展開される定義で、
+// Cesium3DTileFeature.featureId と一致する（ホバー判定に使用）。
+const HOVER_COLOR_LINEAR = new Cartesian3(
+  srgbToLinear(0xff / 255),
+  srgbToLinear(0x98 / 255),
+  srgbToLinear(0x00 / 255),
+)
+
+function colorToLinearCartesian3(color: Color): Cartesian3 {
+  return new Cartesian3(
+    srgbToLinear(color.red),
+    srgbToLinear(color.green),
+    srgbToLinear(color.blue),
+  )
+}
+
+export const DEFAULT_BUILDING_COLOR = '#f4f1ea'
+
+function createBuildingCustomShader(color: Color): CustomShader {
+  return new CustomShader({
+    mode: CustomShaderMode.REPLACE_MATERIAL,
+    lightingModel: LightingModel.PBR,
+    translucencyMode: CustomShaderTranslucencyMode.OPAQUE,
+    uniforms: {
+      u_buildingColor: {
+        type: UniformType.VEC3,
+        value: colorToLinearCartesian3(color),
+      },
+      u_hoverColor: {
+        type: UniformType.VEC3,
+        value: HOVER_COLOR_LINEAR.clone(),
+      },
+      u_hoverFeatureId: {
+        type: UniformType.INT,
+        value: -1,
+      },
+    },
+    fragmentShaderText: `
+      void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
+        vec3 base = u_buildingColor;
+        #ifdef HAS_SELECTED_FEATURE_ID
+        if (fsInput.featureIds.SELECTED_FEATURE_ID == u_hoverFeatureId) {
+          base = u_hoverColor;
+        }
+        #endif
+        material.diffuse = base;
+        material.alpha = 1.0;
+      }
+    `,
+  })
+}
 
 function clearGlobeClippingPlanes(
   globe: { clippingPlanes: ClippingPlaneCollection | undefined }
@@ -313,7 +371,7 @@ export default function Preview3D({
   terrainThickness = 10,
   flattenBottom = true,
   includeTerrain = true,
-  buildingColor = '#ffffff',
+  buildingColor = DEFAULT_BUILDING_COLOR,
   terrainColor = '#ffffff',
   scale = 1,
   onScaleChange,
@@ -452,7 +510,27 @@ export default function Preview3D({
     if (id && excludedIdsRef.current.has(id)) {
       feature.show = false
     } else {
-      feature.color = baseBuildingColor()
+      // showはクリッピング(refilterSpanning/filterTileFeatures)の判定を維持するため触らない
+      // 色は CustomShader の u_buildingColor で制御するため、
+      // feature.color は乗算が掛からない白に固定する
+      feature.color = Color.WHITE
+    }
+  }
+
+  const setHoveredFeature = (feature: Cesium3DTileFeature | null): void => {
+    const prev = hoveredFeatureRef.current
+    if (prev && prev !== feature) {
+      const ts = prev.tileset
+      if (ts.customShader) {
+        ts.customShader.setUniform('u_hoverFeatureId', -1)
+      }
+    }
+    hoveredFeatureRef.current = feature
+    if (feature && feature.featureId >= 0) {
+      const ts = feature.tileset
+      if (ts.customShader) {
+        ts.customShader.setUniform('u_hoverFeatureId', feature.featureId)
+      }
     }
   }
 
@@ -530,7 +608,7 @@ export default function Preview3D({
     forEachBuildingFeature((feature) => {
       if (getBuildingId(feature) === id && feature.show) feature.show = false
     })
-    hoveredFeatureRef.current = null
+    setHoveredFeature(null)
     commitExclusions()
   }
 
@@ -544,16 +622,12 @@ export default function Preview3D({
 
   const highlightBuildingById = (id: string | null): void => {
     const canvas = viewerRef.current?.scene.canvas
-    if (hoveredFeatureRef.current) {
-      applyStateToFeature(hoveredFeatureRef.current)
-      hoveredFeatureRef.current = null
-    }
+    setHoveredFeature(null)
     if (!id || !canvas) return
     forEachBuildingFeature((feature) => {
       if (hoveredFeatureRef.current) return
       if (getBuildingId(feature) !== id || !feature.show) return
-      feature.color = Color.fromCssColorString('#ff9800').withAlpha(0.8)
-      hoveredFeatureRef.current = feature
+      setHoveredFeature(feature)
     })
   }
 
@@ -1115,6 +1189,7 @@ export default function Preview3D({
 
             viewer!.scene.primitives.add(tileset)
             loadedTilesets.push(tileset)
+            tileset.customShader = createBuildingCustomShader(baseBuildingColor())
 
             const progressFn = (pending: number, processing: number): void => {
               pendingMapRef.current.set(tileset, pending + processing)
@@ -1461,11 +1536,12 @@ export default function Preview3D({
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain])
 
   useEffect(() => {
-    forEachBuildingFeature((feature) => {
-      const id = getBuildingId(feature)
-      if (id && excludedIdsRef.current.has(id)) return
-      feature.color = baseBuildingColor()
-    })
+    const linear = colorToLinearCartesian3(baseBuildingColor())
+    for (const ts of tilesetsRef.current) {
+      if (ts.customShader) {
+        ts.customShader.setUniform('u_buildingColor', linear)
+      }
+    }
   }, [buildingColor])
 
   useEffect(() => {
@@ -1483,15 +1559,6 @@ export default function Preview3D({
     const canvas = viewer.scene.canvas
     const handler = new ScreenSpaceEventHandler(canvas)
 
-    const clearHover = (): void => {
-      const hovered = hoveredFeatureRef.current
-      if (hovered) {
-        applyStateToFeature(hovered)
-        hoveredFeatureRef.current = null
-      }
-      canvas.style.cursor = 'default'
-    }
-
     let hoverRafScheduled = false
     handler.setInputAction((movement: { endPosition: Cartesian2 }) => {
       if (handler.isDestroyed()) return
@@ -1503,12 +1570,8 @@ export default function Preview3D({
         if (handler.isDestroyed()) return
         const feature = asTileFeature(viewer.scene.pick(pos))
         if (feature === hoveredFeatureRef.current) return
-        clearHover()
-        if (feature && feature.show) {
-          feature.color = Color.fromCssColorString('#ff9800').withAlpha(0.8)
-          hoveredFeatureRef.current = feature
-          canvas.style.cursor = 'pointer'
-        }
+        setHoveredFeature(feature && feature.show ? feature : null)
+        canvas.style.cursor = feature && feature.show ? 'pointer' : 'default'
       })
     }, ScreenSpaceEventType.MOUSE_MOVE)
 
