@@ -1,6 +1,6 @@
 /**
  * coverageMapLibre（MapLibre側カバレッジ表示）のテスト。
- * LoD5色・ズーム13連動・失敗分離（export非ブロック）を検証する。
+ * LoD5色・ズーム閾値連動・失敗分離（export非ブロック）を検証する。
  *
  * 実行方法:
  *   npx tsx --test frontend/src/lib/coverageMapLibre.test.ts
@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import {
   buildCoverageFillPaint,
   buildCoverageLinePaint,
+  coverageTilesTemplate,
   ensureCoverageLayer,
   hasCoverageLayer,
   isCoverageDetailedZoom,
@@ -20,6 +21,7 @@ import {
   COVERAGE_FILL_LAYER_ID,
   COVERAGE_LINE_LAYER_ID,
   COVERAGE_SOURCE_ID,
+  COVERAGE_TILE_URL_TEMPLATE,
   type CoverageMapLike,
 } from './coverageMapLibre'
 import { LOD_CATEGORY_STYLES } from './coverageCategories'
@@ -76,13 +78,16 @@ class FakeMap implements CoverageMapLike {
   loaded(): boolean {
     return this.isLoaded
   }
+  isStyleLoaded(): boolean {
+    return this.isLoaded
+  }
   once(): void {
     /* テストでは即時発火しない */
   }
 }
 
 describe('isCoverageDetailedZoom', () => {
-  it('ズーム13で詳細・12で簡易になる（BUILDING_OVERLAY_MIN_ZOOM連動）', () => {
+  it('閾値で詳細・未満で簡易になる（BUILDING_OVERLAY_MIN_ZOOM連動）', () => {
     assert.equal(isCoverageDetailedZoom(13, 13), true)
     assert.equal(isCoverageDetailedZoom(12.999, 13), false)
     assert.equal(isCoverageDetailedZoom(16, 13), true)
@@ -115,6 +120,20 @@ describe('buildCoverageFillPaint / buildCoverageLinePaint', () => {
     assert.ok(lineJson.includes('#4fc3f7'))
     assert.ok(lineJson.includes(LOD_CATEGORY_STYLES.none.outline))
   })
+
+  it('詳細paintが旧タイル（lods文字列のみ）でも5色に分離する', () => {
+    const json = JSON.stringify(buildCoverageFillPaint(true))
+    assert.ok(json.includes('"in"'), 'lods部分一致カスケード不足')
+    assert.ok(json.includes('lods'), 'lods参照不足')
+    for (const key of ['lod2', 'lod3plus', 'lod4'] as const) {
+      assert.ok(json.includes(LOD_CATEGORY_STYLES[key].fill), `fill不足: ${key}`)
+    }
+    const lineJson = JSON.stringify(buildCoverageLinePaint(true))
+    assert.ok(lineJson.includes('"in"'))
+    for (const key of ['lod2', 'lod3plus', 'lod4'] as const) {
+      assert.ok(lineJson.includes(LOD_CATEGORY_STYLES[key].outline), `outline不足: ${key}`)
+    }
+  })
 })
 
 describe('ensureCoverageLayer', () => {
@@ -138,7 +157,7 @@ describe('ensureCoverageLayer', () => {
     assert.equal(map.layout.get(COVERAGE_FILL_LAYER_ID)?.get('visibility'), 'none')
   })
 
-  it('未ロード時はfalseを返し何も作らない', () => {
+  it('スタイル未読込時はfalseを返し何も作らない', () => {
     const map = new FakeMap()
     map.isLoaded = false
     assert.equal(
@@ -146,6 +165,16 @@ describe('ensureCoverageLayer', () => {
       false,
     )
     assert.equal(hasCoverageLayer(map), false)
+  })
+
+  it('タイル読込中でもスタイル読込済みなら層を作る', () => {
+    const map = new FakeMap()
+    map.loaded = (): boolean => false
+    assert.equal(
+      ensureCoverageLayer(map, { visible: true, detailed: true }),
+      true,
+    )
+    assert.equal(hasCoverageLayer(map), true)
   })
 
   it('失敗時はfalseを返し例外を投げない（export非ブロック）', () => {
@@ -171,10 +200,47 @@ describe('ensureCoverageLayer', () => {
     setCoverageLayerDetailed(map, false)
     setCoverageLayerVisible(map, false)
   })
+
+  it('tiles指定時はそのURLでソースを作る（開発時は絶対ベース）', () => {
+    const map = new FakeMap()
+    const template = coverageTilesTemplate('https://machimoki.aosy.f5.si')
+    assert.equal(
+      template,
+      'https://machimoki.aosy.f5.si/api/coverage/tiles/{z}/{x}/{y}',
+    )
+    assert.equal(
+      ensureCoverageLayer(map, {
+        visible: true,
+        detailed: true,
+        tiles: template,
+      }),
+      true,
+    )
+    const source = map.sources.get(COVERAGE_SOURCE_ID) as {
+      tiles: string[]
+    }
+    assert.deepEqual(source.tiles, [template])
+  })
+
+  it('tiles未指定時は相対テンプレートを使う（本番）', () => {
+    const map = new FakeMap()
+    assert.equal(
+      coverageTilesTemplate(''),
+      '/api/coverage/tiles/{z}/{x}/{y}',
+    )
+    assert.equal(
+      ensureCoverageLayer(map, { visible: true, detailed: true }),
+      true,
+    )
+    const source = map.sources.get(COVERAGE_SOURCE_ID) as {
+      tiles: string[]
+    }
+    assert.deepEqual(source.tiles, [COVERAGE_TILE_URL_TEMPLATE])
+  })
 })
 
 describe('syncCoverageZoom', () => {
-  it('ズーム13以上で詳細paint・未満で簡易paintになる', () => {
+  it('閾値以上で詳細paint・未満で簡易paintになる', () => {
     const map = new FakeMap()
     ensureCoverageLayer(map, { visible: true, detailed: false })
     map.zoom = 14

@@ -16,10 +16,10 @@ import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
 import { getAvailableLods, type Lod } from './lib/catalogApi'
 import { LOD_CATEGORY_ORDER, LOD_CATEGORY_STYLES } from './lib/coverageCategories'
-import { BUILDING_OVERLAY_MIN_ZOOM } from './lib/buildingOverlayZoom'
 import {
   ensureCoverageLayer,
-  syncCoverageZoom,
+  setCoverageLayerVisible,
+  coverageTilesTemplate,
 } from './lib/coverageMapLibre'
 import {
   ensurePickOverlay,
@@ -220,7 +220,7 @@ function App() {
 
   useEffect(() => {
     if (!mapLibreMap) return
-    syncCoverageZoom(mapLibreMap, coverageVisible, BUILDING_OVERLAY_MIN_ZOOM)
+    setCoverageLayerVisible(mapLibreMap, coverageVisible)
   }, [mapLibreMap, coverageVisible])
 
   const handleExport = useCallback(async () => {
@@ -365,23 +365,19 @@ function App() {
     const map = mapLibreMap
     let disposed = false
 
-    const applyZoom = (): void => {
-      if (!disposed) {
-        syncCoverageZoom(map, coverageVisible, BUILDING_OVERLAY_MIN_ZOOM)
-      }
-    }
-
     const reapplyAfterStyleChange = (): void => {
       if (disposed) return
       ensureSelectionOverlay(map, selectionBounds)
       ensurePickOverlay(map, pickPoints)
       if (coverageAvailableRef.current) {
-        ensureCoverageLayer(map, { visible: coverageVisible, detailed: true })
-        syncCoverageZoom(map, coverageVisible, BUILDING_OVERLAY_MIN_ZOOM)
+        ensureCoverageLayer(map, {
+          visible: coverageVisible,
+          detailed: true,
+          tiles: coverageTilesTemplate(coverageApiBase()),
+        })
       }
     }
 
-    map.on('moveend', applyZoom)
     map.on('styledata', reapplyAfterStyleChange)
 
     if (coverageProbedMapRef.current !== map) {
@@ -395,9 +391,9 @@ function App() {
             const ok = ensureCoverageLayer(map, {
               visible: coverageVisible,
               detailed: true,
+              tiles: coverageTilesTemplate(coverageApiBase()),
             })
             coverageAvailableRef.current = ok
-            syncCoverageZoom(map, coverageVisible, BUILDING_OVERLAY_MIN_ZOOM)
           })
           .catch(() => {
             /* カバレッジ取得の失敗は表示のみ。exportはブロックしない */
@@ -407,7 +403,7 @@ function App() {
           })
       }
       try {
-        if (map.loaded()) {
+        if (map.isStyleLoaded()) {
           init()
         } else {
           map.once('load', () => {
@@ -423,11 +419,6 @@ function App() {
 
     return () => {
       disposed = true
-      try {
-        map.off('moveend', applyZoom)
-      } catch {
-        /* ignore */
-      }
       try {
         map.off('styledata', reapplyAfterStyleChange)
       } catch {
@@ -885,8 +876,7 @@ function App() {
                     )
                   })}
                   <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
-                    縮小時は整備済み/未整備のみ表示し、拡大（ズーム{BUILDING_OVERLAY_MIN_ZOOM}
-                    以上）でLoD別に色分けします
+                    整備状況をLoD別に色分けしています
                   </div>
                 </div>
               )}

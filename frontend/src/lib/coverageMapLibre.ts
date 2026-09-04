@@ -4,7 +4,7 @@
  * - vectorソース `/api/coverage/tiles/{z}/{x}/{y}`（source-layer: coverage）
  * - 色は coverageCategories.LOD_CATEGORY_STYLES のみ参照（二重定義禁止）
  * - 詳細（LoD5色）/簡易（二値）の切替はズーム閾値に連動する。
- *   閾値そのものは App が BUILDING_OVERLAY_MIN_ZOOM（=13）を渡す。
+ *   閾値そのものは App が BUILDING_OVERLAY_MIN_ZOOM（=10）を渡す。
  *   このモジュールは cesium 実行依存を持たないため node:test 可能。
  * - 失敗は false/無操作で返し、export経路をブロックしない。
  */
@@ -15,6 +15,15 @@ export const COVERAGE_FILL_LAYER_ID = 'machimoki-coverage-fill'
 export const COVERAGE_LINE_LAYER_ID = 'machimoki-coverage-line'
 export const COVERAGE_SOURCE_LAYER = 'coverage'
 export const COVERAGE_TILE_URL_TEMPLATE = '/api/coverage/tiles/{z}/{x}/{y}'
+
+/**
+ * タイルURLテンプレートを配信ベースに解決する。
+ * 開発時（localhost）はViteプロキシ先にカバレッジが無いため、
+ * AppがcoverageApiBase()と同一規則の絶対ベースを渡す。本番は''で相対のまま。
+ */
+export function coverageTilesTemplate(base: string): string {
+  return `${base}/api/coverage/tiles/{z}/{x}/{y}`
+}
 export const COVERAGE_MIN_ZOOM = 4
 export const COVERAGE_MAX_ZOOM = 14
 
@@ -38,6 +47,8 @@ export interface CoverageMapLike {
   setPaintProperty(layerId: string, name: string, value: unknown): void
   getZoom(): number
   loaded(): boolean
+  /** スタイル読込済みか。loaded()はタイル読込中もfalseになるため層追加の判定に使う。 */
+  isStyleLoaded(): unknown
   once(event: string, handler: () => void): void
 }
 
@@ -48,7 +59,7 @@ function exists(value: unknown): boolean {
 /**
  * ズーム値から詳細（LoD5色）表示かを判定する。
  * 推定不能時（null/undefined/NaN）は表示側（true）に倒してチラつきを防ぐ。
- * 既定閾値は App が BUILDING_OVERLAY_MIN_ZOOM を渡す（=13）。
+ * 既定閾値は App が BUILDING_OVERLAY_MIN_ZOOM を渡す（=10）。
  */
 export function isCoverageDetailedZoom(
   zoom: number | null | undefined,
@@ -66,7 +77,8 @@ function hasLodDataExpression(): unknown[] {
     'any',
     ['all', ['has', 'maxLod'], ['>', ['get', 'maxLod'], 0]],
     ['==', ['get', 'covered'], 1],
-    ['has', 'lods'],
+    // 未整備は lods: ''（空文字・プロパティ有り）のため has では無く非空判定する
+    ['>', ['length', ['coalesce', ['get', 'lods'], '']], 0],
   ]
 }
 
@@ -78,6 +90,41 @@ function lodMatchExpression(colors: [number, string][], fallback: string): unkno
   }
   expr.push(fallback)
   return expr
+}
+
+/**
+ * 旧タイル互換のlods文字列→色のカスケード式。
+ * lodsは "lod1,lod2" 形式のため部分一致で最大LoDを判定する（4→3→2の順）。
+ * maxLodの無い旧タイル用。新タイルは数値分岐が優先される。
+ */
+function lodStringCascadeExpression(lod4: string, lod3: string, lod2: string, lod1: string): unknown[] {
+  const lods: unknown[] = ['coalesce', ['get', 'lods'], '']
+  return [
+    'case',
+    ['in', '4', lods],
+    lod4,
+    ['in', '3', lods],
+    lod3,
+    ['in', '2', lods],
+    lod2,
+    lod1,
+  ]
+}
+
+/** 詳細色の解決式。maxLod数値を優先し、無い場合はlods文字列で判定する。 */
+function lodDetailedExpression(
+  numeric: unknown[],
+  lod4: string,
+  lod3: string,
+  lod2: string,
+  lod1: string,
+): unknown[] {
+  return [
+    'case',
+    ['all', ['has', 'maxLod'], ['>', ['get', 'maxLod'], 0]],
+    numeric,
+    lodStringCascadeExpression(lod4, lod3, lod2, lod1),
+  ]
 }
 
 /** fill-color用paint式。色はLOD_CATEGORY_STYLES由来のみ。 */
@@ -93,13 +140,19 @@ export function buildCoverageFillPaint(detailed: boolean): unknown {
   return [
     'case',
     hasLodDataExpression(),
-    lodMatchExpression(
-      [
-        [1, LOD_CATEGORY_STYLES.lod1.fill],
-        [2, LOD_CATEGORY_STYLES.lod2.fill],
-        [3, LOD_CATEGORY_STYLES.lod3plus.fill],
-        [4, LOD_CATEGORY_STYLES.lod4.fill],
-      ],
+    lodDetailedExpression(
+      lodMatchExpression(
+        [
+          [1, LOD_CATEGORY_STYLES.lod1.fill],
+          [2, LOD_CATEGORY_STYLES.lod2.fill],
+          [3, LOD_CATEGORY_STYLES.lod3plus.fill],
+          [4, LOD_CATEGORY_STYLES.lod4.fill],
+        ],
+        LOD_CATEGORY_STYLES.lod1.fill,
+      ),
+      LOD_CATEGORY_STYLES.lod4.fill,
+      LOD_CATEGORY_STYLES.lod3plus.fill,
+      LOD_CATEGORY_STYLES.lod2.fill,
       LOD_CATEGORY_STYLES.lod1.fill,
     ),
     LOD_CATEGORY_STYLES.none.fill,
@@ -119,13 +172,19 @@ export function buildCoverageLinePaint(detailed: boolean): unknown {
   return [
     'case',
     hasLodDataExpression(),
-    lodMatchExpression(
-      [
-        [1, LOD_CATEGORY_STYLES.lod1.outline],
-        [2, LOD_CATEGORY_STYLES.lod2.outline],
-        [3, LOD_CATEGORY_STYLES.lod3plus.outline],
-        [4, LOD_CATEGORY_STYLES.lod4.outline],
-      ],
+    lodDetailedExpression(
+      lodMatchExpression(
+        [
+          [1, LOD_CATEGORY_STYLES.lod1.outline],
+          [2, LOD_CATEGORY_STYLES.lod2.outline],
+          [3, LOD_CATEGORY_STYLES.lod3plus.outline],
+          [4, LOD_CATEGORY_STYLES.lod4.outline],
+        ],
+        LOD_CATEGORY_STYLES.lod1.outline,
+      ),
+      LOD_CATEGORY_STYLES.lod4.outline,
+      LOD_CATEGORY_STYLES.lod3plus.outline,
+      LOD_CATEGORY_STYLES.lod2.outline,
       LOD_CATEGORY_STYLES.lod1.outline,
     ),
     LOD_CATEGORY_STYLES.none.outline,
@@ -183,16 +242,16 @@ export function setCoverageLayerDetailed(
  */
 export function ensureCoverageLayer(
   map: CoverageMapLike,
-  options: { visible: boolean; detailed: boolean },
+  options: { visible: boolean; detailed: boolean; tiles?: string },
 ): boolean {
   try {
-    if (!map.loaded()) {
+    if (!map.isStyleLoaded()) {
       return false
     }
     if (!exists(map.getSource(COVERAGE_SOURCE_ID))) {
       map.addSource(COVERAGE_SOURCE_ID, {
         type: 'vector',
-        tiles: [COVERAGE_TILE_URL_TEMPLATE],
+        tiles: [options.tiles ?? COVERAGE_TILE_URL_TEMPLATE],
         minzoom: COVERAGE_MIN_ZOOM,
         maxzoom: COVERAGE_MAX_ZOOM,
       })
