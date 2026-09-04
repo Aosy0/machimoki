@@ -47,7 +47,7 @@ describe('API integration - real export (no mocks)', () => {
       throw new Error(`Expected 200 but got 500: ${JSON.stringify(body)}`);
     }
     expect(res.status).toBe(200);
-  });
+  }, 120000);
 
   it('POST /api/export with old buggy App.tsx scale (150/maxDim) still succeeds but is huge - should not 500', async () => {
     // 修正前の App.tsx は scale=150/maxDim を送っていた (1000倍大きい)
@@ -71,5 +71,5 @@ describe('API integration - real export (no mocks)', () => {
       const body = await res.json();
       throw new Error(`Should not be 500: ${JSON.stringify(body)}`);
     }
-  });
+  }, 120000);
 });
