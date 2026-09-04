@@ -360,6 +360,40 @@ function App() {
     setMapFailed(true)
   }, [])
 
+  // タブ復帰時に hidden だった地図・3Dビューをリサイズする。
+  // Preview3D / Map2D はマウント維持＋display切替のため、再表示直後は
+  // コンテナサイズが 0 のままになり得る。ここで resize して復元する。
+  useEffect(() => {
+    if (activeTab === 'map' && mapLibreMap) {
+      const id = requestAnimationFrame(() => {
+        try {
+          mapLibreMap.resize()
+        } catch {
+          /* ignore */
+        }
+      })
+      return () => cancelAnimationFrame(id)
+    }
+    if (activeTab === 'preview') {
+      const id = requestAnimationFrame(() => {
+        try {
+          const viewer = (window as unknown as { __cesiumViewer?: { resize?: () => void; scene?: { requestRender?: () => void } } }).__cesiumViewer
+          viewer?.resize?.()
+          viewer?.scene?.requestRender?.()
+        } catch {
+          /* ignore */
+        }
+        try {
+          window.dispatchEvent(new Event('resize'))
+        } catch {
+          /* ignore */
+        }
+      })
+      return () => cancelAnimationFrame(id)
+    }
+    return undefined
+  }, [activeTab, mapLibreMap])
+
   useEffect(() => {
     if (!mapLibreMap || activeTab !== 'map') return
     const map = mapLibreMap
@@ -554,18 +588,18 @@ function App() {
         </div>
       )}
 
-      {/* Content area */}
+      {/* Content area: マウント維持＋display切替。アンマウントするとViewer破棄で再読込になるため */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {activeTab === 'map' && (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-            }}
-          >
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            display: activeTab === 'map' ? 'block' : 'none',
+          }}
+        >
             <Map2D
               onMapReady={handleMapReady}
               onMapUnload={handleMapUnload}
@@ -882,9 +916,7 @@ function App() {
               )}
             </div>
           </div>
-        )}
-        {activeTab === 'preview' && (
-          <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+        <div style={{ display: activeTab === 'preview' ? 'flex' : 'none', width: '100%', height: '100%' }}>
             <div style={{ flex: 1, position: 'relative' }}>
               {!selectionBounds && (
                 <div
@@ -978,12 +1010,9 @@ function App() {
               availableLods={availableLods}
             />
           </div>
-        )}
-        {activeTab === 'viewer' && (
-          <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}>
+        <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, display: activeTab === 'viewer' ? 'block' : 'none' }}>
             <ModelViewer manifoldRef={manifoldRef} />
           </div>
-        )}
         <HelpPanel mode={activeTab} isOpen={helpOpen} />
       </div>
 
