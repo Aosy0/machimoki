@@ -101,12 +101,33 @@ export async function resolveMuniCode(
   return result.results.muniCd;
 }
 
+const muniCodesCache = new Map<string, string[]>();
+const muniCodesPending = new Map<string, Promise<string[]>>();
+const tilesetUrlCache = new Map<string, string>();
+
+function boundsKey(bounds: { west: number; south: number; east: number; north: number }): string {
+  const f = (n: number): string => Number(n).toFixed(6);
+  return `${f(bounds.west)},${f(bounds.south)},${f(bounds.east)},${f(bounds.north)}`;
+}
+
+export function clearCatalogCache(): void {
+  muniCodesCache.clear();
+  muniCodesPending.clear();
+  tilesetUrlCache.clear();
+}
+
 export async function resolveMuniCodes(bounds: {
   west: number;
   south: number;
   east: number;
   north: number;
 }): Promise<string[]> {
+  const key = boundsKey(bounds);
+  const cached = muniCodesCache.get(key);
+  if (cached) return [...cached];
+  const pending = muniCodesPending.get(key);
+  if (pending) return pending;
+
   const centerLat = (bounds.south + bounds.north) / 2;
   const centerLon = (bounds.west + bounds.east) / 2;
 
@@ -118,23 +139,34 @@ export async function resolveMuniCodes(bounds: {
     { lat: centerLat, lon: centerLon },
   ];
 
-  const results = await Promise.allSettled(
-    points.map(({ lat, lon }) => resolveMuniCodeWithFallback(lat, lon)),
-  );
+  const task = (async (): Promise<string[]> => {
+    const results = await Promise.allSettled(
+      points.map(({ lat, lon }) => resolveMuniCodeWithFallback(lat, lon)),
+    );
 
-  const codes = new Set<string>();
-  let anySuccess = false;
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      codes.add(result.value);
-      anySuccess = true;
+    const codes = new Set<string>();
+    let anySuccess = false;
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        codes.add(result.value);
+        anySuccess = true;
+      }
     }
-  }
 
-  if (!anySuccess) {
-    throw new Error('選択範囲の自治体コードが取得できません');
+    if (!anySuccess) {
+      throw new Error('選択範囲の自治体コードが取得できません');
+    }
+    const list = Array.from(codes);
+    muniCodesCache.set(key, list);
+    return [...list];
+  })();
+
+  muniCodesPending.set(key, task);
+  try {
+    return await task;
+  } finally {
+    if (muniCodesPending.get(key) === task) muniCodesPending.delete(key);
   }
-  return Array.from(codes);
 }
 
 async function resolveMuniCodeWithFallback(lat: number, lon: number): Promise<string> {
@@ -270,6 +302,9 @@ export async function resolveMuniCodeLocal(lat: number, lon: number): Promise<st
 }
 
 export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string> {
+  const key = `${muniCode}:${lod}`;
+  const cached = tilesetUrlCache.get(key);
+  if (cached) return cached;
   const datasets = await fetchCatalogDatasets();
   const prefCode = muniCode.slice(0, 2);
   const targetLod = lod.replace('lod', '');
@@ -292,5 +327,6 @@ export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string
     );
   }
 
+  tilesetUrlCache.set(key, candidate.url);
   return candidate.url;
 }

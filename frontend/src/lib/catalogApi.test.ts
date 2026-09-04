@@ -8,6 +8,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   resolveMuniCode,
+  resolveMuniCodes,
+  clearCatalogApiCache,
   normalizeN03Code,
   featureContainsPoint,
   findMuniCodeByPoint,
@@ -85,5 +87,38 @@ describe('N03フォールバック', () => {
     ]
     assert.equal(findMuniCodeByPoint(139.785, 35.714, features), '13108')
     assert.equal(findMuniCodeByPoint(139.0, 35.0, features), null)
+  })
+})
+
+describe('resolveMuniCodesキャッシュ', () => {
+  it('同一範囲の2回目はfetchしない', async () => {
+    const originalFetch = globalThis.fetch
+    let calls = 0
+    globalThis.fetch = (() =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({ results: { muniCd: '13101', lv01Nm: '千代田区' } }),
+      } as Response)) as typeof fetch
+
+    try {
+      clearCatalogApiCache()
+      const bounds = { west: 139.6903, south: 35.6997, east: 139.6906, north: 35.7 }
+      const first = await resolveMuniCodes(bounds)
+      calls = 0
+      globalThis.fetch = (() => {
+        calls += 1
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({ results: { muniCd: '13101', lv01Nm: '千代田区' } }),
+        } as Response)
+      }) as typeof fetch
+      const second = await resolveMuniCodes({ ...bounds })
+      assert.deepEqual(first, second)
+      assert.equal(calls, 0)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

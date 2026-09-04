@@ -307,6 +307,60 @@ describe('catalog', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(6);
   });
 
+  it('resolveMuniCodes caches results per bounds', async () => {
+    fetchSpy.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ results: { muniCd: '13101', lv01Nm: '千代田区' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    const { resolveMuniCodes, clearCatalogCache } = await import('../src/catalog');
+    clearCatalogCache();
+    const bounds = { west: 139.6903, south: 35.6997, east: 139.6906, north: 35.7 };
+    const first = await resolveMuniCodes(bounds);
+    const second = await resolveMuniCodes({ ...bounds });
+    expect(first).toEqual(second);
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
+  });
+
+  it('findTilesetUrl caches resolved URLs', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          datasets: [
+            {
+              id: '1',
+              name: '東京都千代田区建築物モデル',
+              pref: '東京都',
+              pref_code: '13',
+              city: '千代田区',
+              city_code: '13101',
+              ward: null,
+              ward_code: null,
+              type: '建築物モデル',
+              type_en: 'building',
+              url: 'https://example.com/tileset.json',
+              format: '3D Tiles',
+              lod: '1',
+              texture: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const { findTilesetUrl, clearCatalogCache } = await import('../src/catalog');
+    clearCatalogCache();
+    const first = await findTilesetUrl('13101', 'lod1');
+    const second = await findTilesetUrl('13101', 'lod1');
+    expect(first).toBe(second);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('resolveMuniCodes throws when all points fail', async () => {
     fetchSpy
       .mockResolvedValueOnce(new Response('error', { status: 500 }))
