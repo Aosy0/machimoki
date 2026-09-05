@@ -253,6 +253,69 @@ describe('createMapLibreSelectionController', () => {
     controller.destroy()
   })
 
+  it('連続2回選択できる（再選択が無視されない）', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    const selections: SelectionBounds[] = []
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (bounds: SelectionBounds): void => {
+        selections.push(bounds)
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    canvas.dispatch('mousemove', { clientX: 110, clientY: 90 })
+    globalTarget.dispatch('mouseup', {})
+    canvas.dispatch('mousedown', mouseDown(20, 20, true))
+    canvas.dispatch('mousemove', { clientX: 200, clientY: 150 })
+    globalTarget.dispatch('mouseup', {})
+    assert.equal(selections.length, 2)
+    assert.notDeepEqual(selections[0], selections[1])
+    controller.destroy()
+  })
+
+  it('mouseupの座標で確定する（最終mousemoveが古くても取りこぼさない）', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let selected: SelectionBounds | null = null
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (bounds: SelectionBounds): void => {
+        selected = bounds
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    canvas.dispatch('mousemove', { clientX: 12, clientY: 12 })
+    // UIパネル上などcanvas外で離してもmouseup座標で確定する
+    globalTarget.dispatch('mouseup', { clientX: 200, clientY: 150 })
+    assert.ok(selected)
+    const bounds = selected as unknown as SelectionBounds
+    // x=200基準のeast（139.69 + 200*0.00001 = 139.692）に届いていること
+    assert.ok(bounds.east > 139.6915)
+    controller.destroy()
+  })
+
+  it('windowのmousemoveでも追跡する（パネル上を通過しても確定する）', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let selected: SelectionBounds | null = null
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (bounds: SelectionBounds): void => {
+        selected = bounds
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    // canvasには届かずwindowにだけ届くmousemove（UIパネル上を通過した想定）
+    globalTarget.dispatch('mousemove', { clientX: 200, clientY: 150 })
+    globalTarget.dispatch('mouseup', {})
+    assert.ok(selected)
+    controller.destroy()
+  })
+
   it('destroy後はリスナーが解除される', () => {
     const { map, canvas } = createMockMap()
     const globalTarget = new FakeTarget()
@@ -263,6 +326,7 @@ describe('createMapLibreSelectionController', () => {
     })
     controller.destroy()
     assert.equal(canvas.count('mousedown'), 0)
+    assert.equal(globalTarget.count('mousemove'), 0)
     assert.equal(globalTarget.count('mouseup'), 0)
     assert.equal(globalTarget.count('keydown'), 0)
   })

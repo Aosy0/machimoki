@@ -70,10 +70,11 @@ function asSettableSource(value: unknown): SettableSource | null {
   if (typeof candidate.setData !== 'function') {
     return null
   }
-  const setData = candidate.setData as (data: unknown) => void
+  // メソッド呼び出し形式を保つ（切り離すとMapLibreのsetDataがthis喪失で例外になる）。
+  const source = candidate as { setData: (data: unknown) => void }
   return {
     setData: (data: unknown): void => {
-      setData(data)
+      source.setData(data)
     },
   }
 }

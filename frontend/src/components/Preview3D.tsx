@@ -670,6 +670,7 @@ export default function Preview3D({
   const maxTilesRef = useRef(0)
   const pendingMapRef = useRef<Map<Cesium3DTileset, number>>(new Map())
   const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
+  const progressThrottleRef = useRef(0)
   const listRafRef = useRef<number | null>(null)
 
   buildingColorRef.current = buildingColor
@@ -1254,6 +1255,7 @@ export default function Preview3D({
     registryRef.current.clear()
     progressListenersRef.current.clear()
     maxTilesRef.current = 0
+    progressThrottleRef.current = 0
     pendingMapRef.current.clear()
     setBuildingItems([])
     setListLoading(false)
@@ -1320,6 +1322,13 @@ export default function Preview3D({
 
     const bounds = selectionBounds
     let cancelled = false
+    // 矢継ぎ早の再選択で重い読み込みが多重起動しないよう、停止後に開始する。
+    // 後片付けは即時（古い表示を残さない）、loadだけ遅延させる。
+    const timer = window.setTimeout(() => {
+      if (!cancelled) {
+        void load()
+      }
+    }, 300)
 
     async function load() {
       try {
@@ -1447,6 +1456,13 @@ export default function Preview3D({
               pendingMapRef.current.set(tileset, pending + processing)
               const currentSum = Array.from(pendingMapRef.current.values()).reduce((a, b) => a + b, 0)
               const isLoading = currentSum > 0
+              // タイル毎の連続発火で再レンダーが増え地図描画を圧迫するため間引く。
+              // 完了時は必ず反映し、最大値の集計だけは毎回行う。
+              if (isLoading && performance.now() - progressThrottleRef.current < 200) {
+                if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
+                return
+              }
+              progressThrottleRef.current = performance.now()
               setListLoading(isLoading)
               if (isLoading) {
                 if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
@@ -1781,10 +1797,9 @@ export default function Preview3D({
       }
     }
 
-    load()
-
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain])

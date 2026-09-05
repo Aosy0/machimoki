@@ -216,8 +216,16 @@ export function createMapLibreSelectionController(
     overlay?.update(startPx, point)
   }
 
-  const handleMouseUp = (): void => {
+  const handleMouseUp = (e: unknown): void => {
     if (!drawing) return
+    // canvas外（UIパネル上・キャンバス外など）でmouseupした場合、canvasの
+    // mousemoveが届かずcurrentPxが古いまま残る。mouseupの座標で更新してから
+    // 確定する。座標が読めないイベントでは従来通り最終mousemoveで確定する。
+    const point = readClientPoint(e)
+    if (point && startPx) {
+      currentPx = point
+      overlay?.update(startPx, point)
+    }
     finish()
   }
 
@@ -228,6 +236,8 @@ export function createMapLibreSelectionController(
 
   canvas.addEventListener('mousedown', handleMouseDown)
   canvas.addEventListener('mousemove', handleMouseMove)
+  // ドラッグ中にUIパネル上やキャンバス外へ出ても追跡を継続するためwindowでも受信する
+  globalTarget.addEventListener('mousemove', handleMouseMove)
   globalTarget.addEventListener('mouseup', handleMouseUp)
   globalTarget.addEventListener('keydown', handleKeyDown)
 
@@ -236,6 +246,7 @@ export function createMapLibreSelectionController(
     destroy: (): void => {
       canvas.removeEventListener('mousedown', handleMouseDown)
       canvas.removeEventListener('mousemove', handleMouseMove)
+      globalTarget.removeEventListener('mousemove', handleMouseMove)
       globalTarget.removeEventListener('mouseup', handleMouseUp)
       globalTarget.removeEventListener('keydown', handleKeyDown)
       cancelDraw()

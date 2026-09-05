@@ -20,28 +20,42 @@ import {
   type OverlayMapLike,
 } from './mapSelectionLayers'
 
+/**
+ * MapLibreのGeoJSONSource相当（setDataはthisを使うプロトタイプメソッド）。
+ * 切り離し呼び出しでは例外になる実挙動を再現するための忠実なモック。
+ */
+class FakeGeoJSONSource {
+  setDataCalls: unknown[] = []
+  spec: unknown
+  failSetData = false
+  constructor(spec: unknown) {
+    this.spec = spec
+  }
+  setData(data: unknown): void {
+    if (this.failSetData) {
+      throw new Error('fake setData failure')
+    }
+    this.setDataCalls.push(data)
+  }
+}
+
 class FakeMap implements OverlayMapLike {
-  sources = new Map<string, { setDataCalls: unknown[]; spec: unknown }>()
+  sources = new Map<string, FakeGeoJSONSource>()
   layers = new Map<string, unknown>()
   failOn: string | null = null
 
   getSource(id: string): unknown {
     const entry = this.sources.get(id)
     if (!entry) return undefined
-    return {
-      setData: (data: unknown): void => {
-        if (this.failOn === 'setData') {
-          throw new Error('fake setData failure')
-        }
-        entry.setDataCalls.push(data)
-      },
-    }
+    entry.failSetData = this.failOn === 'setData'
+    // 実Mapと同様にソース実体そのものを返す（メソッド呼び出し形式を保つこと）
+    return entry
   }
   addSource(id: string, source: unknown): void {
     if (this.failOn === 'addSource') {
       throw new Error('fake addSource failure')
     }
-    this.sources.set(id, { setDataCalls: [], spec: source })
+    this.sources.set(id, new FakeGeoJSONSource(source))
   }
   getLayer(id: string): unknown {
     return this.layers.get(id)
@@ -118,6 +132,16 @@ describe('ensureSelectionOverlay', () => {
     assert.equal(entry?.setDataCalls.length, 1)
   })
 
+  it('2回目の更新内容が新しい範囲を反映する（再選択の置き換え）', () => {
+    const map = new FakeMap()
+    ensureSelectionOverlay(map, { west: 139.69, south: 35.699, east: 139.691, north: 35.7 })
+    const next = { west: 139.65, south: 35.68, east: 139.66, north: 35.69 }
+    ensureSelectionOverlay(map, next)
+    const entry = map.sources.get(SELECTION_SOURCE_ID)
+    assert.equal(entry?.setDataCalls.length, 1)
+    assert.deepEqual(entry?.setDataCalls[0], selectionBoundsToPolygon(next))
+  })
+
   it('nullで除去する（タブ切替・選択解除の復元相当）', () => {
     const map = new FakeMap()
     ensureSelectionOverlay(map, {
@@ -159,5 +183,18 @@ describe('ensurePickOverlay', () => {
     ensurePickOverlay(map, [])
     assert.equal(map.sources.size, 0)
     assert.equal(map.layers.size, 0)
+  })
+
+  it('2回目はsetDataで点群を置き換える', () => {
+    const map = new FakeMap()
+    ensurePickOverlay(map, [{ lon: 139.69, lat: 35.7 }])
+    const next = [
+      { lon: 139.7, lat: 35.71 },
+      { lon: 139.701, lat: 35.711 },
+    ]
+    ensurePickOverlay(map, next)
+    const entry = map.sources.get(PICK_SOURCE_ID)
+    assert.equal(entry?.setDataCalls.length, 1)
+    assert.deepEqual(entry?.setDataCalls[0], pickPointsToFeatureCollection(next))
   })
 })
