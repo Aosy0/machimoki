@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import Preview3D, { DEFAULT_BUILDING_COLOR } from './components/Preview3D'
-import ModelViewer from './components/ModelViewer'
 import ParameterPanel from './components/ParameterPanel'
 import type { Parameters } from './components/ParameterPanel'
 import LoadingOverlay from './components/LoadingOverlay'
@@ -32,7 +31,7 @@ import {
   parseManualCoords,
 } from './lib/mapSelectionInput'
 
-type Tab = 'map' | 'preview' | 'viewer'
+type Tab = 'map' | 'preview'
 
 /** カバレッジ配信のベースURL（coverageMvtLayerと同規則）。 */
 function coverageApiBase(): string {
@@ -53,7 +52,6 @@ function coverageApiBase(): string {
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('map')
-  const [isWasmLoading, setIsWasmLoading] = useState(true)
   const [isExporting, setIsExporting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [coverageVisible, setCoverageVisible] = useState(true)
@@ -70,13 +68,13 @@ function App() {
     exportFormat: '3mf',
     buildingColor: DEFAULT_BUILDING_COLOR,
     terrainColor: '#ffffff',
+    whiteModel: false,
     upAxis: 'z-up',
     includeSpanningBuildings: false,
   })
 
   const coverageAvailableRef = useRef(false)
   const coverageProbedMapRef = useRef<MapLibreMap | null>(null)
-  const manifoldRef = useRef<any>(null)
   const [pickPoints, setPickPoints] = useState<PickPoint[]>([])
   const [excludedBuildingIds, setExcludedBuildingIds] = useState<string[]>([])
   const [isPickMode, setIsPickMode] = useState(false)
@@ -321,32 +319,6 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    setIsWasmLoading(true)
-    console.log('[Machimoki] WASM初期化開始')
-    const timeout = setTimeout(() => {
-      console.warn('[Machimoki] WASM初期化が30秒以上挂かっています')
-    }, 30000)
-    Promise.all([import('manifold-3d/lib/wasm.js'), import('manifold-3d/manifold.wasm?url')])
-      .then(async ([wasmMod, wasmUrlMod]) => {
-        const wasmUrl = (wasmUrlMod as unknown as { default: string }).default
-        console.log('[Machimoki] manifold-3dモジュール読み込み完了', wasmUrl)
-        wasmMod.setWasmUrl(wasmUrl)
-        const wasm = await wasmMod.getManifoldModule()
-        console.log('[Machimoki] WASM setup()完了')
-        manifoldRef.current = wasm
-        setIsWasmLoading(false)
-      })
-      .catch((err: unknown) => {
-        console.error('[Machimoki] WASM初期化エラー:', err)
-        setIsWasmLoading(false)
-        setErrorMessage(err instanceof Error ? `WASM初期化失敗: ${err.message}` : 'WASM初期化に失敗しました')
-      })
-      .finally(() => {
-        clearTimeout(timeout)
-      })
-  }, [])
-
   const handleMapReady = useCallback((map: MapLibreMap) => {
     setMapFailed(false)
     setMapLibreMap(map)
@@ -524,7 +496,6 @@ function App() {
           {([
             ['map', '範囲選択'],
             ['preview', '3Dプレビュー'],
-            ['viewer', 'モデルビューワー'],
           ] as const).map(([tab, label]) => (
             <button
               key={tab}
@@ -973,7 +944,6 @@ function App() {
               <Preview3D
                 selectionBounds={selectionBounds}
                 lod={parameters.lod}
-                manifoldRef={manifoldRef}
                 onPipelineStateChange={setPipelineState}
                 showTerrainImagery={parameters.showTerrainImagery}
                 terrainThickness={parameters.terrainThickness}
@@ -981,6 +951,7 @@ function App() {
                 includeTerrain={parameters.includeTerrain}
                 buildingColor={parameters.buildingColor}
                 terrainColor={parameters.terrainColor}
+                whiteModel={parameters.whiteModel}
                 scale={scale}
                 onScaleChange={setScale}
                 includeSpanningBuildings={parameters.includeSpanningBuildings}
@@ -1010,13 +981,8 @@ function App() {
               availableLods={availableLods}
             />
           </div>
-        <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, display: activeTab === 'viewer' ? 'block' : 'none' }}>
-            <ModelViewer manifoldRef={manifoldRef} />
-          </div>
         <HelpPanel mode={activeTab} isOpen={helpOpen} />
       </div>
-
-      <LoadingOverlay message="WASMを初期化中..." visible={isWasmLoading && activeTab === 'map'} />
 
       <ErrorToast
         message={displayErrorMessage}

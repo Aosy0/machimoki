@@ -1,7 +1,7 @@
 import React from 'react'
 
 interface HelpPanelProps {
-  mode: 'map' | 'preview' | 'viewer'
+  mode: 'map' | 'preview'
   isOpen: boolean
 }
 
@@ -18,13 +18,7 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ mode, isOpen }) => {
     'スクロール: ズーム',
   ]
 
-  const viewerControls = [
-    '左ドラッグ: 視点回転',
-    '右ドラッグ: 平行移動',
-    'スクロール: ズーム',
-  ]
-
-  const controls = mode === 'map' ? mapControls : mode === 'viewer' ? viewerControls : previewControls
+  const controls = mode === 'map' ? mapControls : previewControls
 
   if (!isOpen) return null
 

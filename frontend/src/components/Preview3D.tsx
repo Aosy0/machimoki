@@ -3,6 +3,7 @@ import {
   Viewer,
   Cesium3DTileset,
   Color,
+  Cartesian2,
   Cartesian3,
   Cartographic,
   Math as CesiumMath,
@@ -27,7 +28,7 @@ import {
   srgbToLinear,
   UniformType,
 } from 'cesium'
-import type { BoundingSphere, Cartesian2, Cesium3DTile, Primitive, TerrainProvider } from 'cesium'
+import type { BoundingSphere, Cesium3DTile, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
 // Ionを明示的に無効化（Ionトークン不要で動作させる）
@@ -79,6 +80,7 @@ function colorToLinearCartesian3(color: Color): Cartesian3 {
 }
 
 export const DEFAULT_BUILDING_COLOR = '#f4f1ea'
+const WHITE_MODEL_AMBIENT_BOOST = 0.65
 
 function createBuildingCustomShader(color: Color): CustomShader {
   return new CustomShader({
@@ -98,6 +100,10 @@ function createBuildingCustomShader(color: Color): CustomShader {
         type: UniformType.INT,
         value: -1,
       },
+      u_ambientBoost: {
+        type: UniformType.FLOAT,
+        value: 0.0,
+      },
     },
     fragmentShaderText: `
       void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
@@ -108,6 +114,9 @@ function createBuildingCustomShader(color: Color): CustomShader {
         }
         #endif
         material.diffuse = base;
+        if (u_ambientBoost > 0.0) {
+          material.emissive = base * u_ambientBoost;
+        }
         material.alpha = 1.0;
       }
     `,
@@ -118,6 +127,212 @@ function clearGlobeClippingPlanes(
   globe: { clippingPlanes: ClippingPlaneCollection | undefined }
 ): void {
   globe.clippingPlanes = undefined
+}
+
+interface WhiteModelSaved {
+  fogDensity: number | null
+  fogEnabled: boolean | null
+  shadows: boolean | null
+  aoEnabled: boolean | null
+  aoUniforms: Record<string, number | boolean> | null
+  imageryBrightness: number | null
+  imagerySaturation: number | null
+  tilesetOriginals: WeakMap<object, { imageBasedLightingFactor?: Cartesian2; lightColor?: Cartesian3 }>
+}
+
+function saveTilesetOriginal(
+  ts: Cesium3DTileset,
+  saved: WhiteModelSaved | undefined,
+): void {
+  if (!saved) return
+  if (saved.tilesetOriginals.has(ts as object)) return
+  try {
+    const t = ts as unknown as {
+      imageBasedLightingFactor?: Cartesian2
+      lightColor?: Cartesian3
+    }
+    saved.tilesetOriginals.set(ts as object, {
+      imageBasedLightingFactor: t.imageBasedLightingFactor?.clone?.() ?? t.imageBasedLightingFactor,
+      lightColor: t.lightColor?.clone?.() ?? t.lightColor,
+    })
+  } catch {
+    void 0
+  }
+}
+
+function applyWhiteModelToTileset(
+  ts: Cesium3DTileset,
+  enabled: boolean,
+  saved?: WhiteModelSaved,
+): void {
+  try {
+    const t = ts as unknown as {
+      imageBasedLightingFactor?: Cartesian2
+      lightColor?: Cartesian3
+    }
+    if (enabled) {
+      saveTilesetOriginal(ts, saved)
+      if ('imageBasedLightingFactor' in ts) {
+        t.imageBasedLightingFactor = new Cartesian2(1.2, 1.2)
+      }
+      if ('lightColor' in ts) {
+        t.lightColor = new Cartesian3(1.1, 1.05, 1.0)
+      }
+      return
+    }
+    // OFF時はONで保存した元の値だけを復元する。保存がなければ何も触らない
+    // （機能実装前の描画 = Cesium既定値を維持するため）。
+    if (!saved) return
+    const original = saved.tilesetOriginals.get(ts as object)
+    if (!original) return
+    if ('imageBasedLightingFactor' in ts && original.imageBasedLightingFactor !== undefined) {
+      t.imageBasedLightingFactor = original.imageBasedLightingFactor
+    }
+    if ('lightColor' in ts && original.lightColor !== undefined) {
+      t.lightColor = original.lightColor
+    }
+    saved.tilesetOriginals.delete(ts as object)
+  } catch {
+    void 0
+  }
+}
+
+function applyWhiteModelLook(
+  viewer: Viewer,
+  enabled: boolean,
+  imagery: { current: { brightness: number; saturation: number } | null },
+  saved: WhiteModelSaved,
+): void {
+  if (!enabled) {
+    try {
+      if (saved.shadows !== null) {
+        viewer.shadows = saved.shadows
+        saved.shadows = null
+      } else {
+        viewer.shadows = true
+      }
+    } catch {
+      void 0
+    }
+    try {
+      const stages = viewer.scene.postProcessStages as unknown as {
+        ambientOcclusion?: {
+          enabled: boolean
+          uniforms: Record<string, number | boolean>
+        }
+      }
+      const ao = stages?.ambientOcclusion
+      if (ao && saved.aoEnabled !== null) {
+        ao.enabled = saved.aoEnabled
+        if (saved.aoUniforms) {
+          for (const [key, value] of Object.entries(saved.aoUniforms)) {
+            try {
+              ao.uniforms[key] = value
+            } catch {
+              void 0
+            }
+          }
+        }
+        saved.aoEnabled = null
+        saved.aoUniforms = null
+      }
+    } catch {
+      void 0
+    }
+    try {
+      const fog = viewer.scene.fog
+      if (fog) {
+        if (saved.fogEnabled !== null && typeof (fog as { enabled?: unknown }).enabled === 'boolean') {
+          fog.enabled = saved.fogEnabled
+        }
+        if (saved.fogDensity !== null && typeof fog.density === 'number') {
+          fog.density = saved.fogDensity
+        }
+        saved.fogEnabled = null
+        saved.fogDensity = null
+      }
+    } catch {
+      void 0
+    }
+    try {
+      const layer = imagery.current
+      if (layer) {
+        if (saved.imageryBrightness !== null) {
+          layer.brightness = saved.imageryBrightness
+          saved.imageryBrightness = null
+        }
+        if (saved.imagerySaturation !== null) {
+          layer.saturation = saved.imagerySaturation
+          saved.imagerySaturation = null
+        }
+      }
+    } catch {
+      void 0
+    }
+    return
+  }
+  try {
+    if (saved.shadows === null) {
+      saved.shadows = viewer.shadows
+    }
+    viewer.shadows = false
+  } catch {
+    void 0
+  }
+  try {
+    const stages = viewer.scene.postProcessStages as unknown as {
+      ambientOcclusion?: {
+        enabled: boolean
+        uniforms: Record<string, number | boolean>
+      }
+    }
+    const ao = stages?.ambientOcclusion
+    if (ao) {
+      if (saved.aoEnabled === null) {
+        saved.aoEnabled = ao.enabled
+        saved.aoUniforms = { ...ao.uniforms }
+      }
+      ao.enabled = true
+      ao.uniforms['intensity'] = 2.0
+      ao.uniforms['bias'] = 0.1
+      ao.uniforms['lengthCap'] = 0.03
+      ao.uniforms['stepSize'] = 1.0
+      ao.uniforms['blurStepSize'] = 0.86
+      ao.uniforms['ambientOcclusionOnly'] = false
+    }
+  } catch {
+    void 0
+  }
+  try {
+    const fog = viewer.scene.fog
+    if (fog) {
+      if (saved.fogEnabled === null && typeof (fog as { enabled?: unknown }).enabled === 'boolean') {
+        saved.fogEnabled = fog.enabled as boolean
+      }
+      if (saved.fogDensity === null && typeof fog.density === 'number') {
+        saved.fogDensity = fog.density
+      }
+      fog.enabled = true
+      fog.density = 0.00045
+    }
+  } catch {
+    void 0
+  }
+  try {
+    const layer = imagery.current
+    if (layer) {
+      if (saved.imageryBrightness === null) {
+        saved.imageryBrightness = layer.brightness
+      }
+      if (saved.imagerySaturation === null) {
+        saved.imagerySaturation = layer.saturation
+      }
+      layer.brightness = 1.5
+      layer.saturation = 0.2
+    }
+  } catch {
+    void 0
+  }
 }
 
 function applyContour(viewer: Viewer, style: GsiTileStyle): void {
@@ -346,7 +561,6 @@ function sameBounds(a: SelectionBounds, b: SelectionBounds): boolean {
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
   lod: Lod
-  manifoldRef?: React.MutableRefObject<any>
   onPipelineStateChange?: (state: PipelineState) => void
   showTerrainImagery?: boolean
   terrainThickness?: number
@@ -354,6 +568,7 @@ interface Preview3DProps {
   includeTerrain?: boolean
   buildingColor?: string
   terrainColor?: string
+  whiteModel?: boolean
   scale?: number
   onScaleChange?: (newScale: number) => void
   includeSpanningBuildings?: boolean
@@ -365,7 +580,6 @@ interface Preview3DProps {
 export default function Preview3D({
   selectionBounds,
   lod,
-  manifoldRef: _manifoldRef,
   onPipelineStateChange,
   showTerrainImagery = false,
   terrainThickness = 10,
@@ -373,6 +587,7 @@ export default function Preview3D({
   includeTerrain = true,
   buildingColor = DEFAULT_BUILDING_COLOR,
   terrainColor = '#ffffff',
+  whiteModel = false,
   scale = 1,
   onScaleChange,
   includeSpanningBuildings = false,
@@ -417,6 +632,17 @@ export default function Preview3D({
   const tileLoadHandlerRef = useRef<((tile: any) => void) | null>(null)
   const onExcludedChangeRef = useRef(onExcludedBuildingIdsChange)
   const buildingColorRef = useRef(buildingColor)
+  const whiteModelRef = useRef(whiteModel)
+  const whiteModelSavedRef = useRef<WhiteModelSaved>({
+    fogDensity: null,
+    fogEnabled: null,
+    shadows: null,
+    aoEnabled: null,
+    aoUniforms: null,
+    imageryBrightness: null,
+    imagerySaturation: null,
+    tilesetOriginals: new WeakMap(),
+  })
   const registryRef = useRef<Map<string, BuildingListItem>>(new Map())
   const [excludedCount, setExcludedCount] = useState(0)
   const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
@@ -433,6 +659,7 @@ export default function Preview3D({
   const listRafRef = useRef<number | null>(null)
 
   buildingColorRef.current = buildingColor
+  whiteModelRef.current = whiteModel
   onExcludedChangeRef.current = onExcludedBuildingIdsChange
 
   const baseBuildingColor = (): Color => Color.fromCssColorString(buildingColorRef.current)
@@ -775,6 +1002,7 @@ export default function Preview3D({
       skyBox: false,
       skyAtmosphere: false,
       baseLayer: false,
+      shadows: !whiteModelRef.current,
     })
 
     viewer.scene.backgroundColor = Color.fromCssColorString('#0d1117')
@@ -790,6 +1018,8 @@ export default function Preview3D({
       direction: new Cartesian3(0.5, -0.5, -1.0),
     })
     viewer.scene.light = directionalLight
+
+    applyWhiteModelLook(viewer, whiteModelRef.current, gsiLayerRef, whiteModelSavedRef.current)
 
     // 直接配信の quantized-mesh (Ion不要) のみ使用
     const directTerrainUrl = (import.meta.env.VITE_TERRAIN_URL as string | undefined) ?? 'https://tile.plateauview.mlit.go.jp/terrain'
@@ -956,6 +1186,9 @@ export default function Preview3D({
     gsiLayerRef.current = viewer.scene.globe.imageryLayers.addImageryProvider(
       createGsiImageryProvider(gsiStyle)
     )
+    if (whiteModelRef.current) {
+      applyWhiteModelLook(viewer, true, gsiLayerRef, whiteModelSavedRef.current)
+    }
     applyContour(viewer, gsiStyle)
   }, [gsiStyle])
 
@@ -1190,6 +1423,11 @@ export default function Preview3D({
             viewer!.scene.primitives.add(tileset)
             loadedTilesets.push(tileset)
             tileset.customShader = createBuildingCustomShader(baseBuildingColor())
+            tileset.customShader.setUniform(
+              'u_ambientBoost',
+              whiteModelRef.current ? WHITE_MODEL_AMBIENT_BOOST : 0.0,
+            )
+            applyWhiteModelToTileset(tileset, whiteModelRef.current, whiteModelSavedRef.current)
 
             const progressFn = (pending: number, processing: number): void => {
               pendingMapRef.current.set(tileset, pending + processing)
@@ -1543,6 +1781,19 @@ export default function Preview3D({
       }
     }
   }, [buildingColor])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    applyWhiteModelLook(viewer, whiteModel, gsiLayerRef, whiteModelSavedRef.current)
+    for (const ts of tilesetsRef.current) {
+      applyWhiteModelToTileset(ts, whiteModel, whiteModelSavedRef.current)
+      if (ts.customShader) {
+        ts.customShader.setUniform('u_ambientBoost', whiteModel ? WHITE_MODEL_AMBIENT_BOOST : 0.0)
+      }
+    }
+    viewer.scene.requestRender()
+  }, [whiteModel])
 
   useEffect(() => {
     const viewer = viewerRef.current

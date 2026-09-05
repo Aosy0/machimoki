@@ -10,6 +10,7 @@ export interface Parameters {
   exportFormat: '3mf' | 'stl' | 'machimoki'
   buildingColor: string
   terrainColor: string
+  whiteModel: boolean
   upAxis: 'z-up' | 'y-up'
   includeSpanningBuildings: boolean
 }
@@ -128,6 +129,22 @@ function ParameterPanel({ parameters, onChange, onExport, availableLods = ['lod1
               }}
             />
           </div>
+        </div>
+
+        {/* Display Mode */}
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+          <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>表示モード</h4>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '4px' }}>
+            <input
+              type="checkbox"
+              checked={parameters.whiteModel}
+              onChange={(e) => handleChange('whiteModel', e.target.checked)}
+            />
+            <span style={{ fontSize: '14px' }}>白模型レンダリング</span>
+          </label>
+          <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '0 0 0 26px' }}>
+            AO・白い下地で模型らしく表示します（実験的）
+          </p>
         </div>
 
         {/* Export Format */}
