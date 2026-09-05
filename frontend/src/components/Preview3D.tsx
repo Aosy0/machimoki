@@ -575,6 +575,7 @@ interface Preview3DProps {
   pickPoints?: Array<{ lon: number; lat: number }>
   excludedBuildingIds?: string[]
   onExcludedBuildingIdsChange?: (ids: string[]) => void
+  isDevMode?: boolean
 }
 
 export default function Preview3D({
@@ -594,6 +595,7 @@ export default function Preview3D({
   pickPoints,
   excludedBuildingIds,
   onExcludedBuildingIdsChange,
+  isDevMode = false,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -614,8 +616,20 @@ export default function Preview3D({
   const [contourDebug, setContourDebug] = useState<ContourDebugInfo | null>(null)
   const [contourDebugCollapsed, setContourDebugCollapsed] = useState(false)
   useEffect(() => {
-    ;(window as any).__terrainDebug = debugInfo
-  }, [debugInfo])
+    if (isDevMode) {
+      ;(window as any).__terrainDebug = debugInfo
+    } else {
+      try {
+        delete (window as any).__terrainDebug
+      } catch {
+        void 0
+      }
+    }
+  }, [debugInfo, isDevMode])
+  const isDevModeRef = useRef(isDevMode)
+  useEffect(() => {
+    isDevModeRef.current = isDevMode
+  }, [isDevMode])
   const isOrthographicRef = useRef(false)
   const toggleProjectionRef = useRef<(() => void) | null>(null)
   const applyPresetViewRef = useRef<
@@ -1050,7 +1064,7 @@ export default function Preview3D({
     let contourDebugRaf = 0
     let lastContourDebugJson = ''
     const updateContourDebug = () => {
-      if (!viewer.isDestroyed()) {
+      if (!viewer.isDestroyed() && isDevModeRef.current) {
         const info = collectContourDebugInfo(viewer, gsiStyleRef.current)
         const json = JSON.stringify(info)
         if (json !== lastContourDebugJson) {
@@ -1667,7 +1681,9 @@ export default function Preview3D({
             // shift後はキャッシュを更新（参照は同じだが明示）
             terrainSampleCacheRef.current = sample!
           }
-          ;(window as any).__terrainSample = sample
+          if (isDevModeRef.current) {
+            ;(window as any).__terrainSample = sample
+          }
           const params = latestTerrainParamsRef.current
           const solidTerrain = buildSolidTerrainPrimitive(sample!, {
             terrainThickness: params.terrainThickness,
@@ -2022,7 +2038,7 @@ export default function Preview3D({
           ))}
         </div>
       </div>
-      {debugInfo && (
+      {isDevMode && debugInfo && (
         <div
           data-testid="terrain-debug-info"
           style={{
@@ -2043,11 +2059,13 @@ export default function Preview3D({
           {`地形: ${debugInfo.isFallback ? 'フォールバック(平坦)' : '正常'} | minZ ${debugInfo.minTopHeight.toFixed(2)}m | ばらつき ${debugInfo.variance.toFixed(4)} | 建物最下 ${debugInfo.buildingMinY?.toFixed(2) ?? '--'}m | 補正 ${debugInfo.delta?.toFixed(2) ?? '0'}m | ${debugInfo.terrainPrimitive ? '表示中' : '非表示'}`}
         </div>
       )}
-      <ContourDebugPanel
-        info={contourDebug}
-        collapsed={contourDebugCollapsed}
-        onToggle={() => setContourDebugCollapsed((v) => !v)}
-      />
+      {isDevMode && (
+        <ContourDebugPanel
+          info={contourDebug}
+          collapsed={contourDebugCollapsed}
+          onToggle={() => setContourDebugCollapsed((v) => !v)}
+        />
+      )}
       {coverageWarning && (
         <div
           data-testid="coverage-warning"
@@ -2117,8 +2135,8 @@ export default function Preview3D({
           listLoading={listLoading}
           loadingDetail={buildingLoadDetail}
           loadingProgress={buildingLoadProgress}
-          totalTiles={totalTiles}
-          loadedTiles={loadedTiles}
+          totalTiles={isDevMode ? totalTiles : null}
+          loadedTiles={isDevMode ? loadedTiles : null}
           onExclude={excludeBuildingById}
           onRestore={restoreBuildingById}
           onHoverItem={highlightBuildingById}

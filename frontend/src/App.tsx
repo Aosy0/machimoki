@@ -543,7 +543,7 @@ function App() {
       </div>
 
       {/* Selection bounds bar */}
-      {selectionBounds && activeTab === 'map' && (
+      {isDevMode && selectionBounds && activeTab === 'map' && (
         <div
           style={{
             padding: '8px 12px',
@@ -666,11 +666,12 @@ function App() {
                   <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>
                     ピック: {pickPoints.length}件
                   </div>
-                  {pickPoints.map((p, idx) => (
-                    <div key={idx} style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
-                      {idx + 1}. lon {p.lon.toFixed(5)}, lat {p.lat.toFixed(5)}
-                    </div>
-                  ))}
+                  {isDevMode &&
+                    pickPoints.map((p, idx) => (
+                      <div key={idx} style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+                        {idx + 1}. lon {p.lon.toFixed(5)}, lat {p.lat.toFixed(5)}
+                      </div>
+                    ))}
                   <button
                     onClick={clearPickPoints}
                     style={{
@@ -958,6 +959,7 @@ function App() {
                 pickPoints={pickPoints}
                 excludedBuildingIds={excludedBuildingIds}
                 onExcludedBuildingIdsChange={setExcludedBuildingIds}
+                isDevMode={isDevMode}
               />
               <LoadingOverlay
                 message={pipelineState.message}
