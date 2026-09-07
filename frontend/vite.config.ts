@@ -27,6 +27,11 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+    watch: {
+      // リポジトリ直下の .codegraph はジャンクションで stat に失敗し
+      // 監視プロセスがクラッシュするため除外する
+      ignored: ['**/.codegraph/**'],
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
