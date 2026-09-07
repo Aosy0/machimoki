@@ -95,7 +95,10 @@ type CoverageUrlTemplate = `${`http${'s' | ''}://` | ''}${string}/{z}/{x}/{y}${s
 const COVERAGE_API_BASE =
   (import.meta as { env?: { VITE_COVERAGE_API_BASE?: string } }).env
     ?.VITE_COVERAGE_API_BASE ??
-  (typeof window !== 'undefined' && window.location.hostname === 'localhost'
+  (typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.port === '5173')
     ? 'https://machimoki.aosy.f5.si'
     : '')
 

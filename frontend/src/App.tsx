@@ -43,7 +43,9 @@ function coverageApiBase(): string {
   }
   if (
     typeof window !== 'undefined' &&
-    window.location.hostname === 'localhost'
+    (window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.port === '5173')
   ) {
     return 'https://machimoki.aosy.f5.si'
   }
@@ -375,13 +377,12 @@ function App() {
       if (disposed) return
       ensureSelectionOverlay(map, selectionBounds)
       ensurePickOverlay(map, pickPoints)
-      if (coverageAvailableRef.current) {
-        ensureCoverageLayer(map, {
-          visible: coverageVisible,
-          detailed: true,
-          tiles: coverageTilesTemplate(coverageApiBase()),
-        })
-      }
+      const coverageReady = ensureCoverageLayer(map, {
+        visible: coverageVisible,
+        detailed: true,
+        tiles: coverageTilesTemplate(coverageApiBase()),
+      })
+      coverageAvailableRef.current = coverageReady
     }
 
     map.on('styledata', reapplyAfterStyleChange)
@@ -391,6 +392,7 @@ function App() {
       coverageAvailableRef.current = false
       setCoverageLoading(true)
       const init = (): void => {
+        if (!map.isStyleLoaded()) return
         fetch(`${coverageApiBase()}/api/coverage`)
           .then((res) => {
             if (!res.ok || disposed) return
@@ -418,6 +420,9 @@ function App() {
             }
           })
         }
+        map.once('idle', () => {
+          if (!disposed) init()
+        })
       } catch {
         setCoverageLoading(false)
       }
