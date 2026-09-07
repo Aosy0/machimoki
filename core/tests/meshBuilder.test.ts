@@ -69,6 +69,8 @@ vi.mock('../src/catalog', () => ({
   resolveMuniCode: vi.fn(),
   resolveMuniCodes: vi.fn(),
   findTilesetUrl: vi.fn(),
+  findBestTilesetUrl: vi.fn(),
+  getMuniAvailableLods: vi.fn(),
 }));
 
 const bounds: Bounds = {
@@ -153,12 +155,15 @@ describe('meshBuilder', () => {
 
   beforeEach(async () => {
     const { Cesium3DTileset } = await import('cesium');
-    const { resolveMuniCodes, findTilesetUrl } = await import('../src/catalog');
+    const { resolveMuniCodes, findTilesetUrl, findBestTilesetUrl } = await import('../src/catalog');
 
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockReset();
     (Cesium3DTileset.fromUrl as unknown as MockInstance).mockReset();
     (resolveMuniCodes as unknown as MockInstance).mockReset().mockResolvedValue(['13101']);
     (findTilesetUrl as unknown as MockInstance).mockReset().mockResolvedValue('https://example.com/tileset.json');
+    (findBestTilesetUrl as unknown as MockInstance)
+      .mockReset()
+      .mockResolvedValue({ url: 'https://example.com/tileset.json', actualLod: 'lod1' });
   });
 
   afterEach(() => {
@@ -196,12 +201,12 @@ describe('meshBuilder', () => {
       },
     });
 
-    const { resolveMuniCodes, findTilesetUrl } = await import('../src/catalog');
+    const { resolveMuniCodes, findBestTilesetUrl } = await import('../src/catalog');
 
     const meshes = await buildBuildingMeshes(bounds, 'lod1');
 
     expect(resolveMuniCodes).toHaveBeenCalledWith(bounds);
-    expect(findTilesetUrl).toHaveBeenCalledWith('13101', 'lod1');
+    expect(findBestTilesetUrl).toHaveBeenCalledWith('13101', 'lod1');
     expect(Cesium3DTileset.fromUrl).toHaveBeenCalledWith('https://example.com/tileset.json');
     expect(fetchSpy).toHaveBeenCalledWith('https://example.com/buildings.b3dm');
 

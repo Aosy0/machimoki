@@ -330,3 +330,39 @@ export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string
   tilesetUrlCache.set(key, candidate.url);
   return candidate.url;
 }
+
+export const LOD_ORDER: Lod[] = ['lod1', 'lod2', 'lod3', 'lod4'];
+
+export async function getMuniAvailableLods(muniCode: string): Promise<Lod[]> {
+  const datasets = await fetchCatalogDatasets();
+  const prefCode = muniCode.slice(0, 2);
+  const found = new Set<string>();
+  for (const d of datasets) {
+    if (d.pref_code !== prefCode) continue;
+    if (d.format !== '3D Tiles') continue;
+    if (d.type !== '建築物モデル') continue;
+    const matchesWard = d.ward_code != null && d.ward_code === muniCode;
+    const matchesCity = d.city_code === muniCode;
+    if (!matchesWard && !matchesCity) continue;
+    if (['1', '2', '3', '4'].includes(d.lod)) {
+      found.add(`lod${d.lod}`);
+    }
+  }
+  return LOD_ORDER.filter((lod) => found.has(lod));
+}
+
+export async function findBestTilesetUrl(
+  muniCode: string,
+  requestedLod: Lod,
+): Promise<{ url: string; actualLod: Lod }> {
+  try {
+    const url = await findTilesetUrl(muniCode, requestedLod);
+    return { url, actualLod: requestedLod };
+  } catch (firstErr) {
+    const available = await getMuniAvailableLods(muniCode);
+    if (available.length === 0) throw firstErr;
+    const fallbackLod = available[available.length - 1];
+    const url = await findTilesetUrl(muniCode, fallbackLod);
+    return { url, actualLod: fallbackLod };
+  }
+}

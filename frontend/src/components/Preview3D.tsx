@@ -36,7 +36,7 @@ Ion.defaultAccessToken = undefined as unknown as string
 
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
-import { resolveMuniCodes, findTilesetUrl, getCoverageDetails, type Lod } from '../lib/catalogApi'
+import { resolveMuniCodes, findBestTilesetUrl, getCoverageDetails, type Lod } from '../lib/catalogApi'
 import {
   applyClippingToTileset,
   createGlobeClippingPlanes,
@@ -1322,13 +1322,27 @@ export default function Preview3D({
 
     const bounds = selectionBounds
     let cancelled = false
-    // 矢継ぎ早の再選択で重い読み込みが多重起動しないよう、停止後に開始する。
+    // 地図操作中の描画を優先し、隙間で読み込む（timeout付きで必ず実行）。
     // 後片付けは即時（古い表示を残さない）、loadだけ遅延させる。
-    const timer = window.setTimeout(() => {
-      if (!cancelled) {
-        void load()
-      }
-    }, 300)
+    let cancelScheduled: (() => void) | null = null
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(
+        () => {
+          if (!cancelled) {
+            void load()
+          }
+        },
+        { timeout: 1500 },
+      )
+      cancelScheduled = () => window.cancelIdleCallback(idleId)
+    } else {
+      const timer = window.setTimeout(() => {
+        if (!cancelled) {
+          void load()
+        }
+      }, 300)
+      cancelScheduled = () => window.clearTimeout(timer)
+    }
 
     async function load() {
       try {
@@ -1354,14 +1368,14 @@ export default function Preview3D({
           error: null,
         })
 
-        let firstUrlError: Error | null = null
+        const firstUrlErrorRef: { current: Error | null } = { current: null }
         const urlPromises = muniCodes.map(async (code) => {
           try {
-            const url = await findTilesetUrl(code, lod)
-            return { code, url }
+            const best = await findBestTilesetUrl(code, lod)
+            return { code, url: best.url, actualLod: best.actualLod }
           } catch (err) {
-            if (!firstUrlError && err instanceof Error) firstUrlError = err
-            return { code, url: null }
+            if (!firstUrlErrorRef.current && err instanceof Error) firstUrlErrorRef.current = err
+            return { code, url: null as string | null, actualLod: null as Lod | null }
           }
         })
         const results = await Promise.all(urlPromises)
@@ -1371,14 +1385,25 @@ export default function Preview3D({
         const failedMuniCodes = results
           .filter((r) => r.url === null)
           .map((r) => r.code)
+        const fallbackEntries = results.filter(
+          (r): r is { code: string; url: string; actualLod: Lod } =>
+            r.url !== null && r.actualLod !== null && r.actualLod !== lod
+        )
         if (cancelled) return
 
         if (urls.length === 0) {
-          setCoverageWarning(null)
-          throw firstUrlError ?? new Error('該当する3D Tilesデータセットが見つかりません')
-        }
-
-        if (failedMuniCodes.length > 0) {
+          if (firstUrlErrorRef.current) console.warn('[Preview3D] 建物データなし:', firstUrlErrorRef.current.message)
+          setCoverageWarning('選択範囲にPLATEAUの建物データがありません。地形のみ表示しています')
+          setBuildingLoadDetail('建物データなし（地形のみ表示）')
+          setBuildingLoadProgress(null)
+          setListLoading(false)
+          onPipelineStateChange?.({
+            phase: 'composing',
+            progress: 50,
+            message: '建物データなし、地形のみ表示',
+            error: null,
+          })
+        } else if (failedMuniCodes.length > 0) {
           let names: string[] = []
           try {
             const details = await getCoverageDetails()
@@ -1397,20 +1422,36 @@ export default function Preview3D({
               `選択範囲の一部(${failedMuniCodes.length}自治体)でPLATEAUデータが未整備です。整備済みエリアの建物のみ表示しています`
             )
           }
+        } else if (fallbackEntries.length > 0) {
+          let fallbackNames: string[] = []
+          try {
+            const details = await getCoverageDetails()
+            fallbackNames = fallbackEntries.map((r) => {
+              const city = details.get(r.code)?.city
+              return city ? `${city}(${r.actualLod.toUpperCase()})` : `${r.code}(${r.actualLod.toUpperCase()})`
+            })
+          } catch {
+            fallbackNames = fallbackEntries.map((r) => `${r.code}(${r.actualLod.toUpperCase()})`)
+          }
+          setCoverageWarning(
+            `選択範囲の一部は${lod.toUpperCase()}未整備のため、対応する最も詳細なレベルで表示しています: ${fallbackNames.join('、')}`
+          )
         } else {
           setCoverageWarning(null)
         }
 
         console.log('[Preview3D] Resolved tileset URLs:', urls)
 
-        setBuildingLoadDetail(`3Dタイルを読み込み中（${urls.length}件）`)
-        setBuildingLoadProgress(30)
-        onPipelineStateChange?.({
-          phase: 'acquiring',
-          progress: 0,
-          message: '3Dタイルを読み込み中',
-          error: null,
-        })
+        if (urls.length > 0) {
+          setBuildingLoadDetail(`3Dタイルを読み込み中（${urls.length}件）`)
+          setBuildingLoadProgress(30)
+          onPipelineStateChange?.({
+            phase: 'acquiring',
+            progress: 0,
+            message: '3Dタイルを読み込み中',
+            error: null,
+          })
+        }
 
         const loadedTilesets: Cesium3DTileset[] = []
         for (const url of urls) {
@@ -1516,7 +1557,14 @@ export default function Preview3D({
         }
 
         if (loadedTilesets.length === 0) {
-          throw new Error('3Dタイルの読み込みに失敗しました')
+          if (urls.length === 0) {
+            console.warn('[Preview3D] 建物データなし、地形のみ表示に進みます')
+          } else if (!includeTerrain) {
+            throw new Error('3Dタイルの読み込みに失敗しました')
+          } else {
+            console.warn('[Preview3D] 建物タイルの読み込みに失敗、地形のみ表示に進みます')
+            setCoverageWarning((prev) => prev ?? '建物の読み込みに失敗しました。地形のみ表示しています')
+          }
         }
 
         tilesetsRef.current = loadedTilesets
@@ -1799,7 +1847,7 @@ export default function Preview3D({
 
     return () => {
       cancelled = true
-      window.clearTimeout(timer)
+      cancelScheduled?.()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain])

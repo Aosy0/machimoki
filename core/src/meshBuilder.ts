@@ -13,7 +13,7 @@ import { WebIO } from '@gltf-transform/core';
 import { KHRDracoMeshCompression } from '@gltf-transform/extensions';
 import type { Accessor, Primitive } from '@gltf-transform/core';
 import type { Bounds, Lod, RawMesh } from './types.js';
-import { findTilesetUrl, resolveMuniCodes } from './catalog.js';
+import { findBestTilesetUrl, resolveMuniCodes } from './catalog.js';
 
 let dracoDecoderPromise: Promise<unknown> | null = null;
 
@@ -586,7 +586,13 @@ export async function buildBuildingMeshes(
   for (const muniCode of muniCodes) {
     let tilesetUrl: string;
     try {
-      tilesetUrl = await findTilesetUrl(muniCode, lod);
+      const best = await findBestTilesetUrl(muniCode, lod);
+      tilesetUrl = best.url;
+      if (best.actualLod !== lod) {
+        console.warn(
+          `[meshBuilder] muniCode=${muniCode} は ${lod} 未整備のため ${best.actualLod} で取得します`,
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`[meshBuilder] Failed to find tileset for muniCode=${muniCode}: ${message}`);

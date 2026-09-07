@@ -311,6 +311,48 @@ export async function findTilesetUrl(
   return candidate.url
 }
 
+export const LOD_ORDER: Lod[] = ['lod1', 'lod2', 'lod3', 'lod4']
+
+/** 指定自治体で利用可能なLOD一覧を返す（lod1 → lod4 順）。 */
+export async function getMuniAvailableLods(muniCode: string): Promise<Lod[]> {
+  const datasets = await fetchCatalogDatasets()
+  const prefCode = muniCode.slice(0, 2)
+  const found = new Set<string>()
+  for (const d of datasets) {
+    if (d.pref_code !== prefCode) continue
+    if (d.format !== '3D Tiles') continue
+    if (d.type !== '建築物モデル') continue
+    const matchesWard = d.ward_code != null && d.ward_code === muniCode
+    const matchesCity = d.city_code === muniCode
+    if (!matchesWard && !matchesCity) continue
+    if (['1', '2', '3', '4'].includes(d.lod)) {
+      found.add(`lod${d.lod}`)
+    }
+  }
+  return LOD_ORDER.filter((lod) => found.has(lod))
+}
+
+/**
+ * 指定自治体で要求LODに対応するタイルセットURLを返す。
+ * 要求LODが未整備の場合は、対応している中で最も詳細なレベルにフォールバックする。
+ */
+export async function findBestTilesetUrl(
+  muniCode: string,
+  requestedLod: Lod
+): Promise<{ url: string; actualLod: Lod }> {
+  try {
+    const url = await findTilesetUrl(muniCode, requestedLod)
+    return { url, actualLod: requestedLod }
+  } catch (firstErr) {
+    const available = await getMuniAvailableLods(muniCode)
+    if (available.length === 0) throw firstErr
+    // 最も詳細（末尾）を優先する
+    const fallbackLod = available[available.length - 1]
+    const url = await findTilesetUrl(muniCode, fallbackLod)
+    return { url, actualLod: fallbackLod }
+  }
+}
+
 export async function getAvailableLods(
   bounds: { west: number; south: number; east: number; north: number }
 ): Promise<Lod[]> {
