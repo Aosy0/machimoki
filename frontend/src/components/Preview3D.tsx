@@ -60,6 +60,13 @@ import {
   buildSolidTerrainPrimitive,
   type TerrainSampleData,
 } from '../lib/solidTerrain'
+import {
+  estimatePreviewLoad,
+  classifyPreviewLoad,
+  adaptiveTerrainGridSize,
+  previewMaxZoomDistance,
+  type PreviewLoadEstimate,
+} from '../lib/previewBudget'
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 
@@ -1322,6 +1329,7 @@ export default function Preview3D({
 
     const bounds = selectionBounds
     let cancelled = false
+    const estimateAbort = new AbortController()
     // 地図操作中の描画を優先し、隙間で読み込む（timeout付きで必ず実行）。
     // 後片付けは即時（古い表示を残さない）、loadだけ遅延させる。
     let cancelScheduled: (() => void) | null = null
@@ -1442,7 +1450,60 @@ export default function Preview3D({
 
         console.log('[Preview3D] Resolved tileset URLs:', urls)
 
+        let terrainOnlyDueToBudget = false
         if (urls.length > 0) {
+          let estimate: PreviewLoadEstimate | null = null
+          try {
+            estimate = await estimatePreviewLoad({
+              bounds,
+              lod,
+              tilesetUrls: urls,
+              signal: estimateAbort.signal,
+            })
+          } catch (err) {
+            console.warn('[Preview3D] preview budget estimate failed, terrain-only fallback:', err)
+            terrainOnlyDueToBudget = true
+            setCoverageWarning('建物データ量を確認できないため、安全のため地形のみ表示しています')
+            setBuildingLoadDetail('建物データ量を確認できないため地形のみ表示')
+            setBuildingLoadProgress(null)
+            setListLoading(false)
+            onPipelineStateChange?.({
+              phase: 'composing',
+              progress: 50,
+              message: '建物データ量を確認できないため、地形のみ表示しています',
+              error: null,
+            })
+            estimate = null
+          }
+          if (cancelled) return
+          if (estimateAbort.signal.aborted) return
+          if (estimate) {
+            const decision = classifyPreviewLoad(estimate)
+            if (decision.mode === 'terrain-only') {
+              terrainOnlyDueToBudget = true
+              const terrainOnlyMessage = decision.reason === 'too-large'
+                ? '建物データが大きいため、地形のみ表示しています'
+                : '建物データがないため、地形のみ表示しています'
+              if (decision.reason === 'too-large') {
+                setCoverageWarning(`選択範囲の建物データが大きいため、地形のみ表示しています（建物約${estimate.totalBuildings}件 / タイル${estimate.contentTiles}件）`)
+                setBuildingLoadDetail('建物データが大きいため地形のみ表示')
+              } else {
+                setCoverageWarning('選択範囲に建物データがありません。地形のみ表示しています')
+                setBuildingLoadDetail('建物データなし（地形のみ表示）')
+              }
+              setBuildingLoadProgress(null)
+              setListLoading(false)
+              onPipelineStateChange?.({
+                phase: 'composing',
+                progress: 50,
+                message: terrainOnlyMessage,
+                error: null,
+              })
+            }
+          }
+        }
+
+        if (urls.length > 0 && !terrainOnlyDueToBudget) {
           setBuildingLoadDetail(`3Dタイルを読み込み中（${urls.length}件）`)
           setBuildingLoadProgress(30)
           onPipelineStateChange?.({
@@ -1454,6 +1515,7 @@ export default function Preview3D({
         }
 
         const loadedTilesets: Cesium3DTileset[] = []
+        if (!terrainOnlyDueToBudget) {
         for (const url of urls) {
           if (cancelled) {
             for (const ts of loadedTilesets) {
@@ -1544,6 +1606,7 @@ export default function Preview3D({
             console.warn('[Preview3D] Failed to load tileset:', url, err)
           }
         }
+        }
 
         if (cancelled) {
           for (const ts of loadedTilesets) {
@@ -1557,7 +1620,9 @@ export default function Preview3D({
         }
 
         if (loadedTilesets.length === 0) {
-          if (urls.length === 0) {
+          if (terrainOnlyDueToBudget) {
+            console.warn('[Preview3D] 建物データが大きいため、地形のみ表示に進みます')
+          } else if (urls.length === 0) {
             console.warn('[Preview3D] 建物データなし、地形のみ表示に進みます')
           } else if (!includeTerrain) {
             throw new Error('3Dタイルの読み込みに失敗しました')
@@ -1605,6 +1670,7 @@ export default function Preview3D({
               return buildingMinYCacheRef.current.get(cacheKey) ?? null
             }
             let minBuildingY: number | null = null
+            if (sampleForFallback.isFallback === true) {
             try {
               const core = await import('@machimoki/core')
               if (cancelled) return null
@@ -1626,6 +1692,7 @@ export default function Preview3D({
               buildingMinYCacheRef.current.set(cacheKey, minBuildingY)
             } catch (e) {
               console.warn('[Preview3D] buildBuildingMeshes failed, fallback to boundingSphere', e)
+            }
             }
             if (minBuildingY === null) {
               try {
@@ -1725,9 +1792,14 @@ export default function Preview3D({
           let debugVariance = 0
           let debugBuildingMinY: number | null = null
           let debugDelta: number | null = null
-          const needsFetch = !sample || !sameBounds(sample.bounds, bounds)
+          const gridCenterLat = (bounds.south + bounds.north) / 2
+          const gridWidthMeters = CesiumMath.toRadians(bounds.east - bounds.west) * 6371000 * Math.cos(CesiumMath.toRadians(gridCenterLat))
+          const gridHeightMeters = CesiumMath.toRadians(bounds.north - bounds.south) * 6371000
+          const gridMaxDimMeters = Math.max(gridWidthMeters, gridHeightMeters)
+          const terrainGridSize = adaptiveTerrainGridSize(gridMaxDimMeters)
+          const needsFetch = !sample || !sameBounds(sample.bounds, bounds) || sample.gridSize !== terrainGridSize
           if (needsFetch) {
-            sample = await sampleTerrainData(bounds, terrainProvider!)
+            sample = await sampleTerrainData(bounds, terrainProvider!, terrainGridSize)
             if (cancelled) return
             const aligned = await maybeAlignSample(sample!)
             if (cancelled) return
@@ -1791,6 +1863,7 @@ export default function Preview3D({
         const heightMeters = CesiumMath.toRadians(heightDeg) * 6371000
         const maxDim = Math.max(widthMeters, heightMeters)
         const cameraHeight = Math.max(maxDim * 2, 300)
+        viewer!.scene.screenSpaceCameraController.maximumZoomDistance = previewMaxZoomDistance(maxDim)
 
         // 同じ選択範囲に対する再読み込み（LOD切替など）では視点を維持する
         const alreadyFramed =
@@ -1848,6 +1921,7 @@ export default function Preview3D({
     return () => {
       cancelled = true
       cancelScheduled?.()
+      estimateAbort.abort()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain])
