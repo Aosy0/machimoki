@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import cesium from 'vite-plugin-cesium'
-import { resolve } from 'path'
+import { resolve, sep } from 'path'
+
+const codegraphPath = resolve(__dirname, '../.codegraph')
 
 export default defineConfig({
   envDir: '../',
@@ -28,9 +30,15 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     watch: {
-      // リポジトリ直下の .codegraph はジャンクションで stat に失敗し
-      // 監視プロセスがクラッシュするため除外する
-      ignored: ['**/.codegraph/**'],
+      // .env は envDir '../'（リポジトリルート）にあるため、監視すると
+      // chokidar が親ディレクトリごと fs.watch し、ルート直下の .codegraph
+      // ジャンクションの stat に失敗してプロセスが落ちる。.env は変更時に
+      // 再起動が必要なため監視対象から外す（.codegraph は念のため併記）。
+      ignored: [
+        '**/.env*',
+        (filePath: string) =>
+          filePath === codegraphPath || filePath.startsWith(`${codegraphPath}${sep}`),
+      ],
     },
     proxy: {
       '/api': {
