@@ -676,6 +676,8 @@ export default function Preview3D({
   const [buildingLoadDetail, setBuildingLoadDetail] = useState<string | null>(null)
   const [buildingLoadProgress, setBuildingLoadProgress] = useState<number | null>(null)
   const [coverageWarning, setCoverageWarning] = useState<string | null>(null)
+  const [forceBuildingsBounds, setForceBuildingsBounds] = useState<SelectionBounds | null>(null)
+  const [canForceBuildings, setCanForceBuildings] = useState(false)
   const maxTilesRef = useRef(0)
   const pendingMapRef = useRef<Map<Cesium3DTileset, number>>(new Map())
   const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
@@ -1273,6 +1275,7 @@ export default function Preview3D({
     setBuildingLoadDetail(null)
     setBuildingLoadProgress(null)
     setCoverageWarning(null)
+    setCanForceBuildings(false)
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -1330,6 +1333,7 @@ export default function Preview3D({
     }
 
     const bounds = selectionBounds
+    const forceBuildings = !!forceBuildingsBounds && sameBounds(forceBuildingsBounds, bounds)
     let cancelled = false
     const estimateAbort = new AbortController()
     // 地図操作中の描画を優先し、隙間で読み込む（timeout付きで必ず実行）。
@@ -1450,10 +1454,14 @@ export default function Preview3D({
           setCoverageWarning(null)
         }
 
+        if (forceBuildings && urls.length > 0) {
+          setCoverageWarning((prev) => prev ?? '建物を手動表示しています（データ量が多いため時間がかかる場合があります）')
+        }
+
         console.log('[Preview3D] Resolved tileset URLs:', urls)
 
         let terrainOnlyDueToBudget = false
-        if (urls.length > 0 && !isSmallRange(bounds)) {
+        if (urls.length > 0 && !forceBuildings && !isSmallRange(bounds)) {
           let estimate: PreviewLoadEstimate | null = null
           try {
             estimate = await estimatePreviewLoad({
@@ -1465,6 +1473,7 @@ export default function Preview3D({
           } catch (err) {
             console.warn('[Preview3D] preview budget estimate failed, terrain-only fallback:', err)
             terrainOnlyDueToBudget = true
+            setCanForceBuildings(true)
             setCoverageWarning('建物データ量を確認できないため、安全のため地形のみ表示しています')
             setBuildingLoadDetail('建物データ量を確認できないため地形のみ表示')
             setBuildingLoadProgress(null)
@@ -1487,6 +1496,7 @@ export default function Preview3D({
                 ? '建物データが大きいため、地形のみ表示しています'
                 : '建物データがないため、地形のみ表示しています'
               if (decision.reason === 'too-large') {
+                setCanForceBuildings(true)
                 setCoverageWarning(`選択範囲の建物データが大きいため、地形のみ表示しています（建物約${estimate.totalBuildings}件 / タイル${estimate.contentTiles}件）`)
                 setBuildingLoadDetail('建物データが大きいため地形のみ表示')
               } else {
@@ -1940,7 +1950,7 @@ export default function Preview3D({
       estimateAbort.abort()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain])
+  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain, forceBuildingsBounds])
 
   useEffect(() => {
     const linear = colorToLinearCartesian3(baseBuildingColor())
@@ -2242,6 +2252,24 @@ export default function Preview3D({
           }}
         >
           <span>{coverageWarning}</span>
+          {canForceBuildings && selectionBounds && (!forceBuildingsBounds || !sameBounds(forceBuildingsBounds, selectionBounds)) && (
+            <button
+              data-testid="coverage-warning-show-buildings"
+              onClick={() => setForceBuildingsBounds(selectionBounds)}
+              style={{
+                background: '#e6c200',
+                color: '#5c4500',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '4px 10px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+            >
+              建物を表示
+            </button>
+          )}
           <button
             data-testid="coverage-warning-close"
             onClick={() => setCoverageWarning(null)}
