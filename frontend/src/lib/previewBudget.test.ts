@@ -13,6 +13,8 @@ import {
   estimatePreviewLoad,
   adaptiveTerrainGridSize,
   previewMaxZoomDistance,
+  boundsMaxDimMeters,
+  isSmallRange,
   clearPreviewBudgetCache,
   type Bounds,
 } from './previewBudget'
@@ -185,6 +187,17 @@ describe('adaptiveTerrainGridSize / previewMaxZoomDistance', () => {
     assert.equal(previewMaxZoomDistance(4000), 10000)
     assert.equal(previewMaxZoomDistance(8000), 20000)
     assert.equal(previewMaxZoomDistance(10000), 25000)
+  })
+
+  it('小範囲判定は最大辺750mが境界', () => {
+    assert.equal(PREVIEW_BUDGET.smallRangeMaxDimMeters, 750)
+    assert.equal(PREVIEW_BUDGET.maxBuildings, 2500)
+    const tiny: Bounds = { west: 139.69, south: 35.69, east: 139.696, north: 35.694 }
+    assert.ok(boundsMaxDimMeters(tiny) < 750)
+    assert.equal(isSmallRange(tiny), true)
+    const over: Bounds = { west: 139.6864, south: 35.6836, east: 139.6972, north: 35.6928 }
+    assert.ok(boundsMaxDimMeters(over) > 750)
+    assert.equal(isSmallRange(over), false)
   })
 })
 

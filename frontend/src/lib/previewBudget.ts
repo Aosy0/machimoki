@@ -5,12 +5,14 @@ export type { Lod }
 /** 中心的なプレビュー予算の制限値。Preview3D の建物読み込み可否判定に使う。 */
 export const PREVIEW_BUDGET = {
   maxIntersectingTiles: 1500,
-  maxBuildings: 200,
+  maxBuildings: 2500,
   maxContentBytes: 256 * 1024 * 1024, // 256 MiB
   scanNodeCap: 6000,
   probeRangeBytes: 16384, // bytes=0..16383
   probeConcurrency: 8,
   fetchTimeoutMs: 15000,
+  /** この最大辺(m)以下は予算判定をスキップして無条件で建物表示する。 */
+  smallRangeMaxDimMeters: 750,
 } as const
 
 export type PreviewMode = 'buildings' | 'terrain-only' | 'no-data'
@@ -466,4 +468,16 @@ export function adaptiveTerrainGridSize(maxDimMeters: number): number {
 /** 選択範囲の最大寸法（m）に応じたカメラの最大ズーム距離（m）。 */
 export function previewMaxZoomDistance(maxDimMeters: number): number {
   return Math.max(10000, maxDimMeters * 2.5)
+}
+
+export function boundsMaxDimMeters(bounds: Bounds): number {
+  const midLat = ((bounds.south + bounds.north) / 2) * (Math.PI / 180)
+  const width =
+    ((bounds.east - bounds.west) * (Math.PI / 180)) * 6371000 * Math.cos(midLat)
+  const height = (bounds.north - bounds.south) * (Math.PI / 180) * 6371000
+  return Math.max(Math.abs(width), Math.abs(height))
+}
+
+export function isSmallRange(bounds: Bounds): boolean {
+  return boundsMaxDimMeters(bounds) <= PREVIEW_BUDGET.smallRangeMaxDimMeters
 }

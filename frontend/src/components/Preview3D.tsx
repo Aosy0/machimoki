@@ -65,6 +65,7 @@ import {
   classifyPreviewLoad,
   adaptiveTerrainGridSize,
   previewMaxZoomDistance,
+  isSmallRange,
   type PreviewLoadEstimate,
 } from '../lib/previewBudget'
 import ModelSizeOverlay from './ModelSizeOverlay'
@@ -1451,7 +1452,7 @@ export default function Preview3D({
         console.log('[Preview3D] Resolved tileset URLs:', urls)
 
         let terrainOnlyDueToBudget = false
-        if (urls.length > 0) {
+        if (urls.length > 0 && !isSmallRange(bounds)) {
           let estimate: PreviewLoadEstimate | null = null
           try {
             estimate = await estimatePreviewLoad({
