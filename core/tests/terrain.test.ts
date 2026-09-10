@@ -128,4 +128,19 @@ describe('terrain', () => {
     expect(mesh.positions[1]).toBe(expectedEngineY);
     expect(mesh.positions[2]).toBeCloseTo(expectedEngineZ);
   });
+
+  it('rejects incomplete terrain samples instead of creating invalid geometry', async () => {
+    const { sampleTerrainMostDetailed } = await import('cesium');
+    (sampleTerrainMostDetailed as unknown as MockInstance).mockResolvedValueOnce(
+      Array.from({ length: 1024 }, (_, i) => ({
+        longitude: 139.69,
+        latitude: 35.69,
+        height: i === 512 ? Number.NaN : 100,
+      })),
+    );
+
+    await expect(buildTerrainMesh(bounds, 10, true)).rejects.toThrow(
+      'PLATEAU-Terrain取得失敗: 標高サンプルが不完全です',
+    );
+  });
 });

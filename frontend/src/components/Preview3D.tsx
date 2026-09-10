@@ -13,10 +13,11 @@ import {
   CustomShader,
   CustomShaderMode,
   CustomShaderTranslucencyMode,
+  Credit,
+  CreditDisplay,
   DirectionalLight,
   GridImageryProvider,
   HeadingPitchRange,
-  Ion,
   LightingModel,
   Matrix4,
   OrthographicFrustum,
@@ -31,8 +32,8 @@ import {
 import type { BoundingSphere, Cesium3DTile, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
-// Ionを明示的に無効化（Ionトークン不要で動作させる）
-Ion.defaultAccessToken = undefined as unknown as string
+// Ion不使用のため、Viewer既定のIonロゴを「© Cesium」に置き換える
+CreditDisplay.cesiumCredit = new Credit('© Cesium', true)
 
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
@@ -1907,6 +1908,20 @@ export default function Preview3D({
           err instanceof Error
             ? err.message
             : '3Dタイルの読み込みに失敗しました'
+        if (includeTerrain && message.startsWith('PLATEAU-Terrain取得失敗: 標高サンプルが不完全です')) {
+          terrainSampleCacheRef.current = null
+          const globePlanes = createGlobeClippingPlanes(bounds)
+          viewer!.scene.globe.clippingPlanes = globePlanes
+          viewer!.scene.globe.show = true
+          setCoverageWarning('地形データの一部を取得できませんでした。地球儀表示に切り替えています')
+          onPipelineStateChange?.({
+            phase: 'complete',
+            progress: 100,
+            message: '地形データの一部を取得できないため地球儀を表示中',
+            error: null,
+          })
+          return
+        }
         console.error('[Preview3D]', err)
         setBuildingLoadDetail(message)
         setBuildingLoadProgress(null)

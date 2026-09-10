@@ -10,9 +10,11 @@ import {
   sampleTerrainMostDetailed,
   Transforms,
 } from 'cesium';
+import type { TerrainProvider } from 'cesium';
 import type { Bounds, RawMesh } from './types';
 
 const TERRAIN_GRID_SIZE = 128;
+const TERRAIN_SAMPLE_BATCH_SIZE = 1024;
 const DIRECT_TERRAIN_URL =
   (typeof process !== 'undefined' ? (process as any).env?.TERRAIN_URL : undefined) ??
   (typeof process !== 'undefined' ? (process as any).env?.VITE_TERRAIN_URL : undefined) ??
@@ -22,6 +24,22 @@ const DIRECT_TERRAIN_URL =
 function enuToEngine(x: number, y: number, z: number): { x: number; y: number; z: number } {
   // ENU -> engine coordinates: (X, Y, Z) -> (X, Z, -Y)
   return { x, y: z, z: -y };
+}
+
+async function sampleTerrainInBatches(
+  terrainProvider: TerrainProvider,
+  positions: Cartographic[],
+): Promise<Cartographic[]> {
+  const sampled: Cartographic[] = [];
+  for (let i = 0; i < positions.length; i += TERRAIN_SAMPLE_BATCH_SIZE) {
+    sampled.push(
+      ...(await sampleTerrainMostDetailed(
+        terrainProvider,
+        positions.slice(i, i + TERRAIN_SAMPLE_BATCH_SIZE),
+      )),
+    );
+  }
+  return sampled;
 }
 
 export async function buildTerrainMesh(
@@ -51,9 +69,12 @@ export async function buildTerrainMesh(
     throw new Error(`PLATEAU-Terrain取得失敗: ${DIRECT_TERRAIN_URL} - ${(e as Error).message}`);
   }
   try {
-    sampled = await sampleTerrainMostDetailed(terrainProvider, positions);
+    sampled = await sampleTerrainInBatches(terrainProvider, positions);
   } catch (e) {
     throw new Error(`PLATEAU-Terrain取得失敗: ${DIRECT_TERRAIN_URL} - ${(e as Error).message}`);
+  }
+  if (sampled.length !== positions.length || sampled.some((sample) => !Number.isFinite(sample.height))) {
+    throw new Error('PLATEAU-Terrain取得失敗: 標高サンプルが不完全です');
   }
 
   // Convert to local ENU coordinates centered on selection center

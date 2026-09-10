@@ -45,6 +45,7 @@ type SolidTerrainPrimitive = Primitive & {
 }
 
 const DEFAULT_GRID_SIZE = 128
+const TERRAIN_SAMPLE_BATCH_SIZE = 1024
 const MIN_TERRAIN_THICKNESS = 0.1
 const TERRAIN_SURFACE_OFFSET = 0.05
 
@@ -88,10 +89,6 @@ void main()
 
 function gridIndex(x: number, y: number, gridSize: number): number {
   return y * gridSize + x
-}
-
-function getSampleHeight(sample: Cartographic): number {
-  return Number.isFinite(sample.height) ? sample.height : 0
 }
 
 function buildTerrainIndices(gridSize: number): Uint32Array {
@@ -265,10 +262,23 @@ export async function sampleTerrainData(
   }
   let sampledPositions: Cartographic[]
   try {
-    sampledPositions = await sampleTerrainMostDetailed(terrainProvider, samplePositions)
-    for (const p of sampledPositions) if (!Number.isFinite(p.height as number)) p.height = 0
+    sampledPositions = []
+    for (let i = 0; i < samplePositions.length; i += TERRAIN_SAMPLE_BATCH_SIZE) {
+      sampledPositions.push(
+        ...(await sampleTerrainMostDetailed(
+          terrainProvider,
+          samplePositions.slice(i, i + TERRAIN_SAMPLE_BATCH_SIZE),
+        )),
+      )
+    }
   } catch (e) {
     throw new Error(`PLATEAU-Terrain取得失敗: ${ (e as Error).message }`)
+  }
+  if (
+    sampledPositions.length !== samplePositions.length ||
+    sampledPositions.some((sample) => !Number.isFinite(sample.height))
+  ) {
+    throw new Error('PLATEAU-Terrain取得失敗: 標高サンプルが不完全です')
   }
   const isFallback = false
 
@@ -283,7 +293,7 @@ export async function sampleTerrainData(
 
   for (let i = 0; i < sampledPositions.length; i++) {
     const sample = sampledPositions[i]
-    const height = getSampleHeight(sample)
+    const height = sample.height
     const ecef = Cartesian3.fromRadians(sample.longitude, sample.latitude, height + TERRAIN_SURFACE_OFFSET)
     const local = Matrix4.multiplyByPoint(inverseCenterMatrix, ecef, new Cartesian3())
 
