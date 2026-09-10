@@ -74,13 +74,11 @@ import {
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 
-// SELECTED_FEATURE_ID は Cesium が選択中の feature ID セットの変数名に展開される定義で、
-// Cesium3DTileFeature.featureId と一致する（ホバー判定に使用）。
-const HOVER_COLOR_LINEAR = new Cartesian3(
-  srgbToLinear(0xff / 255),
-  srgbToLinear(0x98 / 255),
-  srgbToLinear(0x00 / 255),
-)
+// 建物ホバー時のハイライト色。
+// Cesium3DTileFeature.featureId はタイル(content)毎に 0 から振られるため、
+// tileset 共通の uniform で ID 一致を取ると同一 batchId の他棟まで光ってしまう。
+// feature.color に設定して棟単位で乗算させる（ダミー色は白固定）。
+const HOVER_COLOR = Color.fromCssColorString('#ff9800')
 
 function colorToLinearCartesian3(color: Color): Cartesian3 {
   return new Cartesian3(
@@ -103,14 +101,6 @@ function createBuildingCustomShader(color: Color): CustomShader {
         type: UniformType.VEC3,
         value: colorToLinearCartesian3(color),
       },
-      u_hoverColor: {
-        type: UniformType.VEC3,
-        value: HOVER_COLOR_LINEAR.clone(),
-      },
-      u_hoverFeatureId: {
-        type: UniformType.INT,
-        value: -1,
-      },
       u_ambientBoost: {
         type: UniformType.FLOAT,
         value: 0.0,
@@ -118,12 +108,12 @@ function createBuildingCustomShader(color: Color): CustomShader {
     },
     fragmentShaderText: `
       void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
+        // REPLACE_MATERIAL では czm_modelMaterial.specular が既定 vec3(1.0) のまま残る。
+        // PBR の拡散項は (1.0 - F) * diffuse（F は specular から算出）のため、
+        // F0=1 だと diffuse が消えて建物色・ホバー色が描画に反映されない。
+        // 非金属の標準 F0(0.04) を設定して拡散反射を有効にする。
+        material.specular = vec3(0.04);
         vec3 base = u_buildingColor;
-        #ifdef HAS_SELECTED_FEATURE_ID
-        if (fsInput.featureIds.SELECTED_FEATURE_ID == u_hoverFeatureId) {
-          base = u_hoverColor;
-        }
-        #endif
         material.diffuse = base;
         if (u_ambientBoost > 0.0) {
           material.emissive = base * u_ambientBoost;
@@ -766,17 +756,12 @@ export default function Preview3D({
   const setHoveredFeature = (feature: Cesium3DTileFeature | null): void => {
     const prev = hoveredFeatureRef.current
     if (prev && prev !== feature) {
-      const ts = prev.tileset
-      if (ts.customShader) {
-        ts.customShader.setUniform('u_hoverFeatureId', -1)
-      }
+      // 直前の棟の色を白（乗算なし）へ戻す
+      applyStateToFeature(prev)
     }
     hoveredFeatureRef.current = feature
-    if (feature && feature.featureId >= 0) {
-      const ts = feature.tileset
-      if (ts.customShader) {
-        ts.customShader.setUniform('u_hoverFeatureId', feature.featureId)
-      }
+    if (feature && feature.show) {
+      feature.color = HOVER_COLOR
     }
   }
 
