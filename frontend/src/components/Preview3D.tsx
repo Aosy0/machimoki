@@ -141,7 +141,6 @@ function clearGlobeClippingPlanes(
 interface WhiteModelSaved {
   fogDensity: number | null
   fogEnabled: boolean | null
-  shadows: boolean | null
   aoEnabled: boolean | null
   aoUniforms: Record<string, number | boolean> | null
   imageryBrightness: number | null
@@ -213,13 +212,9 @@ function applyWhiteModelLook(
   saved: WhiteModelSaved,
 ): void {
   if (!enabled) {
+    // 白模型OFF時は常に影を有効化する（起動時点の値に依存させない）
     try {
-      if (saved.shadows !== null) {
-        viewer.shadows = saved.shadows
-        saved.shadows = null
-      } else {
-        viewer.shadows = true
-      }
+      viewer.shadows = true
     } catch {
       void 0
     }
@@ -281,9 +276,6 @@ function applyWhiteModelLook(
     return
   }
   try {
-    if (saved.shadows === null) {
-      saved.shadows = viewer.shadows
-    }
     viewer.shadows = false
   } catch {
     void 0
@@ -659,7 +651,6 @@ export default function Preview3D({
   const whiteModelSavedRef = useRef<WhiteModelSaved>({
     fogDensity: null,
     fogEnabled: null,
-    shadows: null,
     aoEnabled: null,
     aoUniforms: null,
     imageryBrightness: null,
@@ -1044,6 +1035,22 @@ export default function Preview3D({
       direction: new Cartesian3(0.5, -0.5, -1.0),
     })
     viewer.scene.light = directionalLight
+
+    // 影の到達距離・解像度・ちらつき対策。
+    // 既定の maximumDistance=5000m ではカメラから5km超の建物が影マップ対象外になり、
+    // 遠方がのっぺりする。Cesium の上限(20000m)まで許容してできるだけ影を出す。
+    // 実際の影カメラ far は画面内オブジェクトに追従する(Scene が near/far をフィットする)ため、
+    // 狭い範囲を見ているときは品質は落ちない。size を上げて遠距離の解像度を稼ぐ。
+    // softShadows(PCF) はフラット面にモアレ模様が出る既知の不具合があるため無効にする
+    // (https://community.cesium.com/t/moire-pattern-when-turning-on-soft-shadows/16011)。
+    const shadowMap = viewer.scene.shadowMap
+    shadowMap.enabled = true
+    shadowMap.size = 4096
+    shadowMap.softShadows = false
+    shadowMap.normalOffset = true
+    shadowMap.fadingEnabled = true
+    shadowMap.darkness = 0.35
+    shadowMap.maximumDistance = 20000.0
 
     applyWhiteModelLook(viewer, whiteModelRef.current, gsiLayerRef, whiteModelSavedRef.current)
 
