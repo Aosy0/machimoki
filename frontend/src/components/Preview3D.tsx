@@ -67,6 +67,8 @@ import {
   adaptiveTerrainGridSize,
   previewMaxZoomDistance,
   isSmallRange,
+  isLargeRange,
+  pickTerrainLevel,
   type PreviewLoadEstimate,
 } from '../lib/previewBudget'
 import ModelSizeOverlay from './ModelSizeOverlay'
@@ -1382,147 +1384,166 @@ export default function Preview3D({
           error: null,
         })
 
-        const muniCodes = await resolveMuniCodes(bounds)
-        if (cancelled) return
+        let urls: string[] = []
+        let terrainOnlyDueToBudget = false
 
-        setBuildingLoadDetail('カタログからタイルセットを検索中')
-        setBuildingLoadProgress(15)
-        onPipelineStateChange?.({
-          phase: 'identifying',
-          progress: 50,
-          message: 'カタログからタイルセットを検索中',
-          error: null,
-        })
-
-        const firstUrlErrorRef: { current: Error | null } = { current: null }
-        const urlPromises = muniCodes.map(async (code) => {
-          try {
-            const best = await findBestTilesetUrl(code, lod)
-            return { code, url: best.url, actualLod: best.actualLod }
-          } catch (err) {
-            if (!firstUrlErrorRef.current && err instanceof Error) firstUrlErrorRef.current = err
-            return { code, url: null as string | null, actualLod: null as Lod | null }
-          }
-        })
-        const results = await Promise.all(urlPromises)
-        const urls = results
-          .map((r) => r.url)
-          .filter((u): u is string => u !== null)
-        const failedMuniCodes = results
-          .filter((r) => r.url === null)
-          .map((r) => r.code)
-        const fallbackEntries = results.filter(
-          (r): r is { code: string; url: string; actualLod: Lod } =>
-            r.url !== null && r.actualLod !== null && r.actualLod !== lod
-        )
-        if (cancelled) return
-
-        if (urls.length === 0) {
-          if (firstUrlErrorRef.current) console.warn('[Preview3D] 建物データなし:', firstUrlErrorRef.current.message)
-          setCoverageWarning('選択範囲にPLATEAUの建物データがありません。地形のみ表示しています')
-          setBuildingLoadDetail('建物データなし（地形のみ表示）')
+        const largeFastPath = isLargeRange(bounds) && !forceBuildings
+        if (largeFastPath) {
+          // 大規模範囲はURL解決・予算推定をスキップし、即座に地形のみ表示へ進む
+          terrainOnlyDueToBudget = true
+          setCanForceBuildings(true)
+          setCoverageWarning('選択範囲が広いため、地形のみ表示しています（建物を表示すると時間がかかります）')
+          setBuildingLoadDetail('大規模範囲（地形のみ表示）')
           setBuildingLoadProgress(null)
           setListLoading(false)
           onPipelineStateChange?.({
             phase: 'composing',
             progress: 50,
-            message: '建物データなし、地形のみ表示',
+            message: '選択範囲が広いため地形のみ表示',
             error: null,
           })
-        } else if (failedMuniCodes.length > 0) {
-          let names: string[] = []
-          try {
-            const details = await getCoverageDetails()
-            names = failedMuniCodes
-              .map((code) => details.get(code)?.city)
-              .filter((n): n is string => typeof n === 'string' && n.length > 0)
-          } catch (err) {
-            console.warn('[Preview3D] カバレッジ詳細の取得に失敗:', err)
-          }
-          if (names.length > 0) {
-            setCoverageWarning(
-              `選択範囲の一部でPLATEAUデータが未整備です: ${names.join('、')}。整備済みエリアの建物のみ表示しています`
-            )
-          } else {
-            setCoverageWarning(
-              `選択範囲の一部(${failedMuniCodes.length}自治体)でPLATEAUデータが未整備です。整備済みエリアの建物のみ表示しています`
-            )
-          }
-        } else if (fallbackEntries.length > 0) {
-          let fallbackNames: string[] = []
-          try {
-            const details = await getCoverageDetails()
-            fallbackNames = fallbackEntries.map((r) => {
-              const city = details.get(r.code)?.city
-              return city ? `${city}(${r.actualLod.toUpperCase()})` : `${r.code}(${r.actualLod.toUpperCase()})`
-            })
-          } catch {
-            fallbackNames = fallbackEntries.map((r) => `${r.code}(${r.actualLod.toUpperCase()})`)
-          }
-          setCoverageWarning(
-            `選択範囲の一部は${lod.toUpperCase()}未整備のため、対応する最も詳細なレベルで表示しています: ${fallbackNames.join('、')}`
-          )
         } else {
-          setCoverageWarning(null)
-        }
+          const muniCodes = await resolveMuniCodes(bounds)
+          if (cancelled) return
 
-        if (forceBuildings && urls.length > 0) {
-          setCoverageWarning((prev) => prev ?? '建物を手動表示しています（データ量が多いため時間がかかる場合があります）')
-        }
+          setBuildingLoadDetail('カタログからタイルセットを検索中')
+          setBuildingLoadProgress(15)
+          onPipelineStateChange?.({
+            phase: 'identifying',
+            progress: 50,
+            message: 'カタログからタイルセットを検索中',
+            error: null,
+          })
 
-        console.log('[Preview3D] Resolved tileset URLs:', urls)
+          const firstUrlErrorRef: { current: Error | null } = { current: null }
+          const urlPromises = muniCodes.map(async (code) => {
+            try {
+              const best = await findBestTilesetUrl(code, lod)
+              return { code, url: best.url, actualLod: best.actualLod }
+            } catch (err) {
+              if (!firstUrlErrorRef.current && err instanceof Error) firstUrlErrorRef.current = err
+              return { code, url: null as string | null, actualLod: null as Lod | null }
+            }
+          })
+          const results = await Promise.all(urlPromises)
+          urls = results
+            .map((r) => r.url)
+            .filter((u): u is string => u !== null)
+          const failedMuniCodes = results
+            .filter((r) => r.url === null)
+            .map((r) => r.code)
+          const fallbackEntries = results.filter(
+            (r): r is { code: string; url: string; actualLod: Lod } =>
+              r.url !== null && r.actualLod !== null && r.actualLod !== lod
+          )
+          if (cancelled) return
 
-        let terrainOnlyDueToBudget = false
-        if (urls.length > 0 && !forceBuildings && !isSmallRange(bounds)) {
-          let estimate: PreviewLoadEstimate | null = null
-          try {
-            estimate = await estimatePreviewLoad({
-              bounds,
-              lod,
-              tilesetUrls: urls,
-              signal: estimateAbort.signal,
-            })
-          } catch (err) {
-            console.warn('[Preview3D] preview budget estimate failed, terrain-only fallback:', err)
-            terrainOnlyDueToBudget = true
-            setCanForceBuildings(true)
-            setCoverageWarning('建物データ量を確認できないため、安全のため地形のみ表示しています')
-            setBuildingLoadDetail('建物データ量を確認できないため地形のみ表示')
+          if (urls.length === 0) {
+            if (firstUrlErrorRef.current) console.warn('[Preview3D] 建物データなし:', firstUrlErrorRef.current.message)
+            setCoverageWarning('選択範囲にPLATEAUの建物データがありません。地形のみ表示しています')
+            setBuildingLoadDetail('建物データなし（地形のみ表示）')
             setBuildingLoadProgress(null)
             setListLoading(false)
             onPipelineStateChange?.({
               phase: 'composing',
               progress: 50,
-              message: '建物データ量を確認できないため、地形のみ表示しています',
+              message: '建物データなし、地形のみ表示',
               error: null,
             })
-            estimate = null
+          } else if (failedMuniCodes.length > 0) {
+            let names: string[] = []
+            try {
+              const details = await getCoverageDetails()
+              names = failedMuniCodes
+                .map((code) => details.get(code)?.city)
+                .filter((n): n is string => typeof n === 'string' && n.length > 0)
+            } catch (err) {
+              console.warn('[Preview3D] カバレッジ詳細の取得に失敗:', err)
+            }
+            if (names.length > 0) {
+              setCoverageWarning(
+                `選択範囲の一部でPLATEAUデータが未整備です: ${names.join('、')}。整備済みエリアの建物のみ表示しています`
+              )
+            } else {
+              setCoverageWarning(
+                `選択範囲の一部(${failedMuniCodes.length}自治体)でPLATEAUデータが未整備です。整備済みエリアの建物のみ表示しています`
+              )
+            }
+          } else if (fallbackEntries.length > 0) {
+            let fallbackNames: string[] = []
+            try {
+              const details = await getCoverageDetails()
+              fallbackNames = fallbackEntries.map((r) => {
+                const city = details.get(r.code)?.city
+                return city ? `${city}(${r.actualLod.toUpperCase()})` : `${r.code}(${r.actualLod.toUpperCase()})`
+              })
+            } catch {
+              fallbackNames = fallbackEntries.map((r) => `${r.code}(${r.actualLod.toUpperCase()})`)
+            }
+            setCoverageWarning(
+              `選択範囲の一部は${lod.toUpperCase()}未整備のため、対応する最も詳細なレベルで表示しています: ${fallbackNames.join('、')}`
+            )
+          } else {
+            setCoverageWarning(null)
           }
-          if (cancelled) return
-          if (estimateAbort.signal.aborted) return
-          if (estimate) {
-            const decision = classifyPreviewLoad(estimate)
-            if (decision.mode === 'terrain-only') {
+
+          if (forceBuildings && urls.length > 0) {
+            setCoverageWarning((prev) => prev ?? '建物を手動表示しています（データ量が多いため時間がかかる場合があります）')
+          }
+
+          console.log('[Preview3D] Resolved tileset URLs:', urls)
+
+          if (urls.length > 0 && !forceBuildings && !isSmallRange(bounds)) {
+            let estimate: PreviewLoadEstimate | null = null
+            try {
+              estimate = await estimatePreviewLoad({
+                bounds,
+                lod,
+                tilesetUrls: urls,
+                signal: estimateAbort.signal,
+              })
+            } catch (err) {
+              console.warn('[Preview3D] preview budget estimate failed, terrain-only fallback:', err)
               terrainOnlyDueToBudget = true
-              const terrainOnlyMessage = decision.reason === 'too-large'
-                ? '建物データが大きいため、地形のみ表示しています'
-                : '建物データがないため、地形のみ表示しています'
-              if (decision.reason === 'too-large') {
-                setCanForceBuildings(true)
-                setCoverageWarning(`選択範囲の建物データが大きいため、地形のみ表示しています（建物約${estimate.totalBuildings}件 / タイル${estimate.contentTiles}件）`)
-                setBuildingLoadDetail('建物データが大きいため地形のみ表示')
-              } else {
-                setCoverageWarning('選択範囲に建物データがありません。地形のみ表示しています')
-                setBuildingLoadDetail('建物データなし（地形のみ表示）')
-              }
+              setCanForceBuildings(true)
+              setCoverageWarning('建物データ量を確認できないため、安全のため地形のみ表示しています')
+              setBuildingLoadDetail('建物データ量を確認できないため地形のみ表示')
               setBuildingLoadProgress(null)
               setListLoading(false)
               onPipelineStateChange?.({
                 phase: 'composing',
                 progress: 50,
-                message: terrainOnlyMessage,
+                message: '建物データ量を確認できないため、地形のみ表示しています',
                 error: null,
               })
+              estimate = null
+            }
+            if (cancelled) return
+            if (estimateAbort.signal.aborted) return
+            if (estimate) {
+              const decision = classifyPreviewLoad(estimate)
+              if (decision.mode === 'terrain-only') {
+                terrainOnlyDueToBudget = true
+                const terrainOnlyMessage = decision.reason === 'too-large'
+                  ? '建物データが大きいため、地形のみ表示しています'
+                  : '建物データがないため、地形のみ表示しています'
+                if (decision.reason === 'too-large') {
+                  setCanForceBuildings(true)
+                  setCoverageWarning(`選択範囲の建物データが大きいため、地形のみ表示しています（建物約${estimate.totalBuildings}件 / タイル${estimate.contentTiles}件）`)
+                  setBuildingLoadDetail('建物データが大きいため地形のみ表示')
+                } else {
+                  setCoverageWarning('選択範囲に建物データがありません。地形のみ表示しています')
+                  setBuildingLoadDetail('建物データなし（地形のみ表示）')
+                }
+                setBuildingLoadProgress(null)
+                setListLoading(false)
+                onPipelineStateChange?.({
+                  phase: 'composing',
+                  progress: 50,
+                  message: terrainOnlyMessage,
+                  error: null,
+                })
+              }
             }
           }
         }
@@ -1540,96 +1561,96 @@ export default function Preview3D({
 
         const loadedTilesets: Cesium3DTileset[] = []
         if (!terrainOnlyDueToBudget) {
-        for (const url of urls) {
-          if (cancelled) {
-            for (const ts of loadedTilesets) {
-              try {
-                viewer!.scene.primitives.remove(ts)
-              } catch {
-                void 0
-              }
-            }
-            return
-          }
-          try {
-            const tileset = await Cesium3DTileset.fromUrl(url, {
-              // PLATEAUの粗い親タイルには建物がほぼ含まれないため、
-              // 距離で粗化すると建物が消える。常に最精細まで求めて全件表示する。
-              // 範囲外タイルの読込は applyClippingToTileset の update 抑止で抑える。
-              maximumScreenSpaceError: 0,
-            })
-            if (cancelled) {
-              for (const ts of loadedTilesets) {
-                try {
-                  viewer!.scene.primitives.remove(ts)
-                } catch {
-                  void 0
-                }
-              }
-              tileset.destroy()
-              return
-            }
-
-            viewer!.scene.primitives.add(tileset)
-            loadedTilesets.push(tileset)
-            tileset.customShader = createBuildingCustomShader(baseBuildingColor())
-            tileset.customShader.setUniform(
-              'u_ambientBoost',
-              whiteModelRef.current ? WHITE_MODEL_AMBIENT_BOOST : 0.0,
-            )
-            applyWhiteModelToTileset(tileset, whiteModelRef.current, whiteModelSavedRef.current)
-
-            const progressFn = (pending: number, processing: number): void => {
-              pendingMapRef.current.set(tileset, pending + processing)
-              const currentSum = Array.from(pendingMapRef.current.values()).reduce((a, b) => a + b, 0)
-              const isLoading = currentSum > 0
-              // タイル毎の連続発火で再レンダーが増え地図描画を圧迫するため間引く。
-              // 完了時は必ず反映し、最大値の集計だけは毎回行う。
-              if (isLoading && performance.now() - progressThrottleRef.current < 200) {
-                if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
+          const loadOne = async (url: string): Promise<void> => {
+            if (cancelled) return
+            try {
+              const tileset = await Cesium3DTileset.fromUrl(url, {
+                // PLATEAUの粗い親タイルには建物がほぼ含まれないため、
+                // 距離で粗化すると建物が消える。常に最精細まで求めて全件表示する。
+                // 範囲外タイルの読込は applyClippingToTileset の update 抑止で抑える。
+                maximumScreenSpaceError: 0,
+                // 大規模範囲でもメモリが膨らみ続けないようキャッシュ上限を設ける
+                cacheBytes: 128 * 1024 * 1024,
+                maximumCacheOverflowBytes: 64 * 1024 * 1024,
+                cullWithChildrenBounds: true,
+              })
+              if (cancelled) {
+                tileset.destroy()
                 return
               }
-              progressThrottleRef.current = performance.now()
-              setListLoading(isLoading)
-              if (isLoading) {
-                if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
-                const max = maxTilesRef.current
-                const rawLoaded = Math.max(0, max - currentSum)
-                setTotalTiles(max)
-                setLoadedTiles((prev) => {
-                  const prevVal = prev ?? 0
-                  return Math.max(prevVal, rawLoaded)
-                })
-                setBuildingLoadDetail(`3Dタイルを読み込み中`)
-                const loadedForProgress = Math.max(loadedTiles ?? 0, rawLoaded)
-                const ratio = max > 0 ? loadedForProgress / max : 0
-                const p = 30 + ratio * 55
-                setBuildingLoadProgress((prev) => (prev == null ? p : Math.max(prev, Math.min(85, p))))
-              } else {
-                const max = maxTilesRef.current
-                if (max > 0) {
+
+              viewer!.scene.primitives.add(tileset)
+              loadedTilesets.push(tileset)
+              tileset.customShader = createBuildingCustomShader(baseBuildingColor())
+              tileset.customShader.setUniform(
+                'u_ambientBoost',
+                whiteModelRef.current ? WHITE_MODEL_AMBIENT_BOOST : 0.0,
+              )
+              applyWhiteModelToTileset(tileset, whiteModelRef.current, whiteModelSavedRef.current)
+
+              const progressFn = (pending: number, processing: number): void => {
+                pendingMapRef.current.set(tileset, pending + processing)
+                const currentSum = Array.from(pendingMapRef.current.values()).reduce((a, b) => a + b, 0)
+                const isLoading = currentSum > 0
+                // タイル毎の連続発火で再レンダーが増え地図描画を圧迫するため間引く。
+                // 完了時は必ず反映し、最大値の集計だけは毎回行う。
+                if (isLoading && performance.now() - progressThrottleRef.current < 200) {
+                  if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
+                  return
+                }
+                progressThrottleRef.current = performance.now()
+                setListLoading(isLoading)
+                if (isLoading) {
+                  if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
+                  const max = maxTilesRef.current
+                  const rawLoaded = Math.max(0, max - currentSum)
                   setTotalTiles(max)
                   setLoadedTiles((prev) => {
                     const prevVal = prev ?? 0
-                    return Math.max(prevVal, max)
+                    return Math.max(prevVal, rawLoaded)
                   })
+                  setBuildingLoadDetail(`3Dタイルを読み込み中`)
+                  const loadedForProgress = Math.max(loadedTiles ?? 0, rawLoaded)
+                  const ratio = max > 0 ? loadedForProgress / max : 0
+                  const p = 30 + ratio * 55
+                  setBuildingLoadProgress((prev) => (prev == null ? p : Math.max(prev, Math.min(85, p))))
+                } else {
+                  const max = maxTilesRef.current
+                  if (max > 0) {
+                    setTotalTiles(max)
+                    setLoadedTiles((prev) => {
+                      const prevVal = prev ?? 0
+                      return Math.max(prevVal, max)
+                    })
+                  }
+                  setBuildingLoadDetail('建物リストを整理中')
+                  setBuildingLoadProgress((prev) => (prev == null ? 90 : Math.max(prev, 90)))
                 }
-                setBuildingLoadDetail('建物リストを整理中')
-                setBuildingLoadProgress((prev) => (prev == null ? 90 : Math.max(prev, 90)))
               }
-            }
-            tileset.loadProgress.addEventListener(progressFn)
-            progressListenersRef.current.set(tileset, progressFn)
+              tileset.loadProgress.addEventListener(progressFn)
+              progressListenersRef.current.set(tileset, progressFn)
 
-            applyClippingToTileset(tileset, bounds, includeSpanningBuildings, pickPoints)
+              applyClippingToTileset(tileset, bounds, includeSpanningBuildings, pickPoints)
 
-            if (tileLoadHandlerRef.current) {
-              tileset.tileLoad.addEventListener(tileLoadHandlerRef.current)
+              if (tileLoadHandlerRef.current) {
+                tileset.tileLoad.addEventListener(tileLoadHandlerRef.current)
+              }
+            } catch (err) {
+              console.warn('[Preview3D] Failed to load tileset:', url, err)
             }
-          } catch (err) {
-            console.warn('[Preview3D] Failed to load tileset:', url, err)
           }
-        }
+
+          // 同時4件まで並列ロードする（順序は不問、pushは並列安全）
+          const queue = [...urls]
+          await Promise.all(
+            Array.from({ length: 4 }, async () => {
+              for (;;) {
+                const url = queue.shift()
+                if (url === undefined) return
+                await loadOne(url)
+              }
+            }),
+          )
         }
 
         if (cancelled) {
@@ -1821,9 +1842,22 @@ export default function Preview3D({
           const gridHeightMeters = CesiumMath.toRadians(bounds.north - bounds.south) * 6371000
           const gridMaxDimMeters = Math.max(gridWidthMeters, gridHeightMeters)
           const terrainGridSize = adaptiveTerrainGridSize(gridMaxDimMeters)
-          const needsFetch = !sample || !sameBounds(sample.bounds, bounds) || sample.gridSize !== terrainGridSize
+          // 大規模範囲のみサンプリングレベルを適応させ、通常範囲は現行の mostDetailed 品質を維持する
+          const spanDeg = Math.max(bounds.east - bounds.west, bounds.north - bounds.south)
+          const terrainSamplingLevel = isLargeRange(bounds)
+            ? pickTerrainLevel(
+                spanDeg,
+                (terrainProvider as any)?.minimumLevel ?? 0,
+                (terrainProvider as any)?.maximumLevel ?? 99,
+              )
+            : undefined
+          const needsFetch =
+            !sample ||
+            !sameBounds(sample.bounds, bounds) ||
+            sample.gridSize !== terrainGridSize ||
+            (sample.samplingLevel ?? null) !== (terrainSamplingLevel ?? null)
           if (needsFetch) {
-            sample = await sampleTerrainData(bounds, terrainProvider!, terrainGridSize)
+            sample = await sampleTerrainData(bounds, terrainProvider!, terrainGridSize, terrainSamplingLevel)
             if (cancelled) return
             const aligned = await maybeAlignSample(sample!)
             if (cancelled) return

@@ -15,6 +15,8 @@ import {
   previewMaxZoomDistance,
   boundsMaxDimMeters,
   isSmallRange,
+  isLargeRange,
+  pickTerrainLevel,
   clearPreviewBudgetCache,
   type Bounds,
 } from './previewBudget'
@@ -176,10 +178,12 @@ describe('adaptiveTerrainGridSize / previewMaxZoomDistance', () => {
   it('最大寸法が大きいほどグリッド分割を減らす', () => {
     assert.equal(adaptiveTerrainGridSize(0), 128)
     assert.equal(adaptiveTerrainGridSize(5000), 128)
-    assert.equal(adaptiveTerrainGridSize(5001), 96)
-    assert.equal(adaptiveTerrainGridSize(10000), 96)
-    assert.equal(adaptiveTerrainGridSize(10001), 64)
-    assert.equal(adaptiveTerrainGridSize(30000), 64)
+    assert.equal(adaptiveTerrainGridSize(5001), 64)
+    assert.equal(adaptiveTerrainGridSize(10000), 64)
+    assert.equal(adaptiveTerrainGridSize(10001), 48)
+    assert.equal(adaptiveTerrainGridSize(20000), 48)
+    assert.equal(adaptiveTerrainGridSize(20001), 32)
+    assert.equal(adaptiveTerrainGridSize(30000), 32)
   })
 
   it('最大寸法に応じてズーム距離を伸ばす（下限10000m）', () => {
@@ -198,6 +202,40 @@ describe('adaptiveTerrainGridSize / previewMaxZoomDistance', () => {
     const over: Bounds = { west: 139.6864, south: 35.6836, east: 139.6972, north: 35.6928 }
     assert.ok(boundsMaxDimMeters(over) > 750)
     assert.equal(isSmallRange(over), false)
+  })
+})
+
+describe('isLargeRange', () => {
+  it('最大辺5kmを境界に大規模判定する', () => {
+    assert.equal(PREVIEW_BUDGET.largeRangeMaxDimMeters, 5000)
+    const tiny: Bounds = { west: 139.69, south: 35.69, east: 139.696, north: 35.694 }
+    assert.equal(isLargeRange(tiny), false)
+    const large: Bounds = { west: 139.6, south: 35.6, east: 139.7, north: 35.7 }
+    assert.ok(boundsMaxDimMeters(large) > 5000)
+    assert.equal(isLargeRange(large), true)
+  })
+
+  it('boundsMaxDimMeters の閾値と一致する', () => {
+    const bounds: Bounds = { west: 139.65, south: 35.65, east: 139.72, north: 35.71 }
+    assert.equal(isLargeRange(bounds), boundsMaxDimMeters(bounds) > 5000)
+  })
+})
+
+describe('pickTerrainLevel', () => {
+  it('非有限または 0 以下は minLevel', () => {
+    assert.equal(pickTerrainLevel(0, 2, 15), 2)
+    assert.equal(pickTerrainLevel(-1, 2, 15), 2)
+    assert.equal(pickTerrainLevel(NaN, 3, 15), 3)
+    assert.equal(pickTerrainLevel(Infinity, 4, 15), 4)
+  })
+
+  it('log2(1440/spanDeg) を丸めてクランプする', () => {
+    assert.equal(pickTerrainLevel(1440, 0, 24), 0)
+    assert.equal(pickTerrainLevel(1.40625, 0, 24), 10)
+    // 極小スパンは maxLevel にクランプ
+    assert.equal(pickTerrainLevel(1e-9, 0, 24), 24)
+    // 広いスパンは minLevel にクランプ
+    assert.equal(pickTerrainLevel(1440, 5, 15), 5)
   })
 })
 
@@ -394,5 +432,28 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
     const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
     assert.equal(est.totalBuildings, 5)
     assert.equal(est.contentTiles, 2) // bad も content として数えた
+  })
+
+  it('予算超過したら残りの content プローブを打ち切る', async () => {
+    const url = 'https://x/tileset.json'
+    const count = 10
+    const children: unknown[] = []
+    const routes: Record<string, () => Response> = {}
+    for (let i = 0; i < count; i++) {
+      const name = `t${i}.b3dm`
+      children.push(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], name))
+      routes[`https://x/${name}`] = () =>
+        resp(206, makeB3dm(PREVIEW_BUDGET.maxBuildings + 1), {
+          'Content-Range': 'bytes 0-16383/100',
+        })
+    }
+    routes[url] = () => resp(200, JSON.stringify(tileset(tile(null, null, children))))
+    const { fetch, calls } = mockFetch(routes)
+    const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
+    const probed = [...calls.keys()].filter((u) => u.endsWith('.b3dm')).length
+    assert.ok(probed < count)
+    assert.equal(est.totalBuildings, PREVIEW_BUDGET.maxBuildings + 1)
+    assert.equal(est.mode, 'terrain-only')
+    assert.equal(est.reason, 'too-large')
   })
 })

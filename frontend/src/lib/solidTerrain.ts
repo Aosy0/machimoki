@@ -15,6 +15,7 @@ import {
   Primitive,
   PrimitiveType,
   Transforms,
+  sampleTerrain,
   sampleTerrainMostDetailed,
 } from 'cesium'
 import type { TerrainProvider } from 'cesium'
@@ -232,12 +233,14 @@ export interface TerrainSampleData {
   minTopHeight: number
   indices: Uint32Array
   isFallback: boolean
+  samplingLevel: number | null
 }
 
 export async function sampleTerrainData(
   bounds: TerrainBounds,
   terrainProvider: TerrainProvider,
-  gridSize?: number
+  gridSize?: number,
+  samplingLevel?: number
 ): Promise<TerrainSampleData> {
   const resolvedGridSize = Math.max(2, Math.floor(gridSize ?? DEFAULT_GRID_SIZE))
   const widthDeg = bounds.east - bounds.west
@@ -261,14 +264,29 @@ export async function sampleTerrainData(
     throw new Error(`PLATEAU-Terrain取得失敗: TerrainProviderがPLATEAU-Terrainではありません (Ellipsoidまたはavailabilityなし)`)
   }
   let sampledPositions: Cartographic[]
+  let resolvedSamplingLevel: number | null = null
+  let sampleBatch: (positions: Cartographic[]) => Promise<Cartographic[]>
+  if (Number.isFinite(samplingLevel)) {
+    const requestedLevel = samplingLevel as number
+    const levelProvider = terrainProvider as TerrainProvider & {
+      minimumLevel?: number
+      maximumLevel?: number
+    }
+    const minimumLevel = levelProvider.minimumLevel ?? 0
+    const maximumLevel = levelProvider.maximumLevel
+    const level = maximumLevel === undefined
+      ? requestedLevel
+      : Math.min(Math.max(requestedLevel, minimumLevel), maximumLevel)
+    resolvedSamplingLevel = level
+    sampleBatch = (positions) => sampleTerrain(terrainProvider, level, positions)
+  } else {
+    sampleBatch = (positions) => sampleTerrainMostDetailed(terrainProvider, positions)
+  }
   try {
     sampledPositions = []
     for (let i = 0; i < samplePositions.length; i += TERRAIN_SAMPLE_BATCH_SIZE) {
       sampledPositions.push(
-        ...(await sampleTerrainMostDetailed(
-          terrainProvider,
-          samplePositions.slice(i, i + TERRAIN_SAMPLE_BATCH_SIZE),
-        )),
+        ...(await sampleBatch(samplePositions.slice(i, i + TERRAIN_SAMPLE_BATCH_SIZE))),
       )
     }
   } catch (e) {
@@ -317,6 +335,7 @@ export async function sampleTerrainData(
     minTopHeight,
     indices,
     isFallback,
+    samplingLevel: resolvedSamplingLevel,
   }
 }
 

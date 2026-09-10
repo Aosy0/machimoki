@@ -14,6 +14,7 @@ import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
 import { getAvailableLods, type Lod } from './lib/catalogApi'
+import { isLargeRange } from './lib/previewBudget'
 import { LOD_CATEGORY_ORDER, LOD_CATEGORY_STYLES } from './lib/coverageCategories'
 import {
   ensureCoverageLayer,
@@ -143,6 +144,7 @@ function App() {
 
   useEffect(() => {
     if (!selectionBounds) return
+    if (isLargeRange(selectionBounds)) return
 
     getAvailableLods(selectionBounds)
       .then((lods) => {

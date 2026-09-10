@@ -13,6 +13,8 @@ export const PREVIEW_BUDGET = {
   fetchTimeoutMs: 15000,
   /** この最大辺(m)以下は予算判定をスキップして無条件で建物表示する。 */
   smallRangeMaxDimMeters: 750,
+  /** この最大辺(m)を超える範囲は大規模範囲として扱う。 */
+  largeRangeMaxDimMeters: 5000,
 } as const
 
 export type PreviewMode = 'buildings' | 'terrain-only' | 'no-data'
@@ -96,9 +98,27 @@ interface EstimateCtx {
   totalBuildings: number
   totalContentBytes: number
   capped: boolean
+  exceededBudget: boolean
   failures: number
   visitedTilesets: Set<string>
   visitedContent: Set<string>
+}
+
+/** 予算超過（交差タイル数・建物数・コンテンツ量）を判定する。 */
+function overBudget(ctx: EstimateCtx): boolean {
+  return (
+    ctx.intersectingTiles > PREVIEW_BUDGET.maxIntersectingTiles ||
+    ctx.totalBuildings > PREVIEW_BUDGET.maxBuildings ||
+    ctx.totalContentBytes > PREVIEW_BUDGET.maxContentBytes
+  )
+}
+
+/** 予算超過なら走査・プローブの打ち切りフラグを立てる。 */
+function markOverBudget(ctx: EstimateCtx): boolean {
+  if (!overBudget(ctx)) return false
+  ctx.exceededBudget = true
+  ctx.capped = true
+  return true
 }
 
 /** 有限並列度で非同期タスクを流す最小プール。 */
@@ -317,7 +337,7 @@ async function walkTileset(url: string, ctx: EstimateCtx, stat: MuniStat): Promi
   if (!root) return
 
   const queue: TileNode[] = [root]
-  while (queue.length > 0) {
+  while (queue.length > 0 && !ctx.exceededBudget) {
     if (ctx.capped || ctx.signal?.aborted) return
     if (ctx.nodeCount >= ctx.scanNodeCap) {
       ctx.capped = true
@@ -330,6 +350,7 @@ async function walkTileset(url: string, ctx: EstimateCtx, stat: MuniStat): Promi
     if (region && !regionsIntersect(region, ctx.bounds)) continue
     ctx.intersectingTiles++
     stat.intersectingTiles++
+    if (markOverBudget(ctx)) return
 
     const contentUrl = node.content?.url ?? node.content?.uri
     if (contentUrl) {
@@ -340,6 +361,7 @@ async function walkTileset(url: string, ctx: EstimateCtx, stat: MuniStat): Promi
         ctx.contentTiles++
         stat.contentTiles++
         await probeContent(resolved, ctx, stat)
+        if (markOverBudget(ctx)) return
       }
     }
 
@@ -389,6 +411,7 @@ async function doEstimate(input: EstimateInput): Promise<PreviewLoadEstimate> {
     totalBuildings: 0,
     totalContentBytes: 0,
     capped: false,
+    exceededBudget: false,
     failures: 0,
     visitedTilesets: new Set(),
     visitedContent: new Set(),
@@ -396,6 +419,7 @@ async function doEstimate(input: EstimateInput): Promise<PreviewLoadEstimate> {
 
   const municipalities: PreviewMuniResult[] = []
   for (const url of input.tilesetUrls) {
+    if (ctx.capped || ctx.exceededBudget) break
     const stat: MuniStat = {
       url,
       name: nameFromUrl(url),
@@ -461,8 +485,19 @@ export async function estimatePreviewLoad(input: EstimateInput): Promise<Preview
  */
 export function adaptiveTerrainGridSize(maxDimMeters: number): number {
   if (maxDimMeters <= 5000) return 128
-  if (maxDimMeters <= 10000) return 96
-  return 64
+  if (maxDimMeters <= 10000) return 64
+  if (maxDimMeters <= 20000) return 48
+  return 32
+}
+
+/**
+ * spanDeg（度）に応じた地形タイルのレベルを選ぶ。
+ * スパンが広いほど低レベル（粗い）になる。
+ */
+export function pickTerrainLevel(spanDeg: number, minLevel: number, maxLevel: number): number {
+  if (!Number.isFinite(spanDeg) || spanDeg <= 0) return minLevel
+  const raw = Math.round(Math.log2((180 * 8) / spanDeg))
+  return Math.max(minLevel, Math.min(maxLevel, raw))
 }
 
 /** 選択範囲の最大寸法（m）に応じたカメラの最大ズーム距離（m）。 */
@@ -480,4 +515,8 @@ export function boundsMaxDimMeters(bounds: Bounds): number {
 
 export function isSmallRange(bounds: Bounds): boolean {
   return boundsMaxDimMeters(bounds) <= PREVIEW_BUDGET.smallRangeMaxDimMeters
+}
+
+export function isLargeRange(bounds: Bounds): boolean {
+  return boundsMaxDimMeters(bounds) > PREVIEW_BUDGET.largeRangeMaxDimMeters
 }
