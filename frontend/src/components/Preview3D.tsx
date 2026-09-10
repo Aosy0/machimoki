@@ -1052,6 +1052,11 @@ export default function Preview3D({
     shadowMap.darkness = 0.35
     shadowMap.maximumDistance = 20000.0
 
+    // 影のエッジを柔らかくする softShadows(PCF) はフラット面にモアレを生むため使えない。
+    // 代わりに FXAA(1パスのポストプロセス)を有効化し、輪郭や影エッジのジャギーを
+    // 低負荷で軽減する。シーンは単色のためテクスチャがぼける副作用は出にくい。
+    viewer.scene.postProcessStages.fxaa.enabled = true
+
     applyWhiteModelLook(viewer, whiteModelRef.current, gsiLayerRef, whiteModelSavedRef.current)
 
     // 直接配信の quantized-mesh (Ion不要) のみ使用
