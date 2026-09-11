@@ -89,7 +89,25 @@ function colorToLinearCartesian3(color: Color): Cartesian3 {
 }
 
 export const DEFAULT_BUILDING_COLOR = '#f4f1ea'
-const WHITE_MODEL_AMBIENT_BOOST = 0.65
+const WHITE_MODEL_AMBIENT_BOOST = 0.2
+
+// 白模型の直射光スケール。1.0だと日向面が純白(255)に張り付いて屋上の階調が消えるため、
+// トーンマッピング後にクリップが残らない値まで落とす(実測: 飽和14.2%→0.04%、平均輝度ほぼ不変)。
+const WHITE_MODEL_LIGHT_COLOR = 0.7
+
+// 白模型用の球面調和係数(PLATEAU公式チュートリアル tpc06-2 の値)。
+// 指向性ライトだけでは陰面が暗く平坦になるため、全方位の拡散光で陰影に階調を作る。
+const WHITE_MODEL_SH_COEFFICIENTS = [
+  new Cartesian3(1.5, 1.5, 1.5),
+  new Cartesian3(1.25, 1.25, 1.25),
+  new Cartesian3(1.5, 1.5, 1.5),
+  new Cartesian3(-1.25, -1.25, -1.25),
+  new Cartesian3(-1.0, -1.0, -1.0),
+  new Cartesian3(1.25, 1.25, 1.25),
+  new Cartesian3(0, 0, 0),
+  new Cartesian3(-1.0, -1.0, -1.0),
+  new Cartesian3(0, 0, 0),
+]
 
 function createBuildingCustomShader(color: Color): CustomShader {
   return new CustomShader({
@@ -137,7 +155,14 @@ interface WhiteModelSaved {
   aoUniforms: Record<string, number | boolean> | null
   imageryBrightness: number | null
   imagerySaturation: number | null
-  tilesetOriginals: WeakMap<object, { imageBasedLightingFactor?: Cartesian2; lightColor?: Cartesian3 }>
+  tilesetOriginals: WeakMap<
+    object,
+    {
+      imageBasedLightingFactor?: Cartesian2
+      sphericalHarmonicCoefficients?: Cartesian3[]
+      lightColor?: Cartesian3
+    }
+  >
 }
 
 function saveTilesetOriginal(
@@ -148,11 +173,15 @@ function saveTilesetOriginal(
   if (saved.tilesetOriginals.has(ts as object)) return
   try {
     const t = ts as unknown as {
-      imageBasedLightingFactor?: Cartesian2
+      imageBasedLighting?: {
+        imageBasedLightingFactor?: Cartesian2
+        sphericalHarmonicCoefficients?: Cartesian3[]
+      }
       lightColor?: Cartesian3
     }
     saved.tilesetOriginals.set(ts as object, {
-      imageBasedLightingFactor: t.imageBasedLightingFactor?.clone?.() ?? t.imageBasedLightingFactor,
+      imageBasedLightingFactor: t.imageBasedLighting?.imageBasedLightingFactor?.clone?.(),
+      sphericalHarmonicCoefficients: t.imageBasedLighting?.sphericalHarmonicCoefficients,
       lightColor: t.lightColor?.clone?.() ?? t.lightColor,
     })
   } catch {
@@ -167,16 +196,27 @@ function applyWhiteModelToTileset(
 ): void {
   try {
     const t = ts as unknown as {
-      imageBasedLightingFactor?: Cartesian2
+      imageBasedLighting?: {
+        imageBasedLightingFactor?: Cartesian2
+        sphericalHarmonicCoefficients?: Cartesian3[]
+      }
       lightColor?: Cartesian3
     }
+    const ibl = t.imageBasedLighting
     if (enabled) {
       saveTilesetOriginal(ts, saved)
-      if ('imageBasedLightingFactor' in ts) {
-        t.imageBasedLightingFactor = new Cartesian2(1.2, 1.2)
+      if (ibl) {
+        // 鏡面(specular)=0 で空由来の青い反射を遮断し、拡散光はニュートラルな
+        // 球面調和係数で与える。IBL既定値のままだと白が青く濁って灰色に見える。
+        ibl.imageBasedLightingFactor = new Cartesian2(1.0, 0.0)
+        ibl.sphericalHarmonicCoefficients = WHITE_MODEL_SH_COEFFICIENTS
       }
       if ('lightColor' in ts) {
-        t.lightColor = new Cartesian3(1.1, 1.05, 1.0)
+        t.lightColor = new Cartesian3(
+          WHITE_MODEL_LIGHT_COLOR,
+          WHITE_MODEL_LIGHT_COLOR,
+          WHITE_MODEL_LIGHT_COLOR,
+        )
       }
       return
     }
@@ -185,10 +225,15 @@ function applyWhiteModelToTileset(
     if (!saved) return
     const original = saved.tilesetOriginals.get(ts as object)
     if (!original) return
-    if ('imageBasedLightingFactor' in ts && original.imageBasedLightingFactor !== undefined) {
-      t.imageBasedLightingFactor = original.imageBasedLightingFactor
+    if (ibl && original.imageBasedLightingFactor !== undefined) {
+      ibl.imageBasedLightingFactor = original.imageBasedLightingFactor
     }
-    if ('lightColor' in ts && original.lightColor !== undefined) {
+    if (ibl) {
+      ibl.sphericalHarmonicCoefficients = original.sphericalHarmonicCoefficients
+    }
+    if ('lightColor' in ts) {
+      // 元が未設定(undefined)だった場合も含めて復元する。undefined を代入すると
+      // Model側がシェーダーを再構築し、既定のシーンライト使用に戻る。
       t.lightColor = original.lightColor
     }
     saved.tilesetOriginals.delete(ts as object)
@@ -267,8 +312,9 @@ function applyWhiteModelLook(
     }
     return
   }
+  // 白模型ON時も建物の落影を描画する（影なしだと平坦で浮いて見えるため）
   try {
-    viewer.shadows = false
+    viewer.shadows = true
   } catch {
     void 0
   }
@@ -286,11 +332,11 @@ function applyWhiteModelLook(
         saved.aoUniforms = { ...ao.uniforms }
       }
       ao.enabled = true
-      ao.uniforms['intensity'] = 2.0
-      ao.uniforms['bias'] = 0.1
-      ao.uniforms['lengthCap'] = 0.03
-      ao.uniforms['stepSize'] = 1.0
-      ao.uniforms['blurStepSize'] = 0.86
+      // AOの細かい縞ノイズ対策。lengthCap を小さくするとサンプリングが高周波化して
+      // モアレ状の縞が出るため、Cesium既定の 0.26 を使い bias も強めにする。
+      ao.uniforms['intensity'] = 1.1
+      ao.uniforms['bias'] = 0.3
+      ao.uniforms['lengthCap'] = 0.26
       ao.uniforms['ambientOcclusionOnly'] = false
     }
   } catch {
@@ -334,6 +380,7 @@ function applyContour(viewer: Viewer, style: GsiTileStyle): void {
   const isEllipsoid = !tp || tp.constructor?.name === 'EllipsoidTerrainProvider' || tp.availability === undefined
   if (!isContourStyle(style) || isEllipsoid) {
     globe.material = undefined
+    viewer.scene.requestRender()
     return
   }
   try {
@@ -347,6 +394,7 @@ function applyContour(viewer: Viewer, style: GsiTileStyle): void {
     }
     if (h > 100000) {
       globe.material = undefined
+      viewer.scene.requestRender()
       return
     }
     const spacing = h > 30000 ? 100 : h > 15000 ? 50 : h > 8000 ? 20 : 10
@@ -358,6 +406,7 @@ function applyContour(viewer: Viewer, style: GsiTileStyle): void {
   } catch {
     globe.material = undefined
   }
+  viewer.scene.requestRender()
 }
 
 interface ContourDebugInfo {
@@ -763,6 +812,7 @@ export default function Preview3D({
     if (feature && feature.show) {
       feature.color = HOVER_COLOR
     }
+    viewerRef.current?.scene.requestRender()
   }
 
   const restoreFiltersAndColors = (): void => {
@@ -770,6 +820,7 @@ export default function Preview3D({
       refilterSpanning(ts)
     }
     forEachBuildingFeature(applyStateToFeature)
+    viewerRef.current?.scene.requestRender()
   }
 
   // タイル読み込みごとに setBuildingItems を呼ぶと再レンダリングが爆発するため、
@@ -1006,6 +1057,7 @@ export default function Preview3D({
       skyBox: false,
       skyAtmosphere: false,
       baseLayer: false,
+      // 白模型ON時は影なしで起動する（OFF時にapplyWhiteModelLookで有効化される）
       shadows: !whiteModelRef.current,
     })
 
@@ -1017,6 +1069,10 @@ export default function Preview3D({
     viewer.scene.globe.depthTestAgainstTerrain = true
 
     viewer.scene.screenSpaceCameraController.maximumZoomDistance = 10000.0
+
+    // 静止中は描画を停止してGPU負荷を抑える。シーンを変更した箇所で
+    // scene.requestRender() を呼ぶ（カメラ移動・タイル読込はCesiumが自動で再描画する）。
+    viewer.scene.requestRenderMode = true
 
     const directionalLight = new DirectionalLight({
       direction: new Cartesian3(0.5, -0.5, -1.0),
@@ -1036,7 +1092,10 @@ export default function Preview3D({
     shadowMap.softShadows = false
     shadowMap.normalOffset = true
     shadowMap.fadingEnabled = true
-    shadowMap.darkness = 0.35
+    // 影の暗さ(shadowMap.darkness)を PLATEAU View 5.0 (Map環境) の実運用値と
+    // 同じ 0.7 にする。0.35 では日陰面が暗く沈み、浅い角度で壁面が多く見える
+    // 向きだとモデル全体が灰色に見えていた（浅視点の暗画素 54% → 0.7で0.5%）。
+    shadowMap.darkness = 0.7
     shadowMap.maximumDistance = 20000.0
 
     // 影のエッジを柔らかくする softShadows(PCF) はフラット面にモアレを生むため使えない。
@@ -1198,6 +1257,7 @@ export default function Preview3D({
     console.log(
       `[Preview3D] Imagery layers visibility set to: ${showTerrainImagery}`
     )
+    viewer.scene.requestRender()
   }, [showTerrainImagery])
 
   // gsiStyle変更時にGSIレイヤーを差し替える（Gridレイヤーには触れない）
@@ -1215,6 +1275,7 @@ export default function Preview3D({
       applyWhiteModelLook(viewer, true, gsiLayerRef, whiteModelSavedRef.current)
     }
     applyContour(viewer, gsiStyle)
+    viewer.scene.requestRender()
   }, [gsiStyle])
 
   // 他タブ（App.tsx等）とlocalStorage経由でスタイルを同期する
@@ -1566,7 +1627,10 @@ export default function Preview3D({
 
               viewer!.scene.primitives.add(tileset)
               loadedTilesets.push(tileset)
-              tileset.customShader = createBuildingCustomShader(baseBuildingColor())
+              // 白模型ON時はPLATEAU Viewと同様に拡散色を純白へ置換する
+              tileset.customShader = createBuildingCustomShader(
+                whiteModelRef.current ? Color.WHITE : baseBuildingColor()
+              )
               tileset.customShader.setUniform(
                 'u_ambientBoost',
                 whiteModelRef.current ? WHITE_MODEL_AMBIENT_BOOST : 0.0,
@@ -1881,6 +1945,7 @@ export default function Preview3D({
           terrainBoundingSphereRef.current = terrainBoundingSphere
           clearGlobeClippingPlanes(viewer!.scene.globe)
           viewer!.scene.globe.show = false
+          viewer!.scene.requestRender()
           console.log('[Preview3D] Solid terrain mesh applied')
           setDebugInfo({
             isFallback: (sample as TerrainSampleData).isFallback ?? false,
@@ -1894,6 +1959,7 @@ export default function Preview3D({
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
           viewer!.scene.globe.show = true
+          viewer!.scene.requestRender()
           console.log('[Preview3D] Globe clipping planes applied')
           setDebugInfo(null)
         }
@@ -1984,12 +2050,15 @@ export default function Preview3D({
   }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain, forceBuildingsBounds])
 
   useEffect(() => {
-    const linear = colorToLinearCartesian3(baseBuildingColor())
+    const linear = whiteModelRef.current
+      ? colorToLinearCartesian3(Color.WHITE)
+      : colorToLinearCartesian3(baseBuildingColor())
     for (const ts of tilesetsRef.current) {
       if (ts.customShader) {
         ts.customShader.setUniform('u_buildingColor', linear)
       }
     }
+    viewerRef.current?.scene.requestRender()
   }, [buildingColor])
 
   useEffect(() => {
@@ -2000,6 +2069,10 @@ export default function Preview3D({
       applyWhiteModelToTileset(ts, whiteModel, whiteModelSavedRef.current)
       if (ts.customShader) {
         ts.customShader.setUniform('u_ambientBoost', whiteModel ? WHITE_MODEL_AMBIENT_BOOST : 0.0)
+        ts.customShader.setUniform(
+          'u_buildingColor',
+          whiteModel ? colorToLinearCartesian3(Color.WHITE) : colorToLinearCartesian3(baseBuildingColor()),
+        )
       }
     }
     viewer.scene.requestRender()
@@ -2092,12 +2165,14 @@ export default function Preview3D({
     for (const tileset of tilesetsRef.current) {
       refilterSpanning(tileset, includeSpanningBuildings)
     }
+    viewerRef.current?.scene.requestRender()
   }, [includeSpanningBuildings])
 
   useEffect(() => {
     for (const tileset of tilesetsRef.current) {
       refilterPickPoints(tileset, pickPoints)
     }
+    viewerRef.current?.scene.requestRender()
   }, [pickPoints])
 
   useEffect(() => {
@@ -2129,6 +2204,7 @@ export default function Preview3D({
     } catch (err) {
       console.error('[Preview3D] Terrain update failed:', err)
     }
+    viewer.scene.requestRender()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terrainThickness, flattenBottom, terrainColor])
 
