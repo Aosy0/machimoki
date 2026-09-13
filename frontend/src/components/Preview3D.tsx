@@ -113,6 +113,15 @@ const WHITE_MODEL_SH_COEFFICIENTS = [
   new Cartesian3(0, 0, 0),
 ]
 
+// 通常表示(白模型OFF)用の球面調和係数。白模型と同じ係数を0.43倍し、先頭係数を
+// PLATEAU View 5.0 (Map環境) の 0.651 と同水準(0.645)にした値。Cesium既定の
+// 環境IBL(暗く青い)のままでは壁面が暗く沈み、視点角度で建物の色が変わる
+// (実測: 建物平均輝度 俯瞰102.9/低角58.6)。この値では俯瞰166.9/低角161.6と
+// 角度によらず安定し、色味もニュートラルになる(R-B: -13/-17 → +6/+7)。
+const BUILDING_SH_COEFFICIENTS = WHITE_MODEL_SH_COEFFICIENTS.map(
+  (v) => new Cartesian3(v.x * 0.43, v.y * 0.43, v.z * 0.43),
+)
+
 function createBuildingCustomShader(color: Color): CustomShader {
   return new CustomShader({
     mode: CustomShaderMode.REPLACE_MATERIAL,
@@ -195,14 +204,7 @@ interface WhiteModelSaved {
   aoUniforms: Record<string, number | boolean> | null
   imageryBrightness: number | null
   imagerySaturation: number | null
-  tilesetOriginals: WeakMap<
-    object,
-    {
-      imageBasedLightingFactor?: Cartesian2
-      sphericalHarmonicCoefficients?: Cartesian3[]
-      lightColor?: Cartesian3
-    }
-  >
+  tilesetOriginals: WeakMap<object, { lightColor?: Cartesian3 }>
 }
 
 function saveTilesetOriginal(
@@ -212,16 +214,8 @@ function saveTilesetOriginal(
   if (!saved) return
   if (saved.tilesetOriginals.has(ts as object)) return
   try {
-    const t = ts as unknown as {
-      imageBasedLighting?: {
-        imageBasedLightingFactor?: Cartesian2
-        sphericalHarmonicCoefficients?: Cartesian3[]
-      }
-      lightColor?: Cartesian3
-    }
+    const t = ts as unknown as { lightColor?: Cartesian3 }
     saved.tilesetOriginals.set(ts as object, {
-      imageBasedLightingFactor: t.imageBasedLighting?.imageBasedLightingFactor?.clone?.(),
-      sphericalHarmonicCoefficients: t.imageBasedLighting?.sphericalHarmonicCoefficients,
       lightColor: t.lightColor?.clone?.() ?? t.lightColor,
     })
   } catch {
@@ -260,23 +254,21 @@ function applyWhiteModelToTileset(
       }
       return
     }
-    // OFF時はONで保存した元の値だけを復元する。保存がなければ何も触らない
-    // （機能実装前の描画 = Cesium既定値を維持するため）。
-    if (!saved) return
-    const original = saved.tilesetOriginals.get(ts as object)
-    if (!original) return
-    if (ibl && original.imageBasedLightingFactor !== undefined) {
-      ibl.imageBasedLightingFactor = original.imageBasedLightingFactor
+    // OFF時もONと同じ「鏡面IBL無効 + ニュートラルな拡散IBL」にする。Cesium既定の
+    // 環境IBL(暗く青い)のままでは壁面が暗く沈み、視点角度で建物の色が変わる
+    // (実測: 建物平均輝度 俯瞰102.9/低角58.6 → 安定化後 俯瞰166.9/低角161.6)。
+    // 直射光の色(lightColor)だけON時に保存した元の値へ戻す。
+    if (saved) {
+      const original = saved.tilesetOriginals.get(ts as object)
+      if (original && 'lightColor' in ts) {
+        t.lightColor = original.lightColor
+      }
+      saved.tilesetOriginals.delete(ts as object)
     }
     if (ibl) {
-      ibl.sphericalHarmonicCoefficients = original.sphericalHarmonicCoefficients
+      ibl.imageBasedLightingFactor = new Cartesian2(1.0, 0.0)
+      ibl.sphericalHarmonicCoefficients = BUILDING_SH_COEFFICIENTS
     }
-    if ('lightColor' in ts) {
-      // 元が未設定(undefined)だった場合も含めて復元する。undefined を代入すると
-      // Model側がシェーダーを再構築し、既定のシーンライト使用に戻る。
-      t.lightColor = original.lightColor
-    }
-    saved.tilesetOriginals.delete(ts as object)
   } catch {
     void 0
   }
