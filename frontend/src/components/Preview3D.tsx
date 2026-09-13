@@ -95,6 +95,10 @@ const WHITE_MODEL_AMBIENT_BOOST = 0.2
 // トーンマッピング後にクリップが残らない値まで落とす(実測: 飽和14.2%→0.04%、平均輝度ほぼ不変)。
 const WHITE_MODEL_LIGHT_COLOR = 0.7
 
+// 地面クランプの余裕(m)。includeTerrain=true では Cesium の地面衝突判定が無効なため、
+// ズームで地形メッシュの裏へ抜けて見えるのを防ぐ(preRender で地表+この値まで戻す)。
+const CAMERA_GROUND_CLEARANCE = 2
+
 // 白模型用の球面調和係数(PLATEAU公式チュートリアル tpc06-2 の値)。
 // 指向性ライトだけでは陰面が暗く平坦になるため、全方位の拡散光で陰影に階調を作る。
 const WHITE_MODEL_SH_COEFFICIENTS = [
@@ -146,6 +150,42 @@ function clearGlobeClippingPlanes(
   globe: { clippingPlanes: ClippingPlaneCollection | undefined }
 ): void {
   globe.clippingPlanes = undefined
+}
+
+// 平行投影中のホイールズーム。Cesium のズームはカメラ位置を動かすだけで
+// ortho の frustum.width を変えないため見た目の拡大率が変化しない。
+// enableZoom を切って width を直接スケールする(1ノッチ≒5%)。
+const ORTHO_ZOOM_MIN_WIDTH = 1
+const ORTHO_ZOOM_MAX_WIDTH = 20000
+const ORTHO_ZOOM_PER_NOTCH = 0.0005
+
+function attachOrthographicZoom(viewer: Viewer): () => void {
+  const controller = viewer.scene.screenSpaceCameraController
+  controller.enableZoom = false
+  const canvas = viewer.scene.canvas
+  const onWheel = (e: WheelEvent): void => {
+    if (viewer.isDestroyed()) return
+    const frustum = viewer.camera.frustum
+    if (!(frustum instanceof OrthographicFrustum)) return
+    const width = frustum.width
+    if (typeof width !== 'number' || !Number.isFinite(width)) return
+    e.preventDefault()
+    // Firefox等の line 単位ホイールをピクセル相当へ揃える
+    const delta = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 40 : e.deltaY
+    const factor = Math.exp(delta * ORTHO_ZOOM_PER_NOTCH)
+    frustum.width = Math.min(
+      Math.max(width * factor, ORTHO_ZOOM_MIN_WIDTH),
+      ORTHO_ZOOM_MAX_WIDTH
+    )
+    viewer.scene.requestRender()
+  }
+  canvas.addEventListener('wheel', onWheel, { passive: false })
+  return () => {
+    canvas.removeEventListener('wheel', onWheel)
+    if (!viewer.isDestroyed()) {
+      controller.enableZoom = true
+    }
+  }
 }
 
 interface WhiteModelSaved {
@@ -674,6 +714,7 @@ export default function Preview3D({
   }, [isDevMode])
   const isOrthographicRef = useRef(false)
   const toggleProjectionRef = useRef<(() => void) | null>(null)
+  const orthoWheelCleanupRef = useRef<(() => void) | null>(null)
   const applyPresetViewRef = useRef<
     ((headingDeg: number, pitchDeg: number, opts?: { useTop?: boolean }) => void) | null
   >(null)
@@ -920,6 +961,8 @@ export default function Preview3D({
     const viewer = viewerRef.current
     if (!viewer) return
     if (isOrthographicRef.current) {
+      orthoWheelCleanupRef.current?.()
+      orthoWheelCleanupRef.current = null
       viewer.camera.switchToPerspectiveFrustum()
       isOrthographicRef.current = false
       setIsOrthographic(false)
@@ -943,6 +986,8 @@ export default function Preview3D({
           ;(viewer.camera.frustum as OrthographicFrustum).width = Math.max(maxDim * 1.6, 300)
         } catch {}
       }
+      // 平行投影では Cesium 既定のズームが効かないため、wheel→frustum.width へ差し替える
+      orthoWheelCleanupRef.current = attachOrthographicZoom(viewer)
       isOrthographicRef.current = true
       setIsOrthographic(true)
       try {
@@ -1069,6 +1114,71 @@ export default function Preview3D({
     viewer.scene.globe.depthTestAgainstTerrain = true
 
     viewer.scene.screenSpaceCameraController.maximumZoomDistance = 10000.0
+
+    // ホイール1ノッチの変化が大きすぎるため、ズーム倍率を既定(5.0)から半分にする。
+    // 変化量は距離比例で、1ノッチ(Chrome, deltaY=100)あたりの拡大率は zoomFactor に比例する。
+    viewer.scene.screenSpaceCameraController.zoomFactor = 2.5
+
+    // 地平線より上(地下側)を向く tilt 操作を禁止する。真横までは許可。
+    // これがないと tilt で天地が反転し、モデルの裏面へ回り込めてしまう。
+    viewer.scene.screenSpaceCameraController.maximumTiltAngle = Math.PI / 2
+
+    // includeTerrain=true では globe.show=false + 地形は Primitive のため、Cesium の
+    // 地面衝突判定が無効(Scene.getHeight は globe.show か enableCollision=true の3D Tilesしか
+    // 見ない)。さらに globe.show=false 中は Globe の地形タイル更新自体が止まり globe.getHeight も
+    // 信頼できない。そのため表示中のソリッド地形と同一のサンプル格子から地表高を補間し、
+    // カメラ高さを地表+CAMERA_GROUND_CLEARANCE 以上へ戻す(範囲外はメッシュが無いため対象外)。
+    const groundCartoScratch = new Cartographic()
+    const groundEcefScratch = new Cartesian3()
+    const groundHeightAt = (
+      sample: TerrainSampleData,
+      x: number,
+      y: number
+    ): number => {
+      const i = (y * sample.gridSize + x) * 3
+      groundEcefScratch.x = sample.topEcefValues[i]
+      groundEcefScratch.y = sample.topEcefValues[i + 1]
+      groundEcefScratch.z = sample.topEcefValues[i + 2]
+      return Cartographic.fromCartesian(
+        groundEcefScratch,
+        undefined,
+        groundCartoScratch
+      ).height
+    }
+    const clampCameraAboveGround = (): void => {
+      if (viewer.isDestroyed()) return
+      const sample = terrainSampleCacheRef.current
+      if (!sample || !solidTerrainPrimitiveRef.current) return
+      const carto = viewer.camera.positionCartographic
+      const { west, south, east, north } = sample.bounds
+      const fx = (CesiumMath.toDegrees(carto.longitude) - west) / (east - west)
+      const fy = (CesiumMath.toDegrees(carto.latitude) - south) / (north - south)
+      if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return
+      const g = sample.gridSize - 1
+      const cx = Math.min(g, Math.max(0, fx * g))
+      const cy = Math.min(g, Math.max(0, fy * g))
+      const x0 = Math.floor(cx)
+      const y0 = Math.floor(cy)
+      const x1 = Math.min(g, x0 + 1)
+      const y1 = Math.min(g, y0 + 1)
+      const tx = cx - x0
+      const ty = cy - y0
+      const h00 = groundHeightAt(sample, x0, y0)
+      const h10 = groundHeightAt(sample, x1, y0)
+      const h01 = groundHeightAt(sample, x0, y1)
+      const h11 = groundHeightAt(sample, x1, y1)
+      const ground = (h00 * (1 - tx) + h10 * tx) * (1 - ty) + (h01 * (1 - tx) + h11 * tx) * ty
+      if (!Number.isFinite(ground)) return
+      const minHeight = ground + CAMERA_GROUND_CLEARANCE
+      if (carto.height < minHeight) {
+        viewer.camera.position = Cartesian3.fromRadians(
+          carto.longitude,
+          carto.latitude,
+          minHeight,
+        )
+      }
+    }
+    viewer.scene.preRender.addEventListener(clampCameraAboveGround)
 
     // 静止中は描画を停止してGPU負荷を抑える。シーンを変更した箇所で
     // scene.requestRender() を呼ぶ（カメラ移動・タイル読込はCesiumが自動で再描画する）。
@@ -1221,6 +1331,9 @@ export default function Preview3D({
       setTerrainError(null)
       try { (viewer as any)._machimokiContourCleanup?.() } catch {}
       cancelAnimationFrame(contourDebugRaf)
+      try { viewer.scene.preRender.removeEventListener(clampCameraAboveGround) } catch {}
+      orthoWheelCleanupRef.current?.()
+      orthoWheelCleanupRef.current = null
       viewer.destroy()
       viewerRef.current = null
     }

@@ -13,9 +13,10 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ mode, isOpen }) => {
   ]
 
   const previewControls = [
-    '左ドラッグ: 視点回転',
-    '右ドラッグ: 平行移動',
-    'スクロール: ズーム',
+    '左ドラッグ: 視点移動',
+    '右ドラッグ / ホイール: ズーム',
+    '中 / Ctrl + ドラッグ: 傾き',
+    'Shift + 左ドラッグ: 見回し',
   ]
 
   const controls = mode === 'map' ? mapControls : previewControls
