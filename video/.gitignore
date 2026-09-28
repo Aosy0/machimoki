@@ -5,5 +5,7 @@ public/captures/
 tools/capture/*.log
 .tmp-capture/
 
-# 未使用（src/fonts.ts は Noto の 400/700 のみ登録している）
-public/fonts/NotoSansJP-Black.ttf
+# v1 復元用の webpack キャッシュ退避（巨大なバイナリのため追跡しない）
+v1-recovered/packs-raw/
+
+# NotoSansJP-Black.ttf は v1（src-v1/）が使うため追跡する

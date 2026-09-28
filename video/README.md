@@ -15,6 +15,9 @@ npx remotion browser ensure
 npm run studio        # プレビュー（Remotion Studio）
 npm run render        # MachimokiDemo を out/machimoki-demo.mp4 に書き出し
 npm run render:smoke  # SmokeTest を out/smoke.mp4 に書き出し（3秒・動作確認用）
+
+# 旧デザイン（v1）の再レンダリング（復元済みソース: src-v1/）
+npx remotion render src-v1/index.ts MachimokiDemoV1 out/machimoki-demo-v1.mp4 --codec=h264 --crf=19 --pixel-format=yuv420p --muted --overwrite
 ```
 
 ## フォント
@@ -25,6 +28,7 @@ npm run render:smoke  # SmokeTest を out/smoke.mp4 に書き出し（3秒・動
 - `NotoSansJP-Regular.ttf` / `NotoSansJP-Bold.ttf` — 見出し・本文（family `NotoSansJP`、weight 400/700）
 - `IBMPlexMono-Regular.ttf` / `IBMPlexMono-Medium.ttf` — データ・座標・実寸・検証値・CLI（family `IBMPlexMono`、weight 400/500）
 - `OFL.txt` — IBM Plex Mono のライセンス（SIL OFL 1.1）
+- `NotoSansJP-Black.ttf` — v1（`src-v1/`）のみが使う 900 ウェイト
 
 再ダウンロード元:
 
@@ -37,14 +41,15 @@ curl -s "https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&disp
 
 ## 版管理
 
-- 追跡する: `src/`、`public/fonts/`、`tools/`、`STORYBOARD.md`、`package.json`
-- 追跡しない（`.gitignore`）: `node_modules/`、`out/`（レンダリング出力）、`public/captures/`（実アプリのキャプチャ素材）
+- 追跡する: `src/`、`src-v1/`、`public/fonts/`、`tools/`、`STORYBOARD.md`、`package.json`
+- 追跡しない（`.gitignore`）: `node_modules/`、`out/`（レンダリング出力）、`public/captures/`（実アプリのキャプチャ素材）、`v1-recovered/packs-raw/`（復元用の webpack キャッシュ退避）
 - **レンダリング結果は上書きされる**ため、提出・比較用に残す場合は `out/` 内で版管理された名前に複製する
   （例: `out/machimoki-demo-v2-2026-09-28.mp4`）
 
 ## コンポジション契約
 
 - `MachimokiDemo`: 1920x1080, 30fps, 1800 frames（60秒）
+- `MachimokiDemoV1`: 1920x1080, 30fps, 1800 frames（60秒）— 旧デザイン（v1）の復元版。ソースは `src-v1/`
 - `SmokeTest`: 1920x1080, 30fps, 90 frames（3秒）
 
 これら ID と仕様は変更しないこと。
