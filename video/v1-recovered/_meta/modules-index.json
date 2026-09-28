@@ -1,0 +1,107 @@
+[
+  {
+    "rel": "src/MachimokiDemo.tsx",
+    "bytes": 1733,
+    "fromBuffer": "flat7-buf-0069.bin",
+    "source": "webpack://./src/MachimokiDemo.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/Root.tsx",
+    "bytes": 575,
+    "fromBuffer": "flat7-buf-0077.bin",
+    "source": "webpack://./src/Root.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/SmokeTest.tsx",
+    "bytes": 425,
+    "fromBuffer": "flat7-buf-0073.bin",
+    "source": "webpack://./src/SmokeTest.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/components/ui.tsx",
+    "bytes": 6975,
+    "fromBuffer": "flat7-buf-0035.bin",
+    "source": "webpack://./src/components/ui.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/config.ts",
+    "bytes": 2745,
+    "fromBuffer": "flat7-buf-0001.bin",
+    "source": "webpack://./src/config.ts",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/fonts.ts",
+    "bytes": 340,
+    "fromBuffer": "flat7-buf-0004.bin",
+    "source": "webpack://./src/fonts.ts",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/index.ts",
+    "bytes": 105,
+    "fromBuffer": "flat7-buf-0081.bin",
+    "source": "webpack://./src/index.ts",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/scenes/Scene01Title.tsx",
+    "bytes": 2270,
+    "fromBuffer": "flat7-buf-0039.bin",
+    "source": "webpack://./src/scenes/Scene01Title.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/scenes/Scene02Problem.tsx",
+    "bytes": 7043,
+    "fromBuffer": "flat7-buf-0043.bin",
+    "source": "webpack://./src/scenes/Scene02Problem.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/scenes/Scene03Solution.tsx",
+    "bytes": 2377,
+    "fromBuffer": "flat7-buf-0047.bin",
+    "source": "webpack://./src/scenes/Scene03Solution.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/scenes/Scene04Select.tsx",
+    "bytes": 5621,
+    "fromBuffer": "flat7-buf-0051.bin",
+    "source": "webpack://./src/scenes/Scene04Select.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/scenes/Scene05Preview.tsx",
+    "bytes": 4775,
+    "fromBuffer": "flat7-buf-0055.bin",
+    "source": "webpack://./src/scenes/Scene05Preview.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/scenes/Scene06Export.tsx",
+    "bytes": 7497,
+    "fromBuffer": "flat7-buf-0003.bin",
+    "source": "webpack://./src/scenes/Scene06Export.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/scenes/Scene07Showcase.tsx",
+    "bytes": 4844,
+    "fromBuffer": "flat7-buf-0061.bin",
+    "source": "webpack://./src/scenes/Scene07Showcase.tsx",
+    "sourcesInMap": 1
+  },
+  {
+    "rel": "src/scenes/Scene08Outro.tsx",
+    "bytes": 1873,
+    "fromBuffer": "flat7-buf-0065.bin",
+    "source": "webpack://./src/scenes/Scene08Outro.tsx",
+    "sourcesInMap": 1
+  }
+]
