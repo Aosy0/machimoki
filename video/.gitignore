@@ -1,0 +1,9 @@
+node_modules/
+out/
+public/captures/
+.cache/
+tools/capture/*.log
+.tmp-capture/
+
+# 未使用（src/fonts.ts は Noto の 400/700 のみ登録している）
+public/fonts/NotoSansJP-Black.ttf
