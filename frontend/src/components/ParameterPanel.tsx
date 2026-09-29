@@ -176,13 +176,8 @@ function ParameterPanel({
           >
             <option value="3mf">3MF（推奨）</option>
             <option value="stl">STL</option>
-            <option value="machimoki">Machimoki（.machimoki）</option>
+            {/* .machimoki は本番未対応のためUIから非表示（型・core実装は維持） */}
           </select>
-          {parameters.exportFormat === 'machimoki' && (
-            <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '6px' }}>
-              .machimoki はモデル（3MF）とメタデータを1つのZIPにまとめた形式です
-            </p>
-          )}
         </div>
 
         {/* Up Axis */}
