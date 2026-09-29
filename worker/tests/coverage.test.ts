@@ -1,5 +1,6 @@
 /// <reference path="../worker-configuration.d.ts" />
 import { describe, it, expect, vi } from 'vitest'
+import { gzipSync } from 'node:zlib'
 import app from '../src/index.js'
 
 type MockR2Object = {
@@ -59,14 +60,27 @@ describe('GET /api/coverage', () => {
 })
 
 describe('GET /api/coverage/tiles/:z/:x/:y', () => {
-  it('R2 の MVT タイルを返し Cache-Control を付与する', async () => {
-    const bucket = makeBucket({ 'tiles/4/5/6.pbf': tilePbf })
+  it('R2 の gzip タイルを解凍した MVT として返し Content-Encoding を付けない', async () => {
+    const gz = gzipSync(new Uint8Array(tilePbf))
+    const bucket = makeBucket({
+      'tiles/4/5/6.pbf': gz.buffer.slice(gz.byteOffset, gz.byteOffset + gz.byteLength) as ArrayBuffer,
+    })
     const res = await app.request('/api/coverage/tiles/4/5/6', {}, makeEnv(bucket))
 
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('application/vnd.mapbox-vector-tile')
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=86400')
-    expect(res.headers.get('Content-Encoding')).toBe('gzip')
+    // Content-Encoding を付けるとエッジ圧縮と二重になり MapLibre がパース失敗する
+    expect(res.headers.get('Content-Encoding')).toBeNull()
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(tilePbf))
+  })
+
+  it('非圧縮の R2 タイルはそのまま返す', async () => {
+    const bucket = makeBucket({ 'tiles/4/5/6.pbf': tilePbf })
+    const res = await app.request('/api/coverage/tiles/4/5/6', {}, makeEnv(bucket))
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Encoding')).toBeNull()
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(tilePbf))
   })
 

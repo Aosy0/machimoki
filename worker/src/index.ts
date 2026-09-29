@@ -82,6 +82,26 @@ app.get('/api/coverage', async (c) => {
   })
 })
 
+/**
+ * R2 のタイルは tippecanoe が gzip 圧縮して保存している。
+ * Content-Encoding: gzip を付けてそのまま返すと Cloudflare のエッジ圧縮が重なり
+ * 二重 gzip になる。ブラウザは1層しか解凍しないため MapLibre のワーカーが
+ * gzip バイト列を検出してパースに失敗し（"data is not gzipped"）、
+ * 全カバレッジタイルが errored になって表示されなくなる。
+ * ここで解凍した生の MVT を返し、圧縮はエッジに任せる。
+ */
+async function decompressIfGzipped(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+  const head = new Uint8Array(bytes, 0, Math.min(2, bytes.byteLength))
+  if (head.length < 2 || head[0] !== 0x1f || head[1] !== 0x8b) {
+    // 旧形式（非圧縮）のタイルはそのまま返す
+    return bytes
+  }
+  const stream = new Response(bytes).body!.pipeThrough(
+    new DecompressionStream('gzip'),
+  )
+  return await new Response(stream).arrayBuffer()
+}
+
 // MVT coverage tile from R2
 app.get('/api/coverage/tiles/:z/:x/:y', async (c) => {
   const z = c.req.param('z')
@@ -94,11 +114,10 @@ app.get('/api/coverage/tiles/:z/:x/:y', async (c) => {
   if (!obj) {
     return c.json({ error: 'Tile not found' }, 404)
   }
-  const body = await obj.arrayBuffer()
+  const body = await decompressIfGzipped(await obj.arrayBuffer())
   return c.body(body, 200, {
     'Content-Type': 'application/vnd.mapbox-vector-tile',
     'Cache-Control': 'public, max-age=86400',
-    'Content-Encoding': 'gzip',
   })
 })
 
@@ -132,7 +151,7 @@ app.post('/api/export', async (c) => {
     return c.json(
       {
         error:
-          'Origin server not configured. ブラウザ側のWASMエクスポートが失敗した場合のみこのエラーが表示されます。範囲を小さく（0.02度以内）して再試行するか、開発者に連絡してください。',
+          'Origin server not configured. ブラウザ側のWASMエクスポートが失敗した場合のみこのエラーが表示されます。範囲を狭くして再試行するか、開発者に連絡してください。',
         hint: 'workerExport_failed',
       },
       503
