@@ -12,6 +12,7 @@ export type ExportFormat = '3mf' | 'stl' | 'machimoki'
 export interface ExportOptions {
   terrainThickness: number;
   flattenBottom: boolean;
+  terrainGridSize?: number;
   format: ExportFormat;
   lod?: Lod;
   includeTerrain?: boolean;

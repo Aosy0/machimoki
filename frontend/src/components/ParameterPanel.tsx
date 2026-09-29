@@ -1,9 +1,11 @@
 import React, { useRef } from 'react'
 import type { Lod } from '../lib/catalogApi'
+import { TERRAIN_GRID_PRESETS } from '../lib/previewBudget'
 
 export interface Parameters {
   terrainThickness: number
   flattenBottom: boolean
+  terrainGridSize: number | null
   includeTerrain: boolean
   showTerrainImagery: boolean
   lod: Lod
@@ -20,9 +22,16 @@ interface ParameterPanelProps {
   onChange: (params: Parameters) => void
   onExport: () => void
   availableLods?: Lod[]
+  autoTerrainGridSize?: number
 }
 
-function ParameterPanel({ parameters, onChange, onExport, availableLods = ['lod1', 'lod2'] }: ParameterPanelProps) {
+function ParameterPanel({
+  parameters,
+  onChange,
+  onExport,
+  availableLods = ['lod1', 'lod2'],
+  autoTerrainGridSize = 128,
+}: ParameterPanelProps) {
   const handleChange = <K extends keyof Parameters>(key: K, value: Parameters[K]) => {
     onChange({ ...parameters, [key]: value })
   }
@@ -290,6 +299,64 @@ function ParameterPanel({ parameters, onChange, onExport, availableLods = ['lod1
             />
             <span style={{ fontSize: '14px' }}>底面をフラット化</span>
           </label>
+
+          <div style={{ marginTop: '12px', opacity: parameters.includeTerrain ? 1 : 0.5 }}>
+            <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '6px' }}>
+              地形メッシュ解像度
+              {parameters.terrainGridSize == null
+                ? `（自動: ${autoTerrainGridSize}分割）`
+                : `（${parameters.terrainGridSize}分割）`}
+            </label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              <button
+                type="button"
+                onClick={() => handleChange('terrainGridSize', null)}
+                disabled={!parameters.includeTerrain}
+                title={`範囲の広さから自動決定（現在 ${autoTerrainGridSize}分割）`}
+                style={{
+                  flex: '1 1 0',
+                  padding: '6px 0',
+                  fontSize: '11px',
+                  borderRadius: '4px',
+                  cursor: parameters.includeTerrain ? 'pointer' : 'default',
+                  background: parameters.terrainGridSize == null ? 'var(--accent)' : 'var(--border)',
+                  color: parameters.terrainGridSize == null ? 'var(--text)' : 'var(--text-dim)',
+                  border: '1px solid var(--border-strong)',
+                  fontWeight: parameters.terrainGridSize == null ? 'bold' : 'normal',
+                }}
+              >
+                自動
+              </button>
+              {TERRAIN_GRID_PRESETS.map((preset) => {
+                const active = parameters.terrainGridSize === preset.value
+                return (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() => handleChange('terrainGridSize', preset.value)}
+                    disabled={!parameters.includeTerrain}
+                    title={`${preset.value}分割`}
+                    style={{
+                      flex: '1 1 0',
+                      padding: '6px 0',
+                      fontSize: '11px',
+                      borderRadius: '4px',
+                      cursor: parameters.includeTerrain ? 'pointer' : 'default',
+                      background: active ? 'var(--accent)' : 'var(--border)',
+                      color: active ? 'var(--text)' : 'var(--text-dim)',
+                      border: '1px solid var(--border-strong)',
+                      fontWeight: active ? 'bold' : 'normal',
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                )
+              })}
+            </div>
+            <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '6px', marginBottom: 0 }}>
+              解像度が高いほど地形が細かくなり、処理時間とメッシュサイズが増えます
+            </p>
+          </div>
         </div>
 
         {/* Spanning Buildings Setting */}

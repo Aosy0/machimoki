@@ -82,7 +82,7 @@ describe('buildPrintableModel', () => {
 
     const result = await buildPrintableModel(bounds, options);
 
-    expect(buildTerrainMesh).toHaveBeenCalledWith(bounds, 10, true);
+    expect(buildTerrainMesh).toHaveBeenCalledWith(bounds, 10, true, undefined);
     expect(buildBuildingMeshes).toHaveBeenCalledWith(bounds, 'lod1', undefined);
     expect(createManifoldFromMesh).toHaveBeenCalledWith(buildingMesh);
     expect(unionMeshes).toHaveBeenCalledTimes(1);

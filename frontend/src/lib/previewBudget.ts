@@ -490,6 +490,25 @@ export function adaptiveTerrainGridSize(maxDimMeters: number): number {
   return 32
 }
 
+/** 地形メッシュ解像度のプリセット（分割数）。 */
+export const TERRAIN_GRID_PRESETS = [
+  { value: 32, label: '低' },
+  { value: 64, label: '中' },
+  { value: 128, label: '高' },
+  { value: 256, label: '最高' },
+] as const
+
+/**
+ * 明示指定があればそれを、無ければ範囲最大寸法から自動決定した分割数を返す。
+ */
+export function resolveTerrainGridSize(
+  explicit: number | null | undefined,
+  maxDimMeters: number,
+): number {
+  if (explicit == null) return adaptiveTerrainGridSize(maxDimMeters)
+  return Math.max(32, Math.min(256, Math.round(explicit)))
+}
+
 /**
  * spanDeg（度）に応じた地形タイルのレベルを選ぶ。
  * スパンが広いほど低レベル（粗い）になる。

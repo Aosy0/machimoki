@@ -89,6 +89,13 @@ describe('terrain', () => {
     expect(mesh.positions.length).toBe(numVertices * 3);
   });
 
+  it('builds a custom grid size (64x64)', async () => {
+    const mesh = await buildTerrainMesh(bounds, 10, true, 64);
+
+    expect(mesh.positions.length).toBe(64 * 64 * 2 * 3);
+    expect(mesh.indices.length).toBeGreaterThan(0);
+  });
+
   it('flattens bottom when flattenBottom is true', async () => {
     const mesh = await buildTerrainMesh(bounds, 10, true);
     const numVertices = 128 * 128;

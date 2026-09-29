@@ -12,6 +12,7 @@ import {
   classifyPreviewLoad,
   estimatePreviewLoad,
   adaptiveTerrainGridSize,
+  resolveTerrainGridSize,
   previewMaxZoomDistance,
   boundsMaxDimMeters,
   isSmallRange,
@@ -202,6 +203,19 @@ describe('adaptiveTerrainGridSize / previewMaxZoomDistance', () => {
     const over: Bounds = { west: 139.6864, south: 35.6836, east: 139.6972, north: 35.6928 }
     assert.ok(boundsMaxDimMeters(over) > 750)
     assert.equal(isSmallRange(over), false)
+  })
+})
+
+describe('resolveTerrainGridSize', () => {
+  it('明示指定が無ければ範囲最大寸法から自動決定する', () => {
+    assert.equal(resolveTerrainGridSize(null, 3000), 128)
+    assert.equal(resolveTerrainGridSize(null, 8000), 64)
+  })
+
+  it('明示指定はそのまま使い、範囲外はクランプする', () => {
+    assert.equal(resolveTerrainGridSize(192, 8000), 192)
+    assert.equal(resolveTerrainGridSize(999, 8000), 256)
+    assert.equal(resolveTerrainGridSize(1, 8000), 32)
   })
 })
 

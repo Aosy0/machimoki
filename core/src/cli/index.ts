@@ -5,6 +5,7 @@
  *   export   --bounds <west,south,east,north> --terrain-thickness <number>
  *            [--flatten-bottom|--no-flatten-bottom] [--format <3mf|stl>]
  *            --output <file> [--lod <lod1|lod2>] [--no-terrain]
+ *            [--terrain-grid <integer 4-512>]
  *
  *   validate --file <path> [--json|--no-json]
  */
@@ -110,6 +111,13 @@ program
   .option('--include-spanning-buildings', 'include buildings that span the selection boundary', false)
   .option('--pick-point <lon,lat>', 'keep only buildings whose footprint contains the point (repeatable)', collectPickPoint, [])
   .option('--exclude-gmlid <id>', 'exclude a building by gmlid (repeatable)', collectExcludeGmlId, [])
+  .option('--terrain-grid <number>', 'terrain mesh subdivisions (NxN, integer 4-512)', (value) => {
+    const num = Number(value);
+    if (!Number.isInteger(num) || num < 4 || num > 512) {
+      throw new Error(`Invalid terrain grid: ${value}. Expected integer 4-512`);
+    }
+    return num;
+  })
   .option('--scale <number>', 'uniform scale factor (>0)', (value) => {
     const num = Number(value);
     if (Number.isNaN(num) || num <= 0) {
@@ -130,6 +138,10 @@ program
       pickPoints: options.pickPoint.length > 0 ? options.pickPoint : undefined,
       excludedGmlIds: options.excludeGmlid.length > 0 ? options.excludeGmlid : undefined,
     };
+
+    if (options.terrainGrid !== undefined) {
+      exportOptions.terrainGridSize = options.terrainGrid;
+    }
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds);
 

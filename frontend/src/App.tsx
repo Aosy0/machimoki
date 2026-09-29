@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import Preview3D, { DEFAULT_BUILDING_COLOR } from './components/Preview3D'
 import ParameterPanel from './components/ParameterPanel'
@@ -14,7 +14,7 @@ import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
 import { getAvailableLods, type Lod } from './lib/catalogApi'
-import { isLargeRange } from './lib/previewBudget'
+import { adaptiveTerrainGridSize, boundsMaxDimMeters, isLargeRange, resolveTerrainGridSize } from './lib/previewBudget'
 import { LOD_CATEGORY_ORDER, LOD_CATEGORY_STYLES } from './lib/coverageCategories'
 import {
   ensureCoverageLayer,
@@ -65,6 +65,7 @@ function App() {
   const [parameters, setParameters] = useState<Parameters>({
     terrainThickness: 10,
     flattenBottom: true,
+    terrainGridSize: null,
     includeTerrain: true,
     showTerrainImagery: false,
     lod: 'lod1',
@@ -225,16 +226,21 @@ function App() {
     setCoverageLayerVisible(mapLibreMap, coverageVisible)
   }, [mapLibreMap, coverageVisible])
 
+  const autoTerrainGridSize = useMemo(
+    () => (selectionBounds ? adaptiveTerrainGridSize(boundsMaxDimMeters(selectionBounds)) : 128),
+    [selectionBounds],
+  )
+  const resolvedTerrainGridSize = useMemo(
+    () =>
+      selectionBounds
+        ? resolveTerrainGridSize(parameters.terrainGridSize, boundsMaxDimMeters(selectionBounds))
+        : 128,
+    [selectionBounds, parameters.terrainGridSize],
+  )
+
   const handleExport = useCallback(async () => {
     if (!selectionBounds) {
       setErrorMessage('エクスポートする前に地図で範囲を選択してください')
-      return
-    }
-    const widthDeg = selectionBounds.east - selectionBounds.west
-    const heightDeg = selectionBounds.north - selectionBounds.south
-    const MAX_DEG = 0.02
-    if (widthDeg > MAX_DEG || heightDeg > MAX_DEG) {
-      setErrorMessage(`選択範囲が大きすぎます。各辺は${MAX_DEG}度（約2.2km）以下にしてください。`)
       return
     }
     setIsExporting(true)
@@ -243,6 +249,7 @@ function App() {
     const exportOptions = {
       terrainThickness: parameters.terrainThickness,
       flattenBottom: parameters.flattenBottom,
+      terrainGridSize: resolvedTerrainGridSize,
       format: parameters.exportFormat as '3mf' | 'stl' | 'machimoki',
       machimokiModelFormat: parameters.exportFormat === 'machimoki' ? ('3mf' as const) : undefined,
       lod: parameters.lod,
@@ -265,7 +272,7 @@ function App() {
         let terrainMesh: import('@machimoki/core').RawMesh | null = null
         if (exportOptions.includeTerrain) {
           setPipelineState({ phase: 'acquiring', progress: 30, message: '地形データ取得中...', error: null })
-          terrainMesh = await buildTerrainMesh(selectionBounds, exportOptions.terrainThickness, exportOptions.flattenBottom)
+          terrainMesh = await buildTerrainMesh(selectionBounds, exportOptions.terrainThickness, exportOptions.flattenBottom, exportOptions.terrainGridSize)
         }
         setPipelineState({ phase: 'composing', progress: 50, message: '3Dモデル生成中（Worker）...', error: null })
         const { buffer, warnings } = await runWorkerExport(selectionBounds, exportOptions as unknown as import('@machimoki/core').ExportOptions, buildingMeshes, terrainMesh, (p, m) =>
@@ -287,6 +294,7 @@ function App() {
       await exportModel(selectionBounds, {
         terrainThickness: parameters.terrainThickness,
         flattenBottom: parameters.flattenBottom,
+        terrainGridSize: resolvedTerrainGridSize,
         format: parameters.exportFormat,
         machimokiModelFormat: parameters.exportFormat === 'machimoki' ? '3mf' : undefined,
         lod: parameters.lod,
@@ -312,7 +320,7 @@ function App() {
     } finally {
       setIsExporting(false)
     }
-  }, [parameters, selectionBounds, scale, pickPoints, excludedBuildingIds])
+  }, [parameters, selectionBounds, scale, pickPoints, excludedBuildingIds, resolvedTerrainGridSize])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
   const handleDismissError = () => {
@@ -956,6 +964,7 @@ function App() {
                 showTerrainImagery={parameters.showTerrainImagery}
                 terrainThickness={parameters.terrainThickness}
                 flattenBottom={parameters.flattenBottom}
+                terrainGridSize={parameters.terrainGridSize}
                 includeTerrain={parameters.includeTerrain}
                 buildingColor={parameters.buildingColor}
                 terrainColor={parameters.terrainColor}
@@ -988,6 +997,7 @@ function App() {
               }}
               onExport={handleExport}
               availableLods={availableLods}
+              autoTerrainGridSize={autoTerrainGridSize}
             />
           </div>
         <HelpPanel mode={activeTab} isOpen={helpOpen} />

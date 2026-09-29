@@ -64,7 +64,7 @@ import {
 import {
   estimatePreviewLoad,
   classifyPreviewLoad,
-  adaptiveTerrainGridSize,
+  resolveTerrainGridSize,
   previewMaxZoomDistance,
   isSmallRange,
   isLargeRange,
@@ -639,6 +639,7 @@ interface Preview3DProps {
   showTerrainImagery?: boolean
   terrainThickness?: number
   flattenBottom?: boolean
+  terrainGridSize?: number | null
   includeTerrain?: boolean
   buildingColor?: string
   terrainColor?: string
@@ -659,6 +660,7 @@ export default function Preview3D({
   showTerrainImagery = false,
   terrainThickness = 10,
   flattenBottom = true,
+  terrainGridSize,
   includeTerrain = true,
   buildingColor = DEFAULT_BUILDING_COLOR,
   terrainColor = '#ffffff',
@@ -1995,7 +1997,7 @@ export default function Preview3D({
           const gridWidthMeters = CesiumMath.toRadians(bounds.east - bounds.west) * 6371000 * Math.cos(CesiumMath.toRadians(gridCenterLat))
           const gridHeightMeters = CesiumMath.toRadians(bounds.north - bounds.south) * 6371000
           const gridMaxDimMeters = Math.max(gridWidthMeters, gridHeightMeters)
-          const terrainGridSize = adaptiveTerrainGridSize(gridMaxDimMeters)
+          const resolvedTerrainGridSize = resolveTerrainGridSize(terrainGridSize, gridMaxDimMeters)
           // 大規模範囲のみサンプリングレベルを適応させ、通常範囲は現行の mostDetailed 品質を維持する
           const spanDeg = Math.max(bounds.east - bounds.west, bounds.north - bounds.south)
           const terrainSamplingLevel = isLargeRange(bounds)
@@ -2008,10 +2010,10 @@ export default function Preview3D({
           const needsFetch =
             !sample ||
             !sameBounds(sample.bounds, bounds) ||
-            sample.gridSize !== terrainGridSize ||
+            sample.gridSize !== resolvedTerrainGridSize ||
             (sample.samplingLevel ?? null) !== (terrainSamplingLevel ?? null)
           if (needsFetch) {
-            sample = await sampleTerrainData(bounds, terrainProvider!, terrainGridSize, terrainSamplingLevel)
+            sample = await sampleTerrainData(bounds, terrainProvider!, resolvedTerrainGridSize, terrainSamplingLevel)
             if (cancelled) return
             const aligned = await maybeAlignSample(sample!)
             if (cancelled) return
@@ -2152,7 +2154,7 @@ export default function Preview3D({
       estimateAbort.abort()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain, forceBuildingsBounds])
+  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain, forceBuildingsBounds, terrainGridSize])
 
   useEffect(() => {
     const linear = whiteModelRef.current

@@ -38,6 +38,8 @@ export interface ExportOptions {
   // b3dm batch table の gmlid 属性で指定した建物をエクスポートから除外する。
   // 未指定・空配列の場合はすべての建物を含める。
   excludedGmlIds?: string[];
+  // 地形メッシュの分割数（NxN）。未指定時は 128。
+  terrainGridSize?: number;
 }
 
 export interface ExportRequest {

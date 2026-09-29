@@ -46,17 +46,19 @@ export async function buildTerrainMesh(
   bounds: Bounds,
   thickness: number,
   flattenBottom: boolean,
+  gridSize: number = TERRAIN_GRID_SIZE,
 ): Promise<RawMesh> {
+  const n = Number.isFinite(gridSize) ? Math.max(2, Math.floor(gridSize)) : TERRAIN_GRID_SIZE;
   const widthDeg = bounds.east - bounds.west;
   const heightDeg = bounds.north - bounds.south;
   const centerLon = (bounds.west + bounds.east) / 2;
   const centerLat = (bounds.south + bounds.north) / 2;
 
   const positions: Cartographic[] = [];
-  for (let y = 0; y < TERRAIN_GRID_SIZE; y++) {
-    for (let x = 0; x < TERRAIN_GRID_SIZE; x++) {
-      const lon = bounds.west + (widthDeg * x) / (TERRAIN_GRID_SIZE - 1);
-      const lat = bounds.south + (heightDeg * y) / (TERRAIN_GRID_SIZE - 1);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const lon = bounds.west + (widthDeg * x) / (n - 1);
+      const lat = bounds.south + (heightDeg * y) / (n - 1);
       positions.push(Cartographic.fromDegrees(lon, lat));
     }
   }
@@ -97,7 +99,7 @@ export async function buildTerrainMesh(
     topZValues.push(engine.y);
   }
 
-  const numVertices = TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE;
+  const numVertices = n * n;
 
   // Determine bottom Z
   const minTopZ = Math.min(...topZValues);
@@ -114,11 +116,11 @@ export async function buildTerrainMesh(
   const indices: number[] = [];
 
   // Top surface
-  for (let y = 0; y < TERRAIN_GRID_SIZE - 1; y++) {
-    for (let x = 0; x < TERRAIN_GRID_SIZE - 1; x++) {
-      const a = y * TERRAIN_GRID_SIZE + x;
+  for (let y = 0; y < n - 1; y++) {
+    for (let x = 0; x < n - 1; x++) {
+      const a = y * n + x;
       const b = a + 1;
-      const c = (y + 1) * TERRAIN_GRID_SIZE + x;
+      const c = (y + 1) * n + x;
       const d = c + 1;
       indices.push(a, b, c);
       indices.push(b, d, c);
@@ -126,11 +128,11 @@ export async function buildTerrainMesh(
   }
 
   // Bottom surface
-  for (let y = 0; y < TERRAIN_GRID_SIZE - 1; y++) {
-    for (let x = 0; x < TERRAIN_GRID_SIZE - 1; x++) {
-      const a = y * TERRAIN_GRID_SIZE + x + numVertices;
+  for (let y = 0; y < n - 1; y++) {
+    for (let x = 0; x < n - 1; x++) {
+      const a = y * n + x + numVertices;
       const b = a + 1;
-      const c = (y + 1) * TERRAIN_GRID_SIZE + x + numVertices;
+      const c = (y + 1) * n + x + numVertices;
       const d = c + 1;
       indices.push(a, c, b);
       indices.push(b, c, d);
@@ -138,7 +140,7 @@ export async function buildTerrainMesh(
   }
 
   // Side walls
-  for (let x = 0; x < TERRAIN_GRID_SIZE - 1; x++) {
+  for (let x = 0; x < n - 1; x++) {
     const t1 = x;
     const t2 = x + 1;
     const b1 = t1 + numVertices;
@@ -147,8 +149,8 @@ export async function buildTerrainMesh(
     indices.push(t2, b1, b2);
   }
 
-  for (let x = 0; x < TERRAIN_GRID_SIZE - 1; x++) {
-    const t1 = (TERRAIN_GRID_SIZE - 1) * TERRAIN_GRID_SIZE + x;
+  for (let x = 0; x < n - 1; x++) {
+    const t1 = (n - 1) * n + x;
     const t2 = t1 + 1;
     const b1 = t1 + numVertices;
     const b2 = t2 + numVertices;
@@ -156,18 +158,18 @@ export async function buildTerrainMesh(
     indices.push(t2, b2, b1);
   }
 
-  for (let y = 0; y < TERRAIN_GRID_SIZE - 1; y++) {
-    const t1 = y * TERRAIN_GRID_SIZE;
-    const t2 = (y + 1) * TERRAIN_GRID_SIZE;
+  for (let y = 0; y < n - 1; y++) {
+    const t1 = y * n;
+    const t2 = (y + 1) * n;
     const b1 = t1 + numVertices;
     const b2 = t2 + numVertices;
     indices.push(t1, t2, b1);
     indices.push(t2, b2, b1);
   }
 
-  for (let y = 0; y < TERRAIN_GRID_SIZE - 1; y++) {
-    const t1 = y * TERRAIN_GRID_SIZE + (TERRAIN_GRID_SIZE - 1);
-    const t2 = (y + 1) * TERRAIN_GRID_SIZE + (TERRAIN_GRID_SIZE - 1);
+  for (let y = 0; y < n - 1; y++) {
+    const t1 = y * n + (n - 1);
+    const t2 = (y + 1) * n + (n - 1);
     const b1 = t1 + numVertices;
     const b2 = t2 + numVertices;
     indices.push(t1, b1, t2);

@@ -168,7 +168,12 @@ async function buildPrintableModelUnsafe(
   const buildingMeshes = await buildBuildingMeshes(bounds, lod, options.excludedGmlIds);
 
   let terrainMesh = includeTerrain
-    ? await buildTerrainMesh(bounds, options.terrainThickness, options.flattenBottom)
+    ? await buildTerrainMesh(
+        bounds,
+        options.terrainThickness,
+        options.flattenBottom,
+        options.terrainGridSize,
+      )
     : null;
 
   const components: RawMesh[] = [];

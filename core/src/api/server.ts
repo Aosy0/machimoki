@@ -172,6 +172,15 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     excludedGmlIds = parsed;
   }
 
+  let terrainGridSize: number | undefined;
+  if (record.terrainGridSize !== undefined) {
+    const parsed = parseNumber(record.terrainGridSize);
+    if (parsed === null || !Number.isInteger(parsed) || parsed < 4 || parsed > 512) {
+      return { ok: false, error: 'Invalid terrainGridSize' };
+    }
+    terrainGridSize = parsed;
+  }
+
   const options: ExportOptions = {
     terrainThickness,
     flattenBottom,
@@ -186,6 +195,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     includeSpanningBuildings,
     pickPoints,
     excludedGmlIds,
+    terrainGridSize,
   };
 
   return { ok: true, value: { bounds, options } };
