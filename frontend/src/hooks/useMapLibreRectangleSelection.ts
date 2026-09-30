@@ -12,6 +12,16 @@ import { boundsFromLngLat, validateSelectionBounds } from '../lib/selectionBound
 
 export type { SelectionBounds } from '../lib/selectionBounds'
 import type { SelectionBounds } from '../lib/selectionBounds'
+import {
+  applyResizeDrag,
+  hitTestSelectionHandle,
+  movedBeyondTolerance,
+  resizeCursor,
+  selectionHandleScreenPoints,
+  RESIZE_MIN_GAP_PX,
+  type ResizeHandle,
+  type SelectionHandlePoints,
+} from '../lib/mapSelectionResize'
 
 /** 微小矩形のしきい値（px）。これ未満はクリック扱いで選択にしない。 */
 export const MIN_SELECTION_PIXELS = 5
@@ -48,6 +58,7 @@ export interface SelectionMapLike {
   dragPan: { disable(): void; enable(): void }
   getCanvas(): HTMLCanvasElement
   unproject(point: [number, number]): { lng: number; lat: number }
+  project(point: [number, number]): { x: number; y: number }
   getBounds(): {
     getWest(): number
     getSouth(): number
@@ -60,6 +71,9 @@ export interface SelectionControllerOptions {
   map: SelectionMapLike
   globalTarget: Pick<Window, 'addEventListener' | 'removeEventListener'>
   onSelection: (bounds: SelectionBounds) => void
+  onPreview?: (bounds: SelectionBounds) => void
+  /** ホバーハンドルの変化通知（ハイライト用。ヒットテスト結果と完全整合） */
+  onHover?: (handle: ResizeHandle | null) => void
   onError?: (message: string) => void
   onDrawingChange?: (drawing: boolean) => void
 }
@@ -68,6 +82,7 @@ export interface SelectionController {
   destroy(): void
   cancel(): void
   selectCurrentView(): void
+  setBounds(bounds: SelectionBounds | null): void
 }
 
 interface SelectionOverlay {
@@ -113,6 +128,8 @@ export function createMapLibreSelectionController(
   options: SelectionControllerOptions,
 ): SelectionController {
   const { map, globalTarget, onSelection } = options
+  const onPreview = options.onPreview ?? ((): void => {})
+  const onHover = options.onHover ?? ((): void => {})
   const onError = options.onError ?? ((): void => {})
   const onDrawingChange = options.onDrawingChange ?? ((): void => {})
 
@@ -123,6 +140,14 @@ export function createMapLibreSelectionController(
   let startPx: SelectionPoint | null = null
   let currentPx: SelectionPoint | null = null
   let overlay: SelectionOverlay | null = null
+
+  // 確定後リサイズ用の状態
+  let currentBounds: SelectionBounds | null = null
+  let resizeHandle: ResizeHandle | null = null
+  let resizeStartBounds: SelectionBounds | null = null
+  let resizeStartPx: SelectionPoint | null = null
+  let resizeMoved = false
+  let hoverHandle: ResizeHandle | null = null
 
   const canvas = map.getCanvas()
 
@@ -169,6 +194,35 @@ export function createMapLibreSelectionController(
     onSelection(result.bounds)
   }
 
+  const readLngLat = (point: SelectionPoint): { lng: number; lat: number } =>
+    map.unproject([point.x, point.y])
+
+  const cornersOf = (bounds: SelectionBounds): SelectionHandlePoints =>
+    selectionHandleScreenPoints(bounds, (lngLat): SelectionPoint => map.project(lngLat))
+
+  // 画面RESIZE_MIN_GAP_PX相当の経緯度デルタ（正値）。
+  const minGapAt = (point: SelectionPoint): { lng: number; lat: number } => {
+    const origin = map.unproject([point.x, point.y])
+    const right = map.unproject([point.x + RESIZE_MIN_GAP_PX, point.y])
+    const down = map.unproject([point.x, point.y + RESIZE_MIN_GAP_PX])
+    return { lng: Math.abs(right.lng - origin.lng), lat: Math.abs(down.lat - origin.lat) }
+  }
+
+  const setCursor = (handle: ResizeHandle | null): void => {
+    const style = (canvas as { style?: { cursor?: string } }).style
+    if (style) style.cursor = handle ? resizeCursor(handle) : ''
+  }
+
+  const cancelResize = (): void => {
+    resizeHandle = null
+    resizeStartBounds = null
+    resizeStartPx = null
+    resizeMoved = false
+    hoverHandle = null
+    map.dragPan.enable()
+    setCursor(null)
+  }
+
   const readClientPoint = (e: unknown): SelectionPoint | null => {
     if (typeof e !== 'object' || e === null) return null
     const record = e as Record<string, unknown>
@@ -185,38 +239,129 @@ export function createMapLibreSelectionController(
     const shiftKey = record['shiftKey']
     if (typeof button !== 'number' || typeof shiftKey !== 'boolean') return
     const pointerType = record['pointerType']
-    if (
-      !shouldStartSelection({
-        button,
-        shiftKey,
-        pointerType: typeof pointerType === 'string' ? pointerType : 'mouse',
-      })
-    ) {
+    const resolvedPointerType = typeof pointerType === 'string' ? pointerType : 'mouse'
+    const preventDefault = record['preventDefault']
+    const callPreventDefault = (): void => {
+      if (typeof preventDefault === 'function') {
+        ;(preventDefault as () => void).call(e)
+      }
+    }
+
+    // Shift+ドラッグは従来どおり新規選択を優先する。
+    if (shouldStartSelection({ button, shiftKey, pointerType: resolvedPointerType })) {
+      const point = readClientPoint(e)
+      if (!point) return
+      // 通常起きないが、リサイズ状態が残っていれば先に片付ける。
+      if (resizeHandle !== null) cancelResize()
+      // 古い矩形のホバー強調を消す（新規選択中はハイライト不要）。
+      if (hoverHandle !== null) {
+        hoverHandle = null
+        onHover(null)
+      }
+      shiftAtStart = shiftKey
+      startPx = point
+      currentPx = point
+      setDrawing(true)
+      map.dragPan.disable()
+      callPreventDefault()
+      overlay = createOverlay(canvas)
       return
     }
+
+    // Shiftなしの通常押下: 確定済み矩形の辺・角ならリサイズ開始。それ以外はパンに任せる。
+    if (button !== 0 || resolvedPointerType !== 'mouse') return
+    if (drawing || currentBounds === null) return
     const point = readClientPoint(e)
     if (!point) return
-    shiftAtStart = shiftKey
-    startPx = point
-    currentPx = point
-    setDrawing(true)
+    const handle = hitTestSelectionHandle(point, cornersOf(currentBounds))
+    if (handle === null) return
+    resizeHandle = handle
+    resizeStartBounds = currentBounds
+    resizeStartPx = point
+    resizeMoved = false
+    // リサイズ中もアクティブなハンドルの強調を維持する（位置追従はpreview経由）。
+    hoverHandle = handle
+    onHover(handle)
     map.dragPan.disable()
-    const preventDefault = record['preventDefault']
-    if (typeof preventDefault === 'function') {
-      ;(preventDefault as () => void).call(e)
-    }
-    overlay = createOverlay(canvas)
+    callPreventDefault()
+    setCursor(handle)
   }
 
   const handleMouseMove = (e: unknown): void => {
-    if (!drawing || !startPx) return
     const point = readClientPoint(e)
     if (!point) return
-    currentPx = point
-    overlay?.update(startPx, point)
+
+    // 確定後リサイズ中: プレビューをライブ更新（DOM boxには触れない）。
+    if (resizeHandle !== null && resizeStartBounds !== null && resizeStartPx !== null) {
+      const next = applyResizeDrag(
+        resizeStartBounds,
+        resizeHandle,
+        readLngLat(point),
+        minGapAt(point),
+      )
+      currentBounds = next
+      onPreview(next)
+      if (!resizeMoved && movedBeyondTolerance(resizeStartPx, point)) {
+        resizeMoved = true
+      }
+      return
+    }
+
+    if (drawing && startPx) {
+      currentPx = point
+      overlay?.update(startPx, point)
+      return
+    }
+
+    // 非ドラッグ: 矩形の辺・角ならカーソルを変更。変わったときだけ代入する。
+    if (currentBounds === null) return
+    const nextHover = hitTestSelectionHandle(point, cornersOf(currentBounds))
+    if (nextHover !== hoverHandle) {
+      hoverHandle = nextHover
+      setCursor(nextHover)
+      onHover(nextHover)
+    }
   }
 
   const handleMouseUp = (e: unknown): void => {
+    if (resizeHandle !== null && resizeStartBounds !== null && resizeStartPx !== null) {
+      if (resizeMoved) {
+        // window mouseupで座標が取れる場合は最終点で再計算する。
+        const point = readClientPoint(e)
+        const next =
+          point === null
+            ? currentBounds ?? resizeStartBounds
+            : applyResizeDrag(
+                resizeStartBounds,
+                resizeHandle,
+                readLngLat(point),
+                minGapAt(point),
+              )
+        const error = validateSelectionBounds(next)
+        if (error === null) {
+          currentBounds = next
+          onSelection(next)
+        } else {
+          onError(error)
+          onPreview(resizeStartBounds)
+          currentBounds = resizeStartBounds
+        }
+      }
+      cancelResize()
+      // mouseup座標でホバーを再判定してカーソルを合わせ直す。
+      // 判定結果はそのまま通知する（矩形外ならnullでハイライト消灯）。
+      const endPoint = readClientPoint(e)
+      if (endPoint !== null && currentBounds !== null) {
+        hoverHandle = hitTestSelectionHandle(endPoint, cornersOf(currentBounds))
+        setCursor(hoverHandle)
+        onHover(hoverHandle)
+      } else {
+        hoverHandle = null
+        onHover(null)
+      }
+      return
+    }
+
     if (!drawing) return
     // canvas外（UIパネル上・キャンバス外など）でmouseupした場合、canvasの
     // mousemoveが届かずcurrentPxが古いまま残る。mouseupの座標で更新してから
@@ -231,7 +376,17 @@ export function createMapLibreSelectionController(
 
   const handleKeyDown = (e: unknown): void => {
     if (typeof e !== 'object' || e === null) return
-    if ((e as Record<string, unknown>)['key'] === 'Escape') cancelDraw()
+    if ((e as Record<string, unknown>)['key'] !== 'Escape') return
+    if (resizeHandle !== null) {
+      if (resizeStartBounds !== null) {
+        onPreview(resizeStartBounds)
+        currentBounds = resizeStartBounds
+      }
+      cancelResize()
+      onHover(null)
+      return
+    }
+    cancelDraw()
   }
 
   canvas.addEventListener('mousedown', handleMouseDown)
@@ -243,6 +398,9 @@ export function createMapLibreSelectionController(
 
   return {
     cancel: cancelDraw,
+    setBounds: (bounds: SelectionBounds | null): void => {
+      currentBounds = bounds
+    },
     destroy: (): void => {
       canvas.removeEventListener('mousedown', handleMouseDown)
       canvas.removeEventListener('mousemove', handleMouseMove)
@@ -250,6 +408,8 @@ export function createMapLibreSelectionController(
       globalTarget.removeEventListener('mouseup', handleMouseUp)
       globalTarget.removeEventListener('keydown', handleKeyDown)
       cancelDraw()
+      cancelResize()
+      onHover(null)
       map.boxZoom.enable()
     },
     // モバイル代替「現在の表示範囲を選択」。
@@ -272,7 +432,11 @@ export function createMapLibreSelectionController(
 }
 
 /** MapLibre版フック。Cesium版useRectangleSelectionとは独立（SelectionBounds形状は互換）。 */
-export function useMapLibreRectangleSelection(map: SelectionMapLike | null): {
+export function useMapLibreRectangleSelection(
+  map: SelectionMapLike | null,
+  onPreview?: (bounds: SelectionBounds) => void,
+  onHover?: (handle: ResizeHandle | null) => void,
+): {
   selectionBounds: SelectionBounds | null
   setSelectionBounds: Dispatch<SetStateAction<SelectionBounds | null>>
   isDrawing: boolean
@@ -285,6 +449,18 @@ export function useMapLibreRectangleSelection(map: SelectionMapLike | null): {
   const [isDrawing, setIsDrawing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const controllerRef = useRef<SelectionController | null>(null)
+  // 最新のonPreview・onHover・boundsをrefで保持し、コントローラーeffectの依存を[map]に保つ。
+  const onPreviewRef = useRef(onPreview)
+  const onHoverRef = useRef(onHover)
+  const boundsRef = useRef<SelectionBounds | null>(null)
+
+  useEffect(() => {
+    onPreviewRef.current = onPreview
+  }, [onPreview])
+
+  useEffect(() => {
+    onHoverRef.current = onHover
+  }, [onHover])
 
   useEffect(() => {
     if (!map || typeof window === 'undefined') return
@@ -295,17 +471,29 @@ export function useMapLibreRectangleSelection(map: SelectionMapLike | null): {
         setErrorMessage(null)
         setSelectionBounds(bounds)
       },
+      onPreview: (bounds: SelectionBounds): void => {
+        onPreviewRef.current?.(bounds)
+      },
+      onHover: (handle: ResizeHandle | null): void => {
+        onHoverRef.current?.(handle)
+      },
       onError: (message: string): void => {
         setErrorMessage(message)
       },
       onDrawingChange: setIsDrawing,
     })
     controllerRef.current = controller
+    controller.setBounds(boundsRef.current)
     return () => {
       controller.destroy()
       controllerRef.current = null
     }
   }, [map])
+
+  useEffect(() => {
+    boundsRef.current = selectionBounds
+    controllerRef.current?.setBounds(selectionBounds)
+  }, [selectionBounds])
 
   const clearError = useCallback((): void => {
     setErrorMessage(null)

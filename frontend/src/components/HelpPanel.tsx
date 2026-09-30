@@ -10,6 +10,7 @@ const HelpPanel: React.FC<HelpPanelProps> = ({ mode, isOpen }) => {
     '左ドラッグ: 地図移動',
     'ホイール: ズーム',
     'Shift + 左ドラッグ: 範囲選択',
+    '選択矩形の辺・角をドラッグ: 範囲を調整',
   ]
 
   const previewControls = [

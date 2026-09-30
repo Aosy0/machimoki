@@ -23,9 +23,11 @@ import {
 } from './lib/coverageMapLibre'
 import {
   ensurePickOverlay,
+  ensureSelectionHover,
   ensureSelectionOverlay,
   type PickPoint,
 } from './lib/mapSelectionLayers'
+import type { ResizeHandle } from './lib/mapSelectionResize'
 import {
   coerceCurrentViewBounds,
   coercePresetBounds,
@@ -101,12 +103,36 @@ function App() {
     north: '',
   })
 
+  // ホバー中の辺・角を強調する。styledata再適用用にrefへ保持する。
+  const hoverHandleRef = useRef<ResizeHandle | null>(null)
+  const selectionBoundsRef = useRef<SelectionBounds | null>(null)
+
+  // リサイズ中のライブプレビュー（確定は従来どおりフック内で行う）。
+  // 単一ソースへ hover 込みで1回だけ setData する（全レイヤー同一リビジョン）。
+  const handleSelectionPreview = useCallback(
+    (bounds: SelectionBounds) => {
+      selectionBoundsRef.current = bounds
+      if (!mapLibreMap) return
+      ensureSelectionOverlay(mapLibreMap, bounds, hoverHandleRef.current)
+    },
+    [mapLibreMap],
+  )
+
+  const handleSelectionHover = useCallback(
+    (handle: ResizeHandle | null) => {
+      hoverHandleRef.current = handle
+      if (!mapLibreMap) return
+      ensureSelectionHover(mapLibreMap, selectionBoundsRef.current, handle)
+    },
+    [mapLibreMap],
+  )
+
   const {
     selectionBounds,
     setSelectionBounds,
     errorMessage: selectionErrorMessage,
     clearError: clearSelectionError,
-  } = useMapLibreRectangleSelection(mapLibreMap)
+  } = useMapLibreRectangleSelection(mapLibreMap, handleSelectionPreview, handleSelectionHover)
 
   const handlePickPoint = useCallback((point: PickPoint) => {
     setPickPoints((prev) => [...prev, point])
@@ -122,7 +148,11 @@ function App() {
 
   useEffect(() => {
     if (!mapLibreMap) return
-    ensureSelectionOverlay(mapLibreMap, selectionBounds)
+    selectionBoundsRef.current = selectionBounds
+    if (selectionBounds === null) {
+      hoverHandleRef.current = null
+    }
+    ensureSelectionOverlay(mapLibreMap, selectionBounds, hoverHandleRef.current)
   }, [mapLibreMap, selectionBounds])
 
   useEffect(() => {
@@ -385,7 +415,8 @@ function App() {
 
     const reapplyAfterStyleChange = (): void => {
       if (disposed) return
-      ensureSelectionOverlay(map, selectionBounds)
+      // ドラッグ中のプレビューを巻き戻さないよう、確定stateではなく最新値(ref)を使う
+      ensureSelectionOverlay(map, selectionBoundsRef.current, hoverHandleRef.current)
       ensurePickOverlay(map, pickPoints)
       const coverageReady = ensureCoverageLayer(map, {
         visible: coverageVisible,
@@ -636,6 +667,21 @@ function App() {
               >
                 Shift + ドラッグ で範囲選択
               </div>
+              {selectionBounds && (
+                <div
+                  style={{
+                    background: 'var(--surface)',
+                    color: 'var(--text-dim)',
+                    padding: '4px 12px',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    pointerEvents: 'none',
+                    backdropFilter: 'blur(4px)',
+                  }}
+                >
+                  選択後は矩形の辺・角をドラッグで調整
+                </div>
+              )}
               <button
                 onClick={() => setIsPickMode((prev) => !prev)}
                 style={{
