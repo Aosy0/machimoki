@@ -7,7 +7,12 @@
  *   export経路をブロックしない。
  */
 import type { SelectionBounds } from './selectionBounds'
-import type { ResizeHandle } from './mapSelectionResize'
+import {
+  handleVisibility,
+  selectionHandleScreenPoints,
+  type HandleVisibility,
+  type ResizeHandle,
+} from './mapSelectionResize'
 
 export interface PickPoint {
   lon: number
@@ -76,6 +81,8 @@ export interface OverlayMapLike {
   /** 画像登録（カプセルハンドル用）。無いモックでも動くよう任意。 */
   hasImage?(id: string): unknown
   addImage?(id: string, image: unknown, options?: unknown): void
+  /** 経緯度→画面px。ハンドル間引き用。無いモックでは全表示。 */
+  project?(point: [number, number]): { x: number; y: number }
 }
 
 function sourceExists(map: OverlayMapLike, id: string): boolean {
@@ -150,8 +157,8 @@ export function pickPointsToFeatureCollection(
   }
 }
 
-/** 角ハンドルか（円を大きくする判定用）。 */
-export function isCornerHandle(handle: ResizeHandle): boolean {
+/** 角ハンドルか（円を大きくする判定用）。絞り込み時は辺側に絞られる。 */
+export function isCornerHandle(handle: ResizeHandle): handle is 'nw' | 'ne' | 'se' | 'sw' {
   return handle === 'nw' || handle === 'ne' || handle === 'se' || handle === 'sw'
 }
 
@@ -177,13 +184,23 @@ export function selectionHandlePoints(
  * 単一ソースへ載せるFeatureCollection。
  * area（矩形）＋8ハンドル＋任意のhoverを同一リビジョンで返す。
  * hoverHandle=null なら hover feature を含めない（=ホバー消去）。
+ * visibility省略時は全表示。非表示ハンドルはFCから除外するが、
+ * hoverは可視性に関わらず含める（ドラッグ中のアクティブ表示用）。
  */
 export function selectionOverlayToFeatureCollection(
   bounds: SelectionBounds,
   hoverHandle: ResizeHandle | null,
+  visibility?: HandleVisibility,
 ): Record<string, unknown> {
   const features: Array<Record<string, unknown>> = [selectionBoundsToPolygon(bounds)]
   for (const point of selectionHandlePoints(bounds)) {
+    if (visibility !== undefined) {
+      if (isCornerHandle(point.handle)) {
+        if (!visibility.corners) continue
+      } else if (!visibility.edges[point.handle]) {
+        continue
+      }
+    }
     features.push({
       type: 'Feature',
       properties: {
@@ -242,6 +259,64 @@ function hoverPoint(
 }
 
 /**
+ * 画面pxからハンドル可視性を求める。projectが無いモックではundefined（=全表示）。
+ * 失敗はundefinedに倒す（exportをブロックしない）。
+ */
+function selectionVisibility(map: OverlayMapLike, bounds: SelectionBounds): HandleVisibility | undefined {
+  try {
+    const project = map.project
+    if (typeof project !== 'function') return undefined
+    return handleVisibility(
+      selectionHandleScreenPoints(bounds, (lngLat) => project.call(map, lngLat)),
+    )
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * map→最後に適用したFCのJSON。move/zoomで毎フレーム呼ばれても、
+ * 可視性が変わった瞬間だけsetDataするための差分キャッシュ。
+ */
+const appliedSelectionJson = new WeakMap<object, string>()
+
+/** 選択系6レイヤーがすべて存在するか。 */
+function allSelectionLayersExist(map: OverlayMapLike): boolean {
+  return [
+    SELECTION_FILL_LAYER_ID,
+    SELECTION_LINE_LAYER_ID,
+    SELECTION_HANDLES_LAYER_ID,
+    SELECTION_EDGE_HANDLES_LAYER_ID,
+    SELECTION_HOVER_SYMBOL_LAYER_ID,
+    SELECTION_HOVER_CIRCLE_LAYER_ID,
+  ].every((id) => layerExists(map, id))
+}
+
+/**
+ * 単一ソースへFCを適用する共通処理。
+ * ソースと6レイヤーが揃い、JSONが直近適用と同一ならsetDataをスキップする。
+ * ソース存在時もレイヤー欠損を補う（setStyle後の復元を確実にするため）。
+ */
+function applySelectionData(map: OverlayMapLike, data: Record<string, unknown>): void {
+  const dataJson = JSON.stringify(data)
+  const source = map.getSource(SELECTION_SOURCE_ID)
+  const sourcePresent = source !== undefined && source !== null
+  if (sourcePresent && allSelectionLayersExist(map) && appliedSelectionJson.get(map) === dataJson) {
+    return
+  }
+  const existing = asSettableSource(source)
+  if (existing !== null) {
+    existing.setData(data)
+  } else {
+    map.addSource(SELECTION_SOURCE_ID, { type: 'geojson', data })
+  }
+  ensureHandleImages(map)
+  ensureHoverImages(map)
+  addSelectionLayers(map)
+  appliedSelectionJson.set(map, dataJson)
+}
+
+/**
  * 選択矩形オーバーレイを反映する。bounds=nullで除去。
  * 失敗は吞み込む（exportをブロックしない）。
  */
@@ -255,16 +330,10 @@ export function ensureSelectionOverlay(
       removeSelectionOverlay(map)
       return
     }
-    const data = selectionOverlayToFeatureCollection(bounds, hoverHandle)
-    const existing = asSettableSource(map.getSource(SELECTION_SOURCE_ID))
-    if (existing !== null) {
-      existing.setData(data)
-      return
-    }
-    map.addSource(SELECTION_SOURCE_ID, { type: 'geojson', data })
-    ensureHandleImages(map)
-    ensureHoverImages(map)
-    addSelectionLayers(map)
+    applySelectionData(
+      map,
+      selectionOverlayToFeatureCollection(bounds, hoverHandle, selectionVisibility(map, bounds)),
+    )
   } catch {
     /* 表示失敗は無視 */
   }
@@ -389,6 +458,7 @@ export function removeSelectionOverlay(map: OverlayMapLike): void {
     if (sourceExists(map, SELECTION_SOURCE_ID)) {
       map.removeSource(SELECTION_SOURCE_ID)
     }
+    appliedSelectionJson.delete(map)
   } catch {
     /* 後片付けの失敗は無視 */
   }
@@ -397,6 +467,8 @@ export function removeSelectionOverlay(map: OverlayMapLike): void {
 /**
  * ホバー強調だけを単一ソースへ原子的に更新する。
  * bounds=null またはソース未作成なら何もしない。handle=null は hover を消す。
+ * ハンドルも可視性で間引き直す（hover自体は常時含める）。
+ * 同一内容なら差分キャッシュでsetDataをスキップする。
  */
 export function ensureSelectionHover(
   map: OverlayMapLike,
@@ -405,9 +477,11 @@ export function ensureSelectionHover(
 ): void {
   try {
     if (bounds === null) return
-    const existing = asSettableSource(map.getSource(SELECTION_SOURCE_ID))
-    if (existing === null) return
-    existing.setData(selectionOverlayToFeatureCollection(bounds, handle))
+    if (asSettableSource(map.getSource(SELECTION_SOURCE_ID)) === null) return
+    applySelectionData(
+      map,
+      selectionOverlayToFeatureCollection(bounds, handle, selectionVisibility(map, bounds)),
+    )
   } catch {
     /* 表示失敗は無視 */
   }

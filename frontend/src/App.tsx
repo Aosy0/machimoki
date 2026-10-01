@@ -428,6 +428,15 @@ function App() {
 
     map.on('styledata', reapplyAfterStyleChange)
 
+    // パン/ズームでハンドルの間引き（可視性）が変わるため再適用する。
+    // 差分キャッシュにより実更新は閾値跨ぎ時のみ。
+    const handleViewChange = (): void => {
+      if (disposed) return
+      ensureSelectionOverlay(map, selectionBoundsRef.current, hoverHandleRef.current)
+    }
+    map.on('move', handleViewChange)
+    map.on('resize', handleViewChange)
+
     if (coverageProbedMapRef.current !== map) {
       coverageProbedMapRef.current = map
       coverageAvailableRef.current = false
@@ -473,6 +482,8 @@ function App() {
       disposed = true
       try {
         map.off('styledata', reapplyAfterStyleChange)
+        map.off('move', handleViewChange)
+        map.off('resize', handleViewChange)
       } catch {
         /* ignore */
       }

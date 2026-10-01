@@ -13,6 +13,7 @@ import {
   ensureSelectionOverlay,
   isCornerHandle,
   pickPointsToFeatureCollection,
+  removeSelectionOverlay,
   selectionBoundsToPolygon,
   selectionHandlePoints,
   selectionOverlayToFeatureCollection,
@@ -78,6 +79,8 @@ class FakeMap implements OverlayMapLike {
   layers = new Map<string, unknown>()
   images = new Map<string, { image: unknown; options: unknown }>()
   failOn: string | null = null
+  /** 設定時のみ持つ（未設定＝全表示モック）。 */
+  project?: (point: [number, number]) => { x: number; y: number }
 
   getSource(id: string): unknown {
     const entry = this.sources.get(id)
@@ -297,6 +300,40 @@ describe('selectionOverlayToFeatureCollection', () => {
     })
     assert.deepEqual(features[features.length - 1].geometry.coordinates, [139.69, 35.7])
   })
+
+  it('visibility指定で非表示ハンドルを除外する（矩形・ホバーは残る）', () => {
+    const features = featuresOf(
+      selectionOverlayToFeatureCollection(BOUNDS, 'north', {
+        corners: true,
+        edges: { north: true, east: false, south: false, west: false },
+      }),
+    )
+    // area＋隅4＋北1＋hover1
+    assert.equal(features.length, 7)
+    const handles = features.filter((feature) => feature.properties['role'] === 'handle')
+    assert.equal(handles.length, 5)
+    const shown = handles.map((feature) => feature.properties['handle']).sort()
+    assert.deepEqual(shown, ['ne', 'north', 'nw', 'se', 'sw'])
+    const hovers = features.filter((feature) => feature.properties['role'] === 'hover')
+    assert.equal(hovers.length, 1)
+  })
+
+  it('全非表示でもホバーは含める（ドラッグ中のアクティブ表示用）', () => {
+    const features = featuresOf(
+      selectionOverlayToFeatureCollection(BOUNDS, 'se', {
+        corners: false,
+        edges: { north: false, east: false, south: false, west: false },
+      }),
+    )
+    assert.equal(features.length, 2)
+    assert.deepEqual(features[0].properties, { role: 'area' })
+    assert.deepEqual(features[1].properties, { role: 'hover', kind: 'corner', handle: 'se' })
+  })
+
+  it('visibility省略時は全表示（従来どおり）', () => {
+    const features = featuresOf(selectionOverlayToFeatureCollection(BOUNDS, null))
+    assert.equal(features.length, 9)
+  })
 })
 
 describe('ensureSelectionOverlay', () => {
@@ -331,6 +368,35 @@ describe('ensureSelectionOverlay', () => {
     const entry = map.sources.get(SELECTION_SOURCE_ID)
     assert.equal(entry?.setDataCalls.length, 1)
     assert.deepEqual(entry?.setDataCalls[0], selectionOverlayToFeatureCollection(BOUNDS, 'east'))
+  })
+
+  it('projectありモックでは極小矩形のハンドルを間引く（ホバーは残る）', () => {
+    const map = new FakeMap()
+    map.project = ([lng, lat]: [number, number]): { x: number; y: number } => ({ x: lng, y: lat })
+    // 10×10px相当→ハンドル全非表示。hover指定あり。
+    ensureSelectionOverlay(map, { west: 0, south: 0, east: 10, north: 10 }, 'nw')
+    const spec = map.sources.get(SELECTION_SOURCE_ID)?.spec as { data: unknown }
+    const features = featuresOf(spec.data)
+    assert.equal(features.length, 2)
+    assert.deepEqual(features[0].properties, { role: 'area' })
+    assert.deepEqual(features[1].properties, { role: 'hover', kind: 'corner', handle: 'nw' })
+  })
+
+  it('projectありモックでも通常サイズは全表示', () => {
+    const map = new FakeMap()
+    map.project = ([lng, lat]: [number, number]): { x: number; y: number } => ({ x: lng, y: lat })
+    ensureSelectionOverlay(map, { west: 0, south: 0, east: 100, north: 100 })
+    const spec = map.sources.get(SELECTION_SOURCE_ID)?.spec as { data: unknown }
+    const features = featuresOf(spec.data)
+    assert.equal(features.length, 9)
+  })
+
+  it('projectなしモックでは極小でも全表示のまま', () => {
+    const map = new FakeMap()
+    assert.equal(map.project, undefined)
+    ensureSelectionOverlay(map, { west: 0, south: 0, east: 10, north: 10 })
+    const spec = map.sources.get(SELECTION_SOURCE_ID)?.spec as { data: unknown }
+    assert.equal(featuresOf(spec.data).length, 9)
   })
 
   it('nullで全レイヤー・単一ソースを除去する', () => {
@@ -433,6 +499,59 @@ describe('ensureSelectionOverlay', () => {
     assert.equal(hoverCircle.paint['circle-stroke-color'], SELECTION_HANDLE_HOVER_STROKE_COLOR)
     assert.equal(hoverCircle.paint['circle-radius'], SELECTION_HOVER_CORNER_RADIUS)
     assert.ok(SELECTION_HOVER_CORNER_RADIUS > SELECTION_CORNER_RADIUS)
+  })
+})
+
+describe('選択オーバーレイの差分キャッシュ', () => {
+  it('同一bounds・同一可視性の2回目はsetDataしない', () => {
+    const map = new FakeMap()
+    ensureSelectionOverlay(map, BOUNDS)
+    const entry = map.sources.get(SELECTION_SOURCE_ID)
+    ensureSelectionOverlay(map, BOUNDS)
+    assert.equal(entry?.setDataCalls.length, 0)
+  })
+
+  it('projectの可視性が変わるとsetDataする（ズーム相当）', () => {
+    const map = new FakeMap()
+    let scale = 1
+    map.project = ([lng, lat]: [number, number]): { x: number; y: number } => ({
+      x: lng * scale,
+      y: lat * scale,
+    })
+    const bounds = { west: 0, south: 0, east: 10, north: 10 }
+    ensureSelectionOverlay(map, bounds)
+    const entry = map.sources.get(SELECTION_SOURCE_ID)
+    // 10px四方→ハンドル非表示（areaのみ）
+    const spec = entry?.spec as { data: unknown }
+    assert.equal(featuresOf(spec.data).length, 1)
+    // ズームイン相当: 100px四方→全表示。可視性が変わったのでsetDataされる
+    scale = 10
+    ensureSelectionOverlay(map, bounds)
+    assert.equal(entry?.setDataCalls.length, 1)
+    assert.equal(featuresOf(entry?.setDataCalls[0]).length, 9)
+  })
+
+  it('レイヤー欠損時はソースが存在しても作り直す', () => {
+    const map = new FakeMap()
+    ensureSelectionOverlay(map, BOUNDS)
+    const entry = map.sources.get(SELECTION_SOURCE_ID)
+    map.removeLayer(SELECTION_FILL_LAYER_ID)
+    assert.ok(!map.layers.has(SELECTION_FILL_LAYER_ID))
+    ensureSelectionOverlay(map, BOUNDS)
+    assert.ok(map.layers.has(SELECTION_FILL_LAYER_ID))
+    assert.equal(map.layers.size, 6)
+    assert.equal(entry?.setDataCalls.length, 1)
+  })
+
+  it('removeSelectionOverlay後はキャッシュが消え再作成される', () => {
+    const map = new FakeMap()
+    ensureSelectionOverlay(map, BOUNDS)
+    removeSelectionOverlay(map)
+    assert.equal(map.sources.size, 0)
+    assert.equal(map.layers.size, 0)
+    ensureSelectionOverlay(map, BOUNDS)
+    assert.ok(map.sources.has(SELECTION_SOURCE_ID))
+    assert.equal(map.layers.size, 6)
   })
 })
 
@@ -592,6 +711,15 @@ describe('ensureSelectionHover', () => {
     assert.equal(map.layers.size, 6)
     assert.equal(entry?.setDataCalls.length, 1)
     assert.deepEqual(entry?.setDataCalls[0], selectionOverlayToFeatureCollection(BOUNDS, 'nw'))
+  })
+
+  it('同一内容のホバー更新はsetDataしない（差分キャッシュ）', () => {
+    const map = new FakeMap()
+    ensureSelectionOverlay(map, BOUNDS)
+    const entry = map.sources.get(SELECTION_SOURCE_ID)
+    // overlay直後はhoverなし。同じhoverなしを再適用してもsetDataしない
+    ensureSelectionHover(map, BOUNDS, null)
+    assert.equal(entry?.setDataCalls.length, 0)
   })
 
   it('handle=nullでhover featureを消す（同一ソースsetData）', () => {

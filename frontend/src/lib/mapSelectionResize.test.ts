@@ -10,14 +10,19 @@ import assert from 'node:assert/strict'
 import {
   applyResizeDrag,
   distanceToSegment,
+  handleVisibility,
   hitTestSelectionHandle,
   movedBeyondTolerance,
   resizeCursor,
   selectionHandleScreenPoints,
+  HANDLE_CORNER_MIN_DIMENSION_PX,
+  HANDLE_EDGE_MIN_LENGTH_PX,
+  HANDLE_EDGE_MIN_THICKNESS_PX,
   RESIZE_CORNER_HIT_PX,
   RESIZE_HANDLE_HIT_PX,
   RESIZE_HANDLE_HALF_LENGTH_PX,
   RESIZE_MOVE_TOLERANCE_PX,
+  type HandleVisibility,
   type ResizeHandle,
   type SelectionHandlePoints,
 } from './mapSelectionResize'
@@ -178,6 +183,110 @@ describe('hitTestSelectionHandle', () => {
     assert.ok(Math.hypot(justOutsideCorner, justOutsideCorner) > RESIZE_CORNER_HIT_PX)
     assert.ok(distanceToSegment(far, square.nw, square.ne) > RESIZE_HANDLE_HIT_PX)
     assert.equal(hitTestSelectionHandle(far, square), null)
+  })
+
+  it('非表示の辺カプセル・隅にはヒットしない', () => {
+    // 100×20の横長: 北・南カプセルのみ有効
+    const wideFlat = rectPoints(100, 20)
+    assert.equal(hitTestSelectionHandle({ x: 50, y: 0 }, wideFlat), 'north')
+    assert.equal(hitTestSelectionHandle({ x: 100, y: 10 }, wideFlat), null)
+    assert.equal(hitTestSelectionHandle({ x: 0, y: 0 }, wideFlat), null)
+    // 30×30: 隅のみ有効
+    const small = rectPoints(30, 30)
+    assert.equal(hitTestSelectionHandle({ x: 0, y: 0 }, small), 'nw')
+    assert.equal(hitTestSelectionHandle({ x: 15, y: 0 }, small), null)
+    // 10×10: 全非表示
+    const tiny = rectPoints(10, 10)
+    assert.equal(hitTestSelectionHandle({ x: 0, y: 0 }, tiny), null)
+    assert.equal(hitTestSelectionHandle({ x: 5, y: 0 }, tiny), null)
+  })
+})
+
+/** 原点基準のw×h矩形の8点を作る。 */
+function rectPoints(w: number, h: number): SelectionHandlePoints {
+  return {
+    nw: { x: 0, y: 0 },
+    ne: { x: w, y: 0 },
+    se: { x: w, y: h },
+    sw: { x: 0, y: h },
+    north: { x: w / 2, y: 0 },
+    east: { x: w, y: h / 2 },
+    south: { x: w / 2, y: h },
+    west: { x: 0, y: h / 2 },
+  }
+}
+
+describe('handleVisibility', () => {
+  it('大きい矩形は全表示', () => {
+    assert.deepEqual(handleVisibility(square), {
+      corners: true,
+      edges: { north: true, east: true, south: true, west: true },
+    })
+  })
+
+  it('細長い矩形は長い辺のカプセルのみ（短辺側・隅は非表示）', () => {
+    assert.deepEqual(handleVisibility(rectPoints(100, 20)), {
+      corners: false,
+      edges: { north: true, east: false, south: true, west: false },
+    })
+    assert.deepEqual(handleVisibility(rectPoints(20, 100)), {
+      corners: false,
+      edges: { north: false, east: true, south: false, west: true },
+    })
+  })
+
+  it('やや小さい正方形は隅のみ（辺カプセルなし）', () => {
+    assert.deepEqual(handleVisibility(rectPoints(30, 30)), {
+      corners: true,
+      edges: { north: false, east: false, south: false, west: false },
+    })
+  })
+
+  it('極小矩形は全非表示（輪郭のみ）', () => {
+    const visibility = handleVisibility(rectPoints(10, 10))
+    assert.equal(visibility.corners, false)
+    assert.deepEqual(visibility.edges, { north: false, east: false, south: false, west: false })
+  })
+
+  it('回転した投影でも辺長基準で判定する', () => {
+    const angle = (Math.PI * 30) / 180
+    const cos = Math.cos(angle)
+    const sin = Math.sin(angle)
+    // 10倍スケールで100px四方→全表示
+    const project100 = ([lng, lat]: [number, number]): { x: number; y: number } => ({
+      x: lng * 10 * cos - lat * 10 * sin,
+      y: lng * 10 * sin + lat * 10 * cos,
+    })
+    const full = handleVisibility(selectionHandleScreenPoints(bounds, project100))
+    assert.equal(full.corners, true)
+    assert.deepEqual(full.edges, { north: true, east: true, south: true, west: true })
+    // 幅30px×高さ100px→南北カプセルなし・隅あり・東西あり
+    const narrow = { west: 0, south: 0, east: 3, north: 10 }
+    const partial = handleVisibility(selectionHandleScreenPoints(narrow, project100))
+    assert.deepEqual(partial, {
+      corners: true,
+      edges: { north: false, east: true, south: false, west: true },
+    })
+  })
+
+  it('境界値（定数ちょうどは表示・1px未満は非表示）', () => {
+    const allShown: HandleVisibility = {
+      corners: true,
+      edges: { north: true, east: true, south: true, west: true },
+    }
+    // 辺長38ちょうど・短辺100
+    assert.deepEqual(handleVisibility(rectPoints(HANDLE_EDGE_MIN_LENGTH_PX, 100)), allShown)
+    // 辺長37（南北カプセルなし・隅は残る）
+    assert.deepEqual(handleVisibility(rectPoints(HANDLE_EDGE_MIN_LENGTH_PX - 1, 100)), {
+      corners: true,
+      edges: { north: false, east: true, south: false, west: true },
+    })
+    // 短辺24ちょうど（隅あり）、23（隅なし）
+    assert.equal(handleVisibility(rectPoints(100, HANDLE_CORNER_MIN_DIMENSION_PX)).corners, true)
+    assert.equal(handleVisibility(rectPoints(100, HANDLE_CORNER_MIN_DIMENSION_PX - 1)).corners, false)
+    // 短辺16ちょうど（南北あり）、15（南北なし）
+    assert.equal(handleVisibility(rectPoints(100, HANDLE_EDGE_MIN_THICKNESS_PX)).edges.north, true)
+    assert.equal(handleVisibility(rectPoints(100, HANDLE_EDGE_MIN_THICKNESS_PX - 1)).edges.north, false)
   })
 })
 

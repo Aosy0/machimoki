@@ -22,6 +22,21 @@ export const RESIZE_CORNER_HIT_PX = 12
 export const RESIZE_HANDLE_HIT_PX = 9
 /** カプセル中心線の半長（px）。カプセル長/2−太さ/2 = 26/2−11/2。 */
 export const RESIZE_HANDLE_HALF_LENGTH_PX = 7.5
+/**
+ * 辺カプセルを表示・ヒットさせる辺長の下限（px）。
+ * カプセル長26＋角直径12。短い辺では角円と重なって塊になるため。
+ */
+export const HANDLE_EDGE_MIN_LENGTH_PX = 38
+/**
+ * 4隅を表示・ヒットさせる短辺の下限（px）。
+ * ホバー拡大円の直径18＋余裕。未満なら輪郭のみにする。
+ */
+export const HANDLE_CORNER_MIN_DIMENSION_PX = 24
+/**
+ * 辺カプセルを表示・ヒットさせる短辺の下限（px）。
+ * 未満だと対向カプセル同士が重なる（太さ11×1.2＋余裕）。
+ */
+export const HANDLE_EDGE_MIN_THICKNESS_PX = 16
 export const RESIZE_MIN_GAP_PX = 8
 export const RESIZE_MOVE_TOLERANCE_PX = 3
 
@@ -38,6 +53,34 @@ export interface SelectionHandlePoints extends SelectionCorners {
   east: ScreenPoint
   south: ScreenPoint
   west: ScreenPoint
+}
+
+/** 画面pxに基づくハンドル可視性。描画の間引きとヒット判定で共有する。 */
+export interface HandleVisibility {
+  corners: boolean
+  edges: { north: boolean; east: boolean; south: boolean; west: boolean }
+}
+
+/**
+ * 8点の画面座標から各ハンドルの可視性を求める（投影距離基準・回転対応）。
+ * 幅=北辺長・高さ=東辺長とし、各辺は自身の長さで判定する。
+ */
+export function handleVisibility(points: SelectionHandlePoints): HandleVisibility {
+  const length = (a: ScreenPoint, b: ScreenPoint): number => Math.hypot(a.x - b.x, a.y - b.y)
+  const northLen = length(points.nw, points.ne)
+  const eastLen = length(points.ne, points.se)
+  const minDim = Math.min(northLen, eastLen)
+  const edgeVisible = (len: number): boolean =>
+    len >= HANDLE_EDGE_MIN_LENGTH_PX && minDim >= HANDLE_EDGE_MIN_THICKNESS_PX
+  return {
+    corners: minDim >= HANDLE_CORNER_MIN_DIMENSION_PX,
+    edges: {
+      north: edgeVisible(northLen),
+      east: edgeVisible(eastLen),
+      south: edgeVisible(length(points.se, points.sw)),
+      west: edgeVisible(length(points.sw, points.nw)),
+    },
+  }
 }
 
 /** project: [lng,lat] → キャンバス相対px。4隅を投影する。 */
@@ -90,7 +133,7 @@ const CORNERS: Array<{ handle: ResizeHandle; key: keyof SelectionCorners }> = [
 ]
 
 const EDGES: Array<{
-  handle: ResizeHandle
+  handle: 'north' | 'east' | 'south' | 'west'
   a: keyof SelectionCorners
   b: keyof SelectionCorners
 }> = [
@@ -124,20 +167,25 @@ function distanceToHandleSpine(
 }
 
 /**
- * 角優先（12px以内）、次に辺中点カプセル（中心線から8px以内）。
+ * 角優先（12px以内）、次に辺中点カプセル（中心線から9px以内）。
  * 辺線上でも中点から離れた位置はnull（=パンに任せる）。該当なしもnull。
+ * 小さくて非表示のハンドルにはヒットしない（描画の間引きと同一閾値）。
  */
 export function hitTestSelectionHandle(
   point: ScreenPoint,
   handles: SelectionHandlePoints,
 ): ResizeHandle | null {
-  for (const { handle, key } of CORNERS) {
-    const corner = handles[key]
-    if (Math.hypot(point.x - corner.x, point.y - corner.y) <= RESIZE_CORNER_HIT_PX) {
-      return handle
+  const visibility = handleVisibility(handles)
+  if (visibility.corners) {
+    for (const { handle, key } of CORNERS) {
+      const corner = handles[key]
+      if (Math.hypot(point.x - corner.x, point.y - corner.y) <= RESIZE_CORNER_HIT_PX) {
+        return handle
+      }
     }
   }
   for (const { handle, a, b } of EDGES) {
+    if (!visibility.edges[handle]) continue
     if (distanceToHandleSpine(point, handles[handle], handles[a], handles[b]) <= RESIZE_HANDLE_HIT_PX) {
       return handle
     }
