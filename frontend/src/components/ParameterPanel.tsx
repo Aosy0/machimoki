@@ -5,6 +5,7 @@ import { TERRAIN_GRID_PRESETS } from '../lib/previewBudget'
 export interface Parameters {
   terrainThickness: number
   flattenBottom: boolean
+  reflectActualElevation: boolean
   terrainGridSize: number | null
   includeTerrain: boolean
   showTerrainImagery: boolean
@@ -274,26 +275,69 @@ function ParameterPanel({
             <span style={{ fontSize: '14px' }}>航空写真テクスチャを表示</span>
           </label>
 
-          <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: 'var(--text-dim)' }}>
-            地形厚み: {parameters.terrainThickness} mm
-          </label>
-          <input
-            type="range"
-            min={1}
-            max={50}
-            value={parameters.terrainThickness}
-            onChange={(e) => handleChange('terrainThickness', Number(e.target.value))}
-            style={{ width: '100%' }}
-          />
+          <div style={{ opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1 }}>
+            <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: 'var(--text-dim)' }}>
+              地形厚み: {parameters.terrainThickness} mm
+            </label>
+            <input
+              type="range"
+              min={1}
+              max={50}
+              value={parameters.terrainThickness}
+              onChange={(e) => handleChange('terrainThickness', Number(e.target.value))}
+              disabled={parameters.reflectActualElevation || !parameters.includeTerrain}
+              style={{ width: '100%' }}
+            />
+          </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '12px' }}>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: parameters.reflectActualElevation || !parameters.includeTerrain ? 'default' : 'pointer',
+              marginTop: '12px',
+              opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1,
+            }}
+          >
             <input
               type="checkbox"
               checked={parameters.flattenBottom}
               onChange={(e) => handleChange('flattenBottom', e.target.checked)}
+              disabled={parameters.reflectActualElevation || !parameters.includeTerrain}
             />
             <span style={{ fontSize: '14px' }}>底面をフラット化</span>
           </label>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: !parameters.includeTerrain ? 'default' : 'pointer',
+              marginTop: '12px',
+              marginBottom: '4px',
+              opacity: !parameters.includeTerrain ? 0.5 : 1,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={parameters.reflectActualElevation}
+              onChange={(e) => handleChange('reflectActualElevation', e.target.checked)}
+              disabled={!parameters.includeTerrain}
+            />
+            <span style={{ fontSize: '14px' }}>実際の標高を反映する</span>
+          </label>
+          <p
+            style={{
+              fontSize: '11px',
+              color: 'var(--text-dim)',
+              margin: '0 0 0 26px',
+              opacity: !parameters.includeTerrain ? 0.5 : 1,
+            }}
+          >
+            底面を海抜0mまで下ろして実際の標高のまま出力します。谷などの低地は土台が厚くなり、材料と印刷時間が増えます。
+          </p>
 
           <div style={{ marginTop: '12px', opacity: parameters.includeTerrain ? 1 : 0.5 }}>
             <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '6px' }}>

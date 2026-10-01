@@ -82,7 +82,7 @@ describe('buildPrintableModel', () => {
 
     const result = await buildPrintableModel(bounds, options);
 
-    expect(buildTerrainMesh).toHaveBeenCalledWith(bounds, 10, true, undefined);
+    expect(buildTerrainMesh).toHaveBeenCalledWith(bounds, 0.01, true, undefined, false);
     expect(buildBuildingMeshes).toHaveBeenCalledWith(bounds, 'lod1', undefined);
     expect(createManifoldFromMesh).toHaveBeenCalledWith(buildingMesh);
     expect(unionMeshes).toHaveBeenCalledTimes(1);
@@ -99,6 +99,29 @@ describe('buildPrintableModel', () => {
     expect(result.warnings).toEqual([]);
     expect(unionFake.delete).toHaveBeenCalled();
     expect(buildingFake.delete).toHaveBeenCalled();
+  });
+
+  it('converts printed mm to model meters and forwards reflectActualElevation', async () => {
+    const { buildTerrainMesh } = await import('../src/terrain.js');
+    const { buildBuildingMeshes } = await import('../src/meshBuilder.js');
+    const { createManifoldFromMesh, exportTo3MF, unionMeshes } = await import('../src/manifoldOps.js');
+
+    vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
+    vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
+    vi.mocked(createManifoldFromMesh).mockResolvedValue(createFakeManifold());
+    vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
+    vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
+
+    const bounds = { west: 139.69, south: 35.69, east: 139.7, north: 35.7 };
+    await buildPrintableModel(bounds, {
+      terrainThickness: 10,
+      flattenBottom: true,
+      format: '3mf',
+      scale: 2,
+      reflectActualElevation: true,
+    });
+
+    expect(buildTerrainMesh).toHaveBeenCalledWith(bounds, 0.005, true, undefined, true);
   });
 
   it('exports to STL when format is stl', async () => {

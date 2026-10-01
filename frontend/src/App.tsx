@@ -67,6 +67,7 @@ function App() {
   const [parameters, setParameters] = useState<Parameters>({
     terrainThickness: 10,
     flattenBottom: true,
+    reflectActualElevation: false,
     terrainGridSize: null,
     includeTerrain: true,
     showTerrainImagery: false,
@@ -279,6 +280,7 @@ function App() {
     const exportOptions = {
       terrainThickness: parameters.terrainThickness,
       flattenBottom: parameters.flattenBottom,
+      reflectActualElevation: parameters.reflectActualElevation,
       terrainGridSize: resolvedTerrainGridSize,
       format: parameters.exportFormat as '3mf' | 'stl' | 'machimoki',
       machimokiModelFormat: parameters.exportFormat === 'machimoki' ? ('3mf' as const) : undefined,
@@ -302,7 +304,9 @@ function App() {
         let terrainMesh: import('@machimoki/core').RawMesh | null = null
         if (exportOptions.includeTerrain) {
           setPipelineState({ phase: 'acquiring', progress: 30, message: '地形データ取得中...', error: null })
-          terrainMesh = await buildTerrainMesh(selectionBounds, exportOptions.terrainThickness, exportOptions.flattenBottom, exportOptions.terrainGridSize)
+          // terrainThickness is user-facing printed mm; convert to model-space meters (same formula as core).
+          const terrainThicknessMeters = parameters.terrainThickness / (scale * 1000)
+          terrainMesh = await buildTerrainMesh(selectionBounds, terrainThicknessMeters, exportOptions.flattenBottom, exportOptions.terrainGridSize, exportOptions.reflectActualElevation)
         }
         setPipelineState({ phase: 'composing', progress: 50, message: '3Dモデル生成中（Worker）...', error: null })
         const { buffer, warnings } = await runWorkerExport(selectionBounds, exportOptions as unknown as import('@machimoki/core').ExportOptions, buildingMeshes, terrainMesh, (p, m) =>
@@ -324,6 +328,7 @@ function App() {
       await exportModel(selectionBounds, {
         terrainThickness: parameters.terrainThickness,
         flattenBottom: parameters.flattenBottom,
+        reflectActualElevation: parameters.reflectActualElevation,
         terrainGridSize: resolvedTerrainGridSize,
         format: parameters.exportFormat,
         machimokiModelFormat: parameters.exportFormat === 'machimoki' ? '3mf' : undefined,
@@ -1021,6 +1026,7 @@ function App() {
                 showTerrainImagery={parameters.showTerrainImagery}
                 terrainThickness={parameters.terrainThickness}
                 flattenBottom={parameters.flattenBottom}
+                reflectActualElevation={parameters.reflectActualElevation}
                 terrainGridSize={parameters.terrainGridSize}
                 includeTerrain={parameters.includeTerrain}
                 buildingColor={parameters.buildingColor}

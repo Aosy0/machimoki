@@ -4,6 +4,7 @@ export {
   componentIntersectsBounds,
   dedupeComponents,
   meshToRaw,
+  printedMmToModelMeters,
   scaleRawMesh,
 } from './pipelineCore.js';
 

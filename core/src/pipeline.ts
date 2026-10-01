@@ -18,6 +18,7 @@ import {
   componentIntersectsBounds,
   dedupeComponents,
   meshToRaw,
+  printedMmToModelMeters,
   scaleRawMesh,
 } from './pipelineCore.js';
 import { createMachimokiBuffer } from './machimokiFormat.js';
@@ -167,12 +168,14 @@ async function buildPrintableModelUnsafe(
 
   const buildingMeshes = await buildBuildingMeshes(bounds, lod, options.excludedGmlIds);
 
+  const terrainThicknessMeters = printedMmToModelMeters(options.terrainThickness, scale);
   let terrainMesh = includeTerrain
     ? await buildTerrainMesh(
         bounds,
-        options.terrainThickness,
+        terrainThicknessMeters,
         options.flattenBottom,
         options.terrainGridSize,
+        options.reflectActualElevation ?? false,
       )
     : null;
 

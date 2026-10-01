@@ -639,6 +639,7 @@ interface Preview3DProps {
   showTerrainImagery?: boolean
   terrainThickness?: number
   flattenBottom?: boolean
+  reflectActualElevation?: boolean
   terrainGridSize?: number | null
   includeTerrain?: boolean
   buildingColor?: string
@@ -660,6 +661,7 @@ export default function Preview3D({
   showTerrainImagery = false,
   terrainThickness = 10,
   flattenBottom = true,
+  reflectActualElevation = false,
   terrainGridSize,
   includeTerrain = true,
   buildingColor = DEFAULT_BUILDING_COLOR,
@@ -681,7 +683,7 @@ export default function Preview3D({
   const gsiLayerRef = useRef<any>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
   const buildingMinYCacheRef = useRef<Map<string, number | null>>(new Map())
-  const appliedTerrainParamsRef = useRef<{ terrainThickness: number; flattenBottom: boolean; terrainColor: string } | null>(null)
+  const appliedTerrainParamsRef = useRef<{ terrainThickness: number; flattenBottom: boolean; reflectActualElevation: boolean; terrainColor: string } | null>(null)
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [isOrthographic, setIsOrthographic] = useState(false)
   const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
@@ -948,8 +950,11 @@ export default function Preview3D({
     })
   }
 
-  const latestTerrainParamsRef = useRef({ terrainThickness, flattenBottom, terrainColor })
-  latestTerrainParamsRef.current = { terrainThickness, flattenBottom, terrainColor }
+  // Preview is in real-scale meters, so the in-scene thickness keeps the same
+  // proportion as the printed model (thicknessMm converted via export scale).
+  const effectiveTerrainThickness = terrainThickness / (scale * 1000)
+  const latestTerrainParamsRef = useRef({ terrainThickness: effectiveTerrainThickness, flattenBottom, reflectActualElevation, terrainColor })
+  latestTerrainParamsRef.current = { terrainThickness: effectiveTerrainThickness, flattenBottom, reflectActualElevation, terrainColor }
 
   const toggleProjection = useCallback(() => {
     const viewer = viewerRef.current
@@ -2038,6 +2043,7 @@ export default function Preview3D({
           const solidTerrain = buildSolidTerrainPrimitive(sample!, {
             terrainThickness: params.terrainThickness,
             flattenBottom: params.flattenBottom,
+            reflectActualElevation: params.reflectActualElevation,
             terrainColor: params.terrainColor,
           })
           if (cancelled) {
@@ -2288,9 +2294,9 @@ export default function Preview3D({
     const sample = terrainSampleCacheRef.current
     if (!sample || !solidTerrainPrimitiveRef.current) return
     if (!sameBounds(sample.bounds, selectionBounds)) return
-    const current = { terrainThickness, flattenBottom, terrainColor }
+    const current = { terrainThickness: effectiveTerrainThickness, flattenBottom, reflectActualElevation, terrainColor }
     const applied = appliedTerrainParamsRef.current
-    if (applied && applied.terrainThickness === current.terrainThickness && applied.flattenBottom === current.flattenBottom && applied.terrainColor === current.terrainColor) return
+    if (applied && applied.terrainThickness === current.terrainThickness && applied.flattenBottom === current.flattenBottom && applied.reflectActualElevation === current.reflectActualElevation && applied.terrainColor === current.terrainColor) return
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -2313,7 +2319,7 @@ export default function Preview3D({
     }
     viewer.scene.requestRender()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terrainThickness, flattenBottom, terrainColor])
+  }, [terrainThickness, flattenBottom, terrainColor, scale, reflectActualElevation])
 
   return (
     <div style={wrapperStyle}>

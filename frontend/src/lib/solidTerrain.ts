@@ -30,6 +30,7 @@ export interface TerrainBounds {
 export interface SolidTerrainOptions {
   terrainThickness: number
   flattenBottom: boolean
+  reflectActualElevation?: boolean
   gridSize?: number
   terrainColor?: string
 }
@@ -351,14 +352,17 @@ export function buildSolidTerrainPrimitive(
   positionValues.set(sample.topEcefValues)
 
   const thickness = Math.max(MIN_TERRAIN_THICKNESS, options.terrainThickness)
-  const flatBottomHeight = sample.minTopHeight - thickness
+  const flatBottomHeight = options.reflectActualElevation
+    ? Math.min(0, sample.minTopHeight - thickness)
+    : sample.minTopHeight - thickness
 
   for (let i = 0; i < sample.topLocalPositions.length; i++) {
     const topLocal = sample.topLocalPositions[i]
+    const useFlatBottom = options.flattenBottom || options.reflectActualElevation
     const bottomLocal = new Cartesian3(
       topLocal.x,
       topLocal.y,
-      options.flattenBottom ? flatBottomHeight : topLocal.z - thickness
+      useFlatBottom ? flatBottomHeight : topLocal.z - thickness
     )
     const bottomEcef = Matrix4.multiplyByPoint(sample.centerMatrix, bottomLocal, new Cartesian3())
     const vertexIndex = topVertexCount + i

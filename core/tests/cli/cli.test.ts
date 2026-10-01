@@ -145,6 +145,7 @@ describe('CLI export command', () => {
       {
         terrainThickness: 10,
         flattenBottom: true,
+        reflectActualElevation: false,
         format: '3mf',
         lod: 'lod1',
         includeTerrain: true,

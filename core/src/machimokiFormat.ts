@@ -32,6 +32,7 @@ export interface MachimokiManifest {
   options: {
     terrainThickness: number;
     flattenBottom: boolean;
+    reflectActualElevation?: boolean;
     lod?: string;
     includeTerrain?: boolean;
     buildingColor?: string;
@@ -73,6 +74,7 @@ export function createMachimokiBuffer(
     options: {
       terrainThickness: options.terrainThickness,
       flattenBottom: options.flattenBottom,
+      reflectActualElevation: options.reflectActualElevation,
       lod: options.lod,
       includeTerrain: options.includeTerrain,
       buildingColor: options.buildingColor,

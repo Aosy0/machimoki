@@ -138,6 +138,8 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
   }
 
   const flattenBottom = typeof record.flattenBottom === 'boolean' ? record.flattenBottom : true;
+  const reflectActualElevation =
+    typeof record.reflectActualElevation === 'boolean' ? record.reflectActualElevation : false;
   const format = parseFormat(record.format) ?? '3mf';
   const machimokiModelFormat = parseMachimokiModelFormat(record.machimokiModelFormat);
   if (machimokiModelFormat === null) {
@@ -184,6 +186,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
   const options: ExportOptions = {
     terrainThickness,
     flattenBottom,
+    reflectActualElevation,
     format,
     machimokiModelFormat,
     lod,

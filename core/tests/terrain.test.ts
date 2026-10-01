@@ -150,4 +150,64 @@ describe('terrain', () => {
       'PLATEAU-Terrain取得失敗: 標高サンプルが不完全です',
     );
   });
+
+  it('places the bottom at sea level when reflectActualElevation is true', async () => {
+    const { sampleTerrainMostDetailed } = await import('cesium');
+    (sampleTerrainMostDetailed as unknown as MockInstance).mockImplementation((_provider, positions) =>
+      Promise.resolve(
+        positions.map((p: { longitude: number; latitude: number }, i: number) => ({
+          longitude: p.longitude,
+          latitude: p.latitude,
+          height: 100 + i * 0.1,
+        })),
+      ),
+    );
+
+    const mesh = await buildTerrainMesh(bounds, 10, true, undefined, true);
+    const numVertices = 128 * 128;
+    for (let i = numVertices; i < numVertices * 2; i++) {
+      expect(mesh.positions[i * 3 + 1]).toBe(0);
+    }
+  });
+
+  it('keeps a flat sea-level bottom with reflectActualElevation even when flattenBottom is false', async () => {
+    const { sampleTerrainMostDetailed } = await import('cesium');
+    (sampleTerrainMostDetailed as unknown as MockInstance).mockImplementation((_provider, positions) =>
+      Promise.resolve(
+        positions.map((p: { longitude: number; latitude: number }, i: number) => ({
+          longitude: p.longitude,
+          latitude: p.latitude,
+          height: 100 + i * 0.1,
+        })),
+      ),
+    );
+
+    const mesh = await buildTerrainMesh(bounds, 10, false, undefined, true);
+    const numVertices = 128 * 128;
+    const uniqueY = new Set<number>();
+    for (let i = numVertices; i < numVertices * 2; i++) {
+      uniqueY.add(mesh.positions[i * 3 + 1]);
+    }
+    expect(uniqueY.size).toBe(1);
+    expect([...uniqueY][0]).toBe(0);
+  });
+
+  it('clamps the sea-level bottom to thickness below terrain at/below sea level', async () => {
+    const { sampleTerrainMostDetailed } = await import('cesium');
+    (sampleTerrainMostDetailed as unknown as MockInstance).mockImplementation((_provider, positions) =>
+      Promise.resolve(
+        positions.map((p: { longitude: number; latitude: number }, i: number) => ({
+          longitude: p.longitude,
+          latitude: p.latitude,
+          height: 5 + i * 0.1,
+        })),
+      ),
+    );
+
+    const mesh = await buildTerrainMesh(bounds, 10, true, undefined, true);
+    const numVertices = 128 * 128;
+    for (let i = numVertices; i < numVertices * 2; i++) {
+      expect(mesh.positions[i * 3 + 1]).toBe(-5);
+    }
+  });
 });

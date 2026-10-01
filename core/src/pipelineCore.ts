@@ -5,6 +5,11 @@
 
 import { Bounds, RawMesh } from './types.js';
 
+/** Convert user-facing printed thickness (mm) to model-space meters for a given export scale. */
+export function printedMmToModelMeters(thicknessMm: number, scale: number): number {
+  return thicknessMm / (scale * 1000);
+}
+
 /**
  * Convert geographic bounds to the local engine coordinate frame
  * (x = east, y = up, z = south) centered on the selection center.

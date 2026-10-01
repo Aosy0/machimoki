@@ -47,6 +47,7 @@ export async function buildTerrainMesh(
   thickness: number,
   flattenBottom: boolean,
   gridSize: number = TERRAIN_GRID_SIZE,
+  reflectActualElevation = false,
 ): Promise<RawMesh> {
   const n = Number.isFinite(gridSize) ? Math.max(2, Math.floor(gridSize)) : TERRAIN_GRID_SIZE;
   const widthDeg = bounds.east - bounds.west;
@@ -103,13 +104,15 @@ export async function buildTerrainMesh(
 
   // Determine bottom Z
   const minTopZ = Math.min(...topZValues);
-  const bottomZ = flattenBottom ? minTopZ - thickness : -thickness;
+  const flatBottomZ = reflectActualElevation ? Math.min(0, minTopZ - thickness) : minTopZ - thickness;
+  const useFlatBottom = reflectActualElevation || flattenBottom;
+  const bottomZ = useFlatBottom ? flatBottomZ : -thickness;
 
   const allVertices: number[] = [...vertices];
 
   // Bottom vertices
   for (let i = 0; i < numVertices; i++) {
-    const y = flattenBottom ? bottomZ : topZValues[i] - thickness;
+    const y = useFlatBottom ? bottomZ : topZValues[i] - thickness;
     allVertices.push(vertices[i * 3], y, vertices[i * 3 + 2]);
   }
 

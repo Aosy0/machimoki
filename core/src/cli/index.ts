@@ -93,7 +93,7 @@ program
   .command('export')
   .description('Export a printable 3D model')
   .requiredOption('--bounds <west,south,east,north>', 'geographic bounds', parseBounds)
-  .requiredOption('--terrain-thickness <number>', 'terrain thickness', (value) => {
+  .requiredOption('--terrain-thickness <number>', 'printed terrain thickness in mm', (value) => {
     const num = Number(value);
     if (Number.isNaN(num) || num <= 0) {
       throw new Error(`Invalid terrain thickness: ${value}`);
@@ -102,6 +102,7 @@ program
   })
   .option('--flatten-bottom', 'flatten the bottom surface', true)
   .option('--no-flatten-bottom', 'do not flatten the bottom surface')
+  .option('--reflect-actual-elevation', 'place the model base at sea level (reflect actual elevation)', false)
   .option('--format <3mf|stl>', 'output format', parseFormat, '3mf')
   .requiredOption('--output <file>', 'output file path')
   .option('--lod <lod1|lod2|lod3|lod4>', 'building LOD', parseLod, 'lod1')
@@ -129,6 +130,7 @@ program
     const exportOptions: ExportOptions = {
       terrainThickness: options.terrainThickness,
       flattenBottom: options.flattenBottom,
+      reflectActualElevation: options.reflectActualElevation,
       format: options.format,
       lod: options.lod,
       includeTerrain: options.terrain,

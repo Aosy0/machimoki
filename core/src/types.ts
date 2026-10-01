@@ -18,6 +18,7 @@ export type ExportFormat = '3mf' | 'stl' | 'machimoki';
 export interface ExportOptions {
   terrainThickness: number;
   flattenBottom: boolean;
+  reflectActualElevation?: boolean;
   format: ExportFormat;
   lod?: Lod;
   includeTerrain?: boolean;
