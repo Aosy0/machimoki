@@ -12,3 +12,6 @@ test/
 report/
 *.3mf
 .agents/skills/
+.wrangler/
+.opencode/
+screenshot-*.png
