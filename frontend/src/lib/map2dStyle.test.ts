@@ -97,9 +97,7 @@ describe('失敗分離', () => {
     assert.ok(asObject(sources)['v'])
     const layers = fallback['layers']
     assert.ok(Array.isArray(layers))
-    const sourceLayers = (layers as unknown[]).map(
-      (l): unknown => asObject(l)['source-layer'],
-    )
+    const sourceLayers = (layers as unknown[]).map((l): unknown => asObject(l)['source-layer'])
     assert.ok(sourceLayers.includes('RdCL'))
     assert.ok(sourceLayers.includes('AdmBdry'))
     assert.ok(sourceLayers.includes('WA'))

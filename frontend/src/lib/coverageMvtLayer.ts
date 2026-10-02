@@ -1,7 +1,5 @@
 import type { Viewer } from 'cesium'
-import CesiumMVTImageryProvider, {
-  type ImageryProviderOption,
-} from 'cesium-mvt-imagery-provider'
+import CesiumMVTImageryProvider, { type ImageryProviderOption } from 'cesium-mvt-imagery-provider'
 import { LOD_CATEGORY_STYLES, resolveLodCategory } from './coverageCategories'
 
 /**
@@ -93,8 +91,7 @@ type CoverageUrlTemplate = `${`http${'s' | ''}://` | ''}${string}/{z}/{x}/{y}${s
  * 例外を投げる（呼び出し側で Entity フォールバックに切り替える）。
  */
 const COVERAGE_API_BASE =
-  (import.meta as { env?: { VITE_COVERAGE_API_BASE?: string } }).env
-    ?.VITE_COVERAGE_API_BASE ??
+  (import.meta as { env?: { VITE_COVERAGE_API_BASE?: string } }).env?.VITE_COVERAGE_API_BASE ??
   (typeof window !== 'undefined' &&
   (window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1' ||
@@ -121,9 +118,7 @@ export async function createCoverageMvtLayer(
 
   let detailedMode = initialDetailed
   let currentVisible = true
-  const buildProvider = (
-    detailed: boolean,
-  ): CesiumMVTImageryProvider => {
+  const buildProvider = (detailed: boolean): CesiumMVTImageryProvider => {
     const options: ImageryProviderOption = {
       urlTemplate: resolvedTemplate as CoverageUrlTemplate,
       layerName: COVERAGE_LAYER_NAME,
@@ -134,9 +129,7 @@ export async function createCoverageMvtLayer(
     return new CesiumMVTImageryProvider(options)
   }
 
-  let layer = viewer.imageryLayers.addImageryProvider(
-    buildProvider(detailedMode),
-  )
+  let layer = viewer.imageryLayers.addImageryProvider(buildProvider(detailedMode))
 
   return {
     remove: () => {
@@ -158,9 +151,7 @@ export async function createCoverageMvtLayer(
       } catch {
         /* ignore */
       }
-      layer = viewer.imageryLayers.addImageryProvider(
-        buildProvider(detailedMode),
-      )
+      layer = viewer.imageryLayers.addImageryProvider(buildProvider(detailedMode))
       layer.show = currentVisible
     },
   }

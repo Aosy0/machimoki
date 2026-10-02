@@ -47,8 +47,7 @@ function createMockViewer(): { viewer: Viewer; imageryLayers: MockImageryLayers 
 
 function stubCoverageProbe(): () => void {
   const originalFetch = globalThis.fetch
-  const stub = (() =>
-    Promise.resolve({ ok: true } as unknown as Response)) as typeof fetch
+  const stub = (() => Promise.resolve({ ok: true } as unknown as Response)) as typeof fetch
   globalThis.fetch = stub
   return () => {
     globalThis.fetch = originalFetch
@@ -89,10 +88,26 @@ describe('resolveCoverageMvtStyle 詳細モード（detailed=true）', () => {
   it('5カテゴリを色定義通りに塗り分ける', () => {
     const cases = [
       { lods: '', fill: LOD_CATEGORY_STYLES.none.fill, outline: LOD_CATEGORY_STYLES.none.outline },
-      { lods: 'lod1', fill: LOD_CATEGORY_STYLES.lod1.fill, outline: LOD_CATEGORY_STYLES.lod1.outline },
-      { lods: 'lod1,lod2', fill: LOD_CATEGORY_STYLES.lod2.fill, outline: LOD_CATEGORY_STYLES.lod2.outline },
-      { lods: 'lod3', fill: LOD_CATEGORY_STYLES.lod3plus.fill, outline: LOD_CATEGORY_STYLES.lod3plus.outline },
-      { lods: 'lod1,lod4', fill: LOD_CATEGORY_STYLES.lod4.fill, outline: LOD_CATEGORY_STYLES.lod4.outline },
+      {
+        lods: 'lod1',
+        fill: LOD_CATEGORY_STYLES.lod1.fill,
+        outline: LOD_CATEGORY_STYLES.lod1.outline,
+      },
+      {
+        lods: 'lod1,lod2',
+        fill: LOD_CATEGORY_STYLES.lod2.fill,
+        outline: LOD_CATEGORY_STYLES.lod2.outline,
+      },
+      {
+        lods: 'lod3',
+        fill: LOD_CATEGORY_STYLES.lod3plus.fill,
+        outline: LOD_CATEGORY_STYLES.lod3plus.outline,
+      },
+      {
+        lods: 'lod1,lod4',
+        fill: LOD_CATEGORY_STYLES.lod4.fill,
+        outline: LOD_CATEGORY_STYLES.lod4.outline,
+      },
     ] as const
     for (const { lods, fill, outline } of cases) {
       const style = resolveCoverageMvtStyle({ properties: { lods } }, true)
@@ -105,7 +120,11 @@ describe('resolveCoverageMvtStyle 詳細モード（detailed=true）', () => {
     const cases = [
       { maxLod: 0, fill: LOD_CATEGORY_STYLES.none.fill, outline: LOD_CATEGORY_STYLES.none.outline },
       { maxLod: 1, fill: LOD_CATEGORY_STYLES.lod1.fill, outline: LOD_CATEGORY_STYLES.lod1.outline },
-      { maxLod: 3, fill: LOD_CATEGORY_STYLES.lod3plus.fill, outline: LOD_CATEGORY_STYLES.lod3plus.outline },
+      {
+        maxLod: 3,
+        fill: LOD_CATEGORY_STYLES.lod3plus.fill,
+        outline: LOD_CATEGORY_STYLES.lod3plus.outline,
+      },
       { maxLod: 4, fill: LOD_CATEGORY_STYLES.lod4.fill, outline: LOD_CATEGORY_STYLES.lod4.outline },
     ] as const
     for (const { maxLod, fill, outline } of cases) {
@@ -189,11 +208,7 @@ describe('createCoverageMvtLayer 再生成', () => {
     const restore = stubCoverageProbe()
     try {
       const { viewer, imageryLayers } = createMockViewer()
-      const handle = await createCoverageMvtLayer(
-        viewer,
-        '/api/coverage/tiles/{z}/{x}/{y}',
-        false,
-      )
+      const handle = await createCoverageMvtLayer(viewer, '/api/coverage/tiles/{z}/{x}/{y}', false)
       assert.equal(imageryLayers.addedProviders.length, 1)
       handle.setDetailedMode(false)
       assert.equal(imageryLayers.addedProviders.length, 1)

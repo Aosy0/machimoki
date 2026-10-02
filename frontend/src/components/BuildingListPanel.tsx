@@ -76,9 +76,7 @@ const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>
           fontSize: '10px',
           cursor: 'pointer',
           borderRadius: '3px',
-          border: excluded
-            ? '1px solid var(--accent)'
-            : '1px solid #b3591f',
+          border: excluded ? '1px solid var(--accent)' : '1px solid #b3591f',
           background: excluded ? 'var(--accent)' : 'transparent',
           color: excluded ? 'var(--text)' : '#ff9800',
         }}
@@ -113,10 +111,11 @@ export default function BuildingListPanel({
 
   const itemData = useMemo<RowData>(
     () => ({ items: filtered, excludedSet, onExclude, onRestore, onHoverItem }),
-    [filtered, excludedSet, onExclude, onRestore, onHoverItem]
+    [filtered, excludedSet, onExclude, onRestore, onHoverItem],
   )
 
-  const listHeight = filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * ITEM_SIZE) : 0
+  const listHeight =
+    filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * ITEM_SIZE) : 0
 
   if (items.length === 0) return null
 
@@ -139,7 +138,13 @@ export default function BuildingListPanel({
         overflow: 'hidden',
       }}
     >
-      <div style={{ position: 'relative', borderBottom: open ? '1px solid var(--border)' : 'none', overflow: 'hidden' }}>
+      <div
+        style={{
+          position: 'relative',
+          borderBottom: open ? '1px solid var(--border)' : 'none',
+          overflow: 'hidden',
+        }}
+      >
         {listLoading && loadingProgress != null && (
           <div
             aria-hidden
@@ -165,7 +170,8 @@ export default function BuildingListPanel({
               height: '2px',
               background: 'var(--accent)',
               opacity: 0.85,
-              backgroundImage: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
+              backgroundImage:
+                'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
               backgroundSize: '200% 100%',
               animation: 'machimoki-indeterminate 1.2s linear infinite',
             }}

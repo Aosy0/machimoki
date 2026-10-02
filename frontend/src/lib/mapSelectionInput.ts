@@ -7,10 +7,7 @@
  * Cesium/MapLibre のどちらの地図から来た値も同じ判定に通す。
  */
 import { createSelectionBounds } from './mapBounds'
-import {
-  validateSelectionBounds,
-  type SelectionBounds,
-} from './selectionBounds'
+import { validateSelectionBounds, type SelectionBounds } from './selectionBounds'
 
 export interface ManualCoordsInput {
   west: string
@@ -26,25 +23,19 @@ export interface PresetBoundsInput {
   north: number
 }
 
-export type ManualParseResult =
-  | { ok: true; bounds: SelectionBounds }
-  | { ok: false; error: string }
+export type ManualParseResult = { ok: true; bounds: SelectionBounds } | { ok: false; error: string }
 
 /**
  * 手入力パネルの文字列4値を SelectionBounds に変換する。
  * - NaN・順序不正は従来の日本語メッセージで拒否する
  * - 経緯度範囲・反子午線の検証は createSelectionBounds（集約）に委譲する
  */
-export function parseManualCoords(
-  input: ManualCoordsInput,
-): ManualParseResult {
+export function parseManualCoords(input: ManualCoordsInput): ManualParseResult {
   const west = parseFloat(input.west)
   const south = parseFloat(input.south)
   const east = parseFloat(input.east)
   const north = parseFloat(input.north)
-  if (
-    [west, south, east, north].some((value) => !Number.isFinite(value))
-  ) {
+  if ([west, south, east, north].some((value) => !Number.isFinite(value))) {
     return { ok: false, error: '座標値が無効です。数値を入力してください' }
   }
   if (west >= east || south >= north) {
@@ -71,15 +62,8 @@ export function parseManualCoords(
  * createSelectionBounds（範囲・順序・反子午線）＋validateSelectionBounds
  * （面積上限1000km²）の集約検証を通し、不正なら例外を投げる。
  */
-export function coercePresetBounds(
-  preset: PresetBoundsInput,
-): SelectionBounds {
-  const bounds = createSelectionBounds(
-    preset.west,
-    preset.south,
-    preset.east,
-    preset.north,
-  )
+export function coercePresetBounds(preset: PresetBoundsInput): SelectionBounds {
+  const bounds = createSelectionBounds(preset.west, preset.south, preset.east, preset.north)
   const error = validateSelectionBounds(bounds)
   if (error !== null) {
     throw new Error(error)
@@ -91,9 +75,7 @@ export function coercePresetBounds(
  * 現在表示範囲の生値（Map2Dの getBounds 等）を SelectionBounds 化する。
  * 面積上限などの集約検証を通し、不正なら理由文を返す（例外にしない）。
  */
-export function coerceCurrentViewBounds(
-  candidate: PresetBoundsInput,
-): ManualParseResult {
+export function coerceCurrentViewBounds(candidate: PresetBoundsInput): ManualParseResult {
   const error = validateSelectionBounds(candidate)
   if (error !== null) {
     return { ok: false, error }

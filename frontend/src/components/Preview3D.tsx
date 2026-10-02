@@ -37,7 +37,12 @@ CreditDisplay.cesiumCredit = new Credit('© Cesium', true)
 
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PipelineState } from '../types/pipeline'
-import { resolveMuniCodes, findBestTilesetUrl, getCoverageDetails, type Lod } from '../lib/catalogApi'
+import {
+  resolveMuniCodes,
+  findBestTilesetUrl,
+  getCoverageDetails,
+  type Lod,
+} from '../lib/catalogApi'
 import {
   applyClippingToTileset,
   createGlobeClippingPlanes,
@@ -155,9 +160,9 @@ function createBuildingCustomShader(color: Color): CustomShader {
   })
 }
 
-function clearGlobeClippingPlanes(
-  globe: { clippingPlanes: ClippingPlaneCollection | undefined }
-): void {
+function clearGlobeClippingPlanes(globe: {
+  clippingPlanes: ClippingPlaneCollection | undefined
+}): void {
   globe.clippingPlanes = undefined
 }
 
@@ -182,10 +187,7 @@ function attachOrthographicZoom(viewer: Viewer): () => void {
     // Firefox等の line 単位ホイールをピクセル相当へ揃える
     const delta = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 40 : e.deltaY
     const factor = Math.exp(delta * ORTHO_ZOOM_PER_NOTCH)
-    frustum.width = Math.min(
-      Math.max(width * factor, ORTHO_ZOOM_MIN_WIDTH),
-      ORTHO_ZOOM_MAX_WIDTH
-    )
+    frustum.width = Math.min(Math.max(width * factor, ORTHO_ZOOM_MIN_WIDTH), ORTHO_ZOOM_MAX_WIDTH)
     viewer.scene.requestRender()
   }
   canvas.addEventListener('wheel', onWheel, { passive: false })
@@ -207,10 +209,7 @@ interface WhiteModelSaved {
   tilesetOriginals: WeakMap<object, { lightColor?: Cartesian3 }>
 }
 
-function saveTilesetOriginal(
-  ts: Cesium3DTileset,
-  saved: WhiteModelSaved | undefined,
-): void {
+function saveTilesetOriginal(ts: Cesium3DTileset, saved: WhiteModelSaved | undefined): void {
   if (!saved) return
   if (saved.tilesetOriginals.has(ts as object)) return
   try {
@@ -315,7 +314,10 @@ function applyWhiteModelLook(
     try {
       const fog = viewer.scene.fog
       if (fog) {
-        if (saved.fogEnabled !== null && typeof (fog as { enabled?: unknown }).enabled === 'boolean') {
+        if (
+          saved.fogEnabled !== null &&
+          typeof (fog as { enabled?: unknown }).enabled === 'boolean'
+        ) {
           fog.enabled = saved.fogEnabled
         }
         if (saved.fogDensity !== null && typeof fog.density === 'number') {
@@ -377,7 +379,10 @@ function applyWhiteModelLook(
   try {
     const fog = viewer.scene.fog
     if (fog) {
-      if (saved.fogEnabled === null && typeof (fog as { enabled?: unknown }).enabled === 'boolean') {
+      if (
+        saved.fogEnabled === null &&
+        typeof (fog as { enabled?: unknown }).enabled === 'boolean'
+      ) {
         saved.fogEnabled = fog.enabled as boolean
       }
       if (saved.fogDensity === null && typeof fog.density === 'number') {
@@ -409,7 +414,8 @@ function applyWhiteModelLook(
 function applyContour(viewer: Viewer, style: GsiTileStyle): void {
   const globe: any = viewer.scene.globe
   const tp: any = globe.terrainProvider
-  const isEllipsoid = !tp || tp.constructor?.name === 'EllipsoidTerrainProvider' || tp.availability === undefined
+  const isEllipsoid =
+    !tp || tp.constructor?.name === 'EllipsoidTerrainProvider' || tp.availability === undefined
   if (!isContourStyle(style) || isEllipsoid) {
     globe.material = undefined
     viewer.scene.requestRender()
@@ -464,11 +470,18 @@ interface ContourDebugInfo {
 function collectContourDebugInfo(v: Viewer, style: GsiTileStyle): ContourDebugInfo {
   const globe: any = v.scene.globe
   const tp: any = globe.terrainProvider
-  const isEllipsoid = !tp || tp.constructor?.name === 'EllipsoidTerrainProvider' || tp.availability === undefined
+  const isEllipsoid =
+    !tp || tp.constructor?.name === 'EllipsoidTerrainProvider' || tp.availability === undefined
   const mat: any = globe.material
   const camera = v.camera
   const mode =
-    v.scene.mode === SceneMode.SCENE2D ? '2D' : v.scene.mode === SceneMode.SCENE3D ? '3D' : v.scene.mode === SceneMode.COLUMBUS_VIEW ? 'CV' : 'MORPH'
+    v.scene.mode === SceneMode.SCENE2D
+      ? '2D'
+      : v.scene.mode === SceneMode.SCENE3D
+        ? '3D'
+        : v.scene.mode === SceneMode.COLUMBUS_VIEW
+          ? 'CV'
+          : 'MORPH'
 
   const carto = camera.positionCartographic
   const cartoHeight = carto ? carto.height : null
@@ -485,7 +498,12 @@ function collectContourDebugInfo(v: Viewer, style: GsiTileStyle): ContourDebugIn
   try {
     if (v.scene.mode === SceneMode.SCENE2D) {
       const f = camera.frustum as any
-      if (typeof f?.right === 'number' && typeof f?.left === 'number' && typeof f?.top === 'number' && typeof f?.bottom === 'number') {
+      if (
+        typeof f?.right === 'number' &&
+        typeof f?.left === 'number' &&
+        typeof f?.top === 'number' &&
+        typeof f?.bottom === 'number'
+      ) {
         rectHeight = Math.max(f.right - f.left, f.top - f.bottom)
       }
     } else {
@@ -508,7 +526,7 @@ function collectContourDebugInfo(v: Viewer, style: GsiTileStyle): ContourDebugIn
   const hasAvailability = tp?.availability !== undefined
   const terrainReady = tp?.ready ?? false
 
-  const h = cartoHeight ?? (magHeight ?? 10000)
+  const h = cartoHeight ?? magHeight ?? 10000
   let contourActive = false
   let contourReason = ''
   let spacingUsed: number | null = null
@@ -579,7 +597,14 @@ function ContourDebugPanel({
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+        }}
+      >
         <span style={{ fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-dim)' }}>
           CONTOUR DEBUG ({info.mode})
         </span>
@@ -601,12 +626,21 @@ function ContourDebugPanel({
         </button>
       </div>
       {!collapsed && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', lineHeight: 1.5, marginTop: '4px' }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '2px',
+            lineHeight: 1.5,
+            marginTop: '4px',
+          }}
+        >
           <div>
             Height: <b>{fmtNum(info.cartoHeight)}m</b>{' '}
             <span style={{ color: 'var(--text-muted)' }}>
               (carto: {fmtNum(info.cartoHeight)}, mag: {fmtNum(info.magHeight)}
-              {info.mode === '2D' ? `, z: ${fmtNum(info.posZ)}` : ''}, rect: {fmtNum(info.rectHeight)})
+              {info.mode === '2D' ? `, z: ${fmtNum(info.posZ)}` : ''}, rect:{' '}
+              {fmtNum(info.rectHeight)})
             </span>
           </div>
           <div>Style: {info.gsiStyle}</div>
@@ -683,14 +717,28 @@ export default function Preview3D({
   const gsiLayerRef = useRef<any>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
   const buildingMinYCacheRef = useRef<Map<string, number | null>>(new Map())
-  const appliedTerrainParamsRef = useRef<{ terrainThickness: number; flattenBottom: boolean; reflectActualElevation: boolean; terrainColor: string } | null>(null)
+  const appliedTerrainParamsRef = useRef<{
+    terrainThickness: number
+    flattenBottom: boolean
+    reflectActualElevation: boolean
+    terrainColor: string
+  } | null>(null)
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [isOrthographic, setIsOrthographic] = useState(false)
   const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
   const gsiStyleRef = useRef(gsiStyle)
-  useEffect(() => { gsiStyleRef.current = gsiStyle }, [gsiStyle])
+  useEffect(() => {
+    gsiStyleRef.current = gsiStyle
+  }, [gsiStyle])
   const terrainBoundingSphereRef = useRef<BoundingSphere | null>(null)
-  const [debugInfo, setDebugInfo] = useState<{isFallback:boolean, minTopHeight:number, variance:number, buildingMinY:number|null, delta:number|null, terrainPrimitive:boolean}|null>(null)
+  const [debugInfo, setDebugInfo] = useState<{
+    isFallback: boolean
+    minTopHeight: number
+    variance: number
+    buildingMinY: number | null
+    delta: number | null
+    terrainPrimitive: boolean
+  } | null>(null)
   const [contourDebug, setContourDebug] = useState<ContourDebugInfo | null>(null)
   const [contourDebugCollapsed, setContourDebugCollapsed] = useState(false)
   useEffect(() => {
@@ -749,7 +797,9 @@ export default function Preview3D({
   const [canForceBuildings, setCanForceBuildings] = useState(false)
   const maxTilesRef = useRef(0)
   const pendingMapRef = useRef<Map<Cesium3DTileset, number>>(new Map())
-  const progressListenersRef = useRef<Map<Cesium3DTileset, (pending: number, processing: number) => void>>(new Map())
+  const progressListenersRef = useRef<
+    Map<Cesium3DTileset, (pending: number, processing: number) => void>
+  >(new Map())
   const progressThrottleRef = useRef(0)
   const listRafRef = useRef<number | null>(null)
 
@@ -785,17 +835,12 @@ export default function Preview3D({
   }
 
   // scene.pick() は Cesium バージョンにより feature 自体または { id: feature } を返す
-  const asTileFeature = (
-    picked: unknown
-  ): Cesium3DTileFeature | null => {
+  const asTileFeature = (picked: unknown): Cesium3DTileFeature | null => {
     if (!picked || typeof picked !== 'object') return null
     const obj = picked as { id?: unknown }
     const candidate =
       obj.id instanceof Cesium3DTileFeature ? obj.id : (picked as Cesium3DTileFeature)
-    if (
-      candidate instanceof Cesium3DTileFeature &&
-      typeof candidate.getProperty === 'function'
-    ) {
+    if (candidate instanceof Cesium3DTileFeature && typeof candidate.getProperty === 'function') {
       return candidate
     }
     return null
@@ -803,7 +848,7 @@ export default function Preview3D({
 
   const forEachContentFeature = (
     tile: Cesium3DTile | undefined,
-    cb: (feature: Cesium3DTileFeature) => void
+    cb: (feature: Cesium3DTileFeature) => void,
   ): void => {
     if (!tile) return
     const content = tile.content as any
@@ -819,9 +864,7 @@ export default function Preview3D({
     }
   }
 
-  const forEachBuildingFeature = (
-    cb: (feature: Cesium3DTileFeature) => void
-  ): void => {
+  const forEachBuildingFeature = (cb: (feature: Cesium3DTileFeature) => void): void => {
     for (const ts of tilesetsRef.current) {
       forEachContentFeature(ts.root, cb)
     }
@@ -953,8 +996,18 @@ export default function Preview3D({
   // Preview is in real-scale meters, so the in-scene thickness keeps the same
   // proportion as the printed model (thicknessMm converted via export scale).
   const effectiveTerrainThickness = terrainThickness / (scale * 1000)
-  const latestTerrainParamsRef = useRef({ terrainThickness: effectiveTerrainThickness, flattenBottom, reflectActualElevation, terrainColor })
-  latestTerrainParamsRef.current = { terrainThickness: effectiveTerrainThickness, flattenBottom, reflectActualElevation, terrainColor }
+  const latestTerrainParamsRef = useRef({
+    terrainThickness: effectiveTerrainThickness,
+    flattenBottom,
+    reflectActualElevation,
+    terrainColor,
+  })
+  latestTerrainParamsRef.current = {
+    terrainThickness: effectiveTerrainThickness,
+    flattenBottom,
+    reflectActualElevation,
+    terrainColor,
+  }
 
   const toggleProjection = useCallback(() => {
     const viewer = viewerRef.current
@@ -967,7 +1020,7 @@ export default function Preview3D({
       setIsOrthographic(false)
       try {
         window.dispatchEvent(
-          new CustomEvent('preview:projectionChange', { detail: { mode: 'perspective' } })
+          new CustomEvent('preview:projectionChange', { detail: { mode: 'perspective' } }),
         )
       } catch {}
     } else {
@@ -979,7 +1032,8 @@ export default function Preview3D({
           (Math.PI / 180) *
           6371000 *
           Math.cos((lat * Math.PI) / 180)
-        const hM = Math.abs(selectionBounds.north - selectionBounds.south) * (Math.PI / 180) * 6371000
+        const hM =
+          Math.abs(selectionBounds.north - selectionBounds.south) * (Math.PI / 180) * 6371000
         const maxDim = Math.max(wM, hM)
         try {
           ;(viewer.camera.frustum as OrthographicFrustum).width = Math.max(maxDim * 1.6, 300)
@@ -991,7 +1045,7 @@ export default function Preview3D({
       setIsOrthographic(true)
       try {
         window.dispatchEvent(
-          new CustomEvent('preview:projectionChange', { detail: { mode: 'orthographic' } })
+          new CustomEvent('preview:projectionChange', { detail: { mode: 'orthographic' } }),
         )
       } catch {}
     }
@@ -1014,7 +1068,7 @@ export default function Preview3D({
         viewer.scene.requestRender()
         try {
           window.dispatchEvent(
-            new CustomEvent('preview:viewChange', { detail: { headingDeg, pitchDeg, opts } })
+            new CustomEvent('preview:viewChange', { detail: { headingDeg, pitchDeg, opts } }),
           )
         } catch {}
         return
@@ -1048,8 +1102,8 @@ export default function Preview3D({
           new HeadingPitchRange(
             CesiumMath.toRadians(headingDeg),
             CesiumMath.toRadians(pitchDeg),
-            range
-          )
+            range,
+          ),
         )
         viewer.camera.lookAtTransform(Matrix4.IDENTITY)
       } else {
@@ -1065,11 +1119,11 @@ export default function Preview3D({
       viewer.scene.requestRender()
       try {
         window.dispatchEvent(
-          new CustomEvent('preview:viewChange', { detail: { headingDeg, pitchDeg, opts } })
+          new CustomEvent('preview:viewChange', { detail: { headingDeg, pitchDeg, opts } }),
         )
       } catch {}
     },
-    [selectionBounds]
+    [selectionBounds],
   )
 
   void PerspectiveFrustum
@@ -1129,20 +1183,12 @@ export default function Preview3D({
     // カメラ高さを地表+CAMERA_GROUND_CLEARANCE 以上へ戻す(範囲外はメッシュが無いため対象外)。
     const groundCartoScratch = new Cartographic()
     const groundEcefScratch = new Cartesian3()
-    const groundHeightAt = (
-      sample: TerrainSampleData,
-      x: number,
-      y: number
-    ): number => {
+    const groundHeightAt = (sample: TerrainSampleData, x: number, y: number): number => {
       const i = (y * sample.gridSize + x) * 3
       groundEcefScratch.x = sample.topEcefValues[i]
       groundEcefScratch.y = sample.topEcefValues[i + 1]
       groundEcefScratch.z = sample.topEcefValues[i + 2]
-      return Cartographic.fromCartesian(
-        groundEcefScratch,
-        undefined,
-        groundCartoScratch
-      ).height
+      return Cartographic.fromCartesian(groundEcefScratch, undefined, groundCartoScratch).height
     }
     const clampCameraAboveGround = (): void => {
       if (viewer.isDestroyed()) return
@@ -1170,11 +1216,7 @@ export default function Preview3D({
       if (!Number.isFinite(ground)) return
       const minHeight = ground + CAMERA_GROUND_CLEARANCE
       if (carto.height < minHeight) {
-        viewer.camera.position = Cartesian3.fromRadians(
-          carto.longitude,
-          carto.latitude,
-          minHeight,
-        )
+        viewer.camera.position = Cartesian3.fromRadians(carto.longitude, carto.latitude, minHeight)
       }
     }
     viewer.scene.preRender.addEventListener(clampCameraAboveGround)
@@ -1215,7 +1257,9 @@ export default function Preview3D({
     applyWhiteModelLook(viewer, whiteModelRef.current, gsiLayerRef, whiteModelSavedRef.current)
 
     // 直接配信の quantized-mesh (Ion不要) のみ使用
-    const directTerrainUrl = (import.meta.env.VITE_TERRAIN_URL as string | undefined) ?? 'https://tile.plateauview.mlit.go.jp/terrain'
+    const directTerrainUrl =
+      (import.meta.env.VITE_TERRAIN_URL as string | undefined) ??
+      'https://tile.plateauview.mlit.go.jp/terrain'
 
     viewerRef.current = viewer
     ;(window as any).__cesiumViewer = viewer
@@ -1228,7 +1272,7 @@ export default function Preview3D({
     }
 
     gsiLayerRef.current = viewer.scene.globe.imageryLayers.addImageryProvider(
-      createGsiImageryProvider(gsiStyle)
+      createGsiImageryProvider(gsiStyle),
     )
 
     applyContour(viewer, gsiStyle)
@@ -1237,7 +1281,8 @@ export default function Preview3D({
       if (isContourStyle(gsiStyleRef.current)) applyContour(viewer, gsiStyleRef.current)
     }
     viewer.camera.moveEnd.addEventListener(onMoveEnd)
-    ;(viewer as any)._machimokiContourCleanup = () => viewer.camera.moveEnd.removeEventListener(onMoveEnd)
+    ;(viewer as any)._machimokiContourCleanup = () =>
+      viewer.camera.moveEnd.removeEventListener(onMoveEnd)
 
     // 等高線デバッグパネル用のリアルタイム更新ループ（値が変わった時のみ再レンダリング）
     let contourDebugRaf = 0
@@ -1328,9 +1373,13 @@ export default function Preview3D({
       terrainBoundingSphereRef.current = null
       setTerrainProvider(null)
       setTerrainError(null)
-      try { (viewer as any)._machimokiContourCleanup?.() } catch {}
+      try {
+        ;(viewer as any)._machimokiContourCleanup?.()
+      } catch {}
       cancelAnimationFrame(contourDebugRaf)
-      try { viewer.scene.preRender.removeEventListener(clampCameraAboveGround) } catch {}
+      try {
+        viewer.scene.preRender.removeEventListener(clampCameraAboveGround)
+      } catch {}
       orthoWheelCleanupRef.current?.()
       orthoWheelCleanupRef.current = null
       viewer.destroy()
@@ -1366,9 +1415,7 @@ export default function Preview3D({
       gridLayerRef.current.alpha = 0.4
     }
 
-    console.log(
-      `[Preview3D] Imagery layers visibility set to: ${showTerrainImagery}`
-    )
+    console.log(`[Preview3D] Imagery layers visibility set to: ${showTerrainImagery}`)
     viewer.scene.requestRender()
   }, [showTerrainImagery])
 
@@ -1381,7 +1428,7 @@ export default function Preview3D({
       viewer.scene.globe.imageryLayers.remove(oldLayer, true)
     }
     gsiLayerRef.current = viewer.scene.globe.imageryLayers.addImageryProvider(
-      createGsiImageryProvider(gsiStyle)
+      createGsiImageryProvider(gsiStyle),
     )
     if (whiteModelRef.current) {
       applyWhiteModelLook(viewer, true, gsiLayerRef, whiteModelSavedRef.current)
@@ -1550,7 +1597,9 @@ export default function Preview3D({
           // 大規模範囲はURL解決・予算推定をスキップし、即座に地形のみ表示へ進む
           terrainOnlyDueToBudget = true
           setCanForceBuildings(true)
-          setCoverageWarning('選択範囲が広いため、地形のみ表示しています（建物を表示すると時間がかかります）')
+          setCoverageWarning(
+            '選択範囲が広いため、地形のみ表示しています（建物を表示すると時間がかかります）',
+          )
           setBuildingLoadDetail('大規模範囲（地形のみ表示）')
           setBuildingLoadProgress(null)
           setListLoading(false)
@@ -1584,20 +1633,17 @@ export default function Preview3D({
             }
           })
           const results = await Promise.all(urlPromises)
-          urls = results
-            .map((r) => r.url)
-            .filter((u): u is string => u !== null)
-          const failedMuniCodes = results
-            .filter((r) => r.url === null)
-            .map((r) => r.code)
+          urls = results.map((r) => r.url).filter((u): u is string => u !== null)
+          const failedMuniCodes = results.filter((r) => r.url === null).map((r) => r.code)
           const fallbackEntries = results.filter(
             (r): r is { code: string; url: string; actualLod: Lod } =>
-              r.url !== null && r.actualLod !== null && r.actualLod !== lod
+              r.url !== null && r.actualLod !== null && r.actualLod !== lod,
           )
           if (cancelled) return
 
           if (urls.length === 0) {
-            if (firstUrlErrorRef.current) console.warn('[Preview3D] 建物データなし:', firstUrlErrorRef.current.message)
+            if (firstUrlErrorRef.current)
+              console.warn('[Preview3D] 建物データなし:', firstUrlErrorRef.current.message)
             setCoverageWarning('選択範囲にPLATEAUの建物データがありません。地形のみ表示しています')
             setBuildingLoadDetail('建物データなし（地形のみ表示）')
             setBuildingLoadProgress(null)
@@ -1620,11 +1666,11 @@ export default function Preview3D({
             }
             if (names.length > 0) {
               setCoverageWarning(
-                `選択範囲の一部でPLATEAUデータが未整備です: ${names.join('、')}。整備済みエリアの建物のみ表示しています`
+                `選択範囲の一部でPLATEAUデータが未整備です: ${names.join('、')}。整備済みエリアの建物のみ表示しています`,
               )
             } else {
               setCoverageWarning(
-                `選択範囲の一部(${failedMuniCodes.length}自治体)でPLATEAUデータが未整備です。整備済みエリアの建物のみ表示しています`
+                `選択範囲の一部(${failedMuniCodes.length}自治体)でPLATEAUデータが未整備です。整備済みエリアの建物のみ表示しています`,
               )
             }
           } else if (fallbackEntries.length > 0) {
@@ -1633,20 +1679,25 @@ export default function Preview3D({
               const details = await getCoverageDetails()
               fallbackNames = fallbackEntries.map((r) => {
                 const city = details.get(r.code)?.city
-                return city ? `${city}(${r.actualLod.toUpperCase()})` : `${r.code}(${r.actualLod.toUpperCase()})`
+                return city
+                  ? `${city}(${r.actualLod.toUpperCase()})`
+                  : `${r.code}(${r.actualLod.toUpperCase()})`
               })
             } catch {
               fallbackNames = fallbackEntries.map((r) => `${r.code}(${r.actualLod.toUpperCase()})`)
             }
             setCoverageWarning(
-              `選択範囲の一部は${lod.toUpperCase()}未整備のため、対応する最も詳細なレベルで表示しています: ${fallbackNames.join('、')}`
+              `選択範囲の一部は${lod.toUpperCase()}未整備のため、対応する最も詳細なレベルで表示しています: ${fallbackNames.join('、')}`,
             )
           } else {
             setCoverageWarning(null)
           }
 
           if (forceBuildings && urls.length > 0) {
-            setCoverageWarning((prev) => prev ?? '建物を手動表示しています（データ量が多いため時間がかかる場合があります）')
+            setCoverageWarning(
+              (prev) =>
+                prev ?? '建物を手動表示しています（データ量が多いため時間がかかる場合があります）',
+            )
           }
 
           console.log('[Preview3D] Resolved tileset URLs:', urls)
@@ -1661,7 +1712,10 @@ export default function Preview3D({
                 signal: estimateAbort.signal,
               })
             } catch (err) {
-              console.warn('[Preview3D] preview budget estimate failed, terrain-only fallback:', err)
+              console.warn(
+                '[Preview3D] preview budget estimate failed, terrain-only fallback:',
+                err,
+              )
               terrainOnlyDueToBudget = true
               setCanForceBuildings(true)
               setCoverageWarning('建物データ量を確認できないため、安全のため地形のみ表示しています')
@@ -1682,12 +1736,15 @@ export default function Preview3D({
               const decision = classifyPreviewLoad(estimate)
               if (decision.mode === 'terrain-only') {
                 terrainOnlyDueToBudget = true
-                const terrainOnlyMessage = decision.reason === 'too-large'
-                  ? '建物データが大きいため、地形のみ表示しています'
-                  : '建物データがないため、地形のみ表示しています'
+                const terrainOnlyMessage =
+                  decision.reason === 'too-large'
+                    ? '建物データが大きいため、地形のみ表示しています'
+                    : '建物データがないため、地形のみ表示しています'
                 if (decision.reason === 'too-large') {
                   setCanForceBuildings(true)
-                  setCoverageWarning(`選択範囲の建物データが大きいため、地形のみ表示しています（建物約${estimate.totalBuildings}件 / タイル${estimate.contentTiles}件）`)
+                  setCoverageWarning(
+                    `選択範囲の建物データが大きいため、地形のみ表示しています（建物約${estimate.totalBuildings}件 / タイル${estimate.contentTiles}件）`,
+                  )
                   setBuildingLoadDetail('建物データが大きいため地形のみ表示')
                 } else {
                   setCoverageWarning('選択範囲に建物データがありません。地形のみ表示しています')
@@ -1741,7 +1798,7 @@ export default function Preview3D({
               loadedTilesets.push(tileset)
               // 白模型ON時はPLATEAU Viewと同様に拡散色を純白へ置換する
               tileset.customShader = createBuildingCustomShader(
-                whiteModelRef.current ? Color.WHITE : baseBuildingColor()
+                whiteModelRef.current ? Color.WHITE : baseBuildingColor(),
               )
               tileset.customShader.setUniform(
                 'u_ambientBoost',
@@ -1751,7 +1808,10 @@ export default function Preview3D({
 
               const progressFn = (pending: number, processing: number): void => {
                 pendingMapRef.current.set(tileset, pending + processing)
-                const currentSum = Array.from(pendingMapRef.current.values()).reduce((a, b) => a + b, 0)
+                const currentSum = Array.from(pendingMapRef.current.values()).reduce(
+                  (a, b) => a + b,
+                  0,
+                )
                 const isLoading = currentSum > 0
                 // タイル毎の連続発火で再レンダーが増え地図描画を圧迫するため間引く。
                 // 完了時は必ず反映し、最大値の集計だけは毎回行う。
@@ -1774,7 +1834,9 @@ export default function Preview3D({
                   const loadedForProgress = Math.max(loadedTiles ?? 0, rawLoaded)
                   const ratio = max > 0 ? loadedForProgress / max : 0
                   const p = 30 + ratio * 55
-                  setBuildingLoadProgress((prev) => (prev == null ? p : Math.max(prev, Math.min(85, p))))
+                  setBuildingLoadProgress((prev) =>
+                    prev == null ? p : Math.max(prev, Math.min(85, p)),
+                  )
                 } else {
                   const max = maxTilesRef.current
                   if (max > 0) {
@@ -1834,7 +1896,9 @@ export default function Preview3D({
             throw new Error('3Dタイルの読み込みに失敗しました')
           } else {
             console.warn('[Preview3D] 建物タイルの読み込みに失敗、地形のみ表示に進みます')
-            setCoverageWarning((prev) => prev ?? '建物の読み込みに失敗しました。地形のみ表示しています')
+            setCoverageWarning(
+              (prev) => prev ?? '建物の読み込みに失敗しました。地形のみ表示しています',
+            )
           }
         }
 
@@ -1870,41 +1934,51 @@ export default function Preview3D({
             const zs = s.topLocalPositions.map((p) => p.z)
             return Math.max(...zs) - Math.min(...zs)
           }
-          const getBuildingMinY = async (sampleForFallback: TerrainSampleData): Promise<number | null> => {
+          const getBuildingMinY = async (
+            sampleForFallback: TerrainSampleData,
+          ): Promise<number | null> => {
             const cacheKey = `${bounds.west},${bounds.south},${bounds.east},${bounds.north}:${lod}`
             if (buildingMinYCacheRef.current.has(cacheKey)) {
               return buildingMinYCacheRef.current.get(cacheKey) ?? null
             }
             let minBuildingY: number | null = null
             if (sampleForFallback.isFallback === true) {
-            try {
-              const core = await import('@machimoki/core')
-              if (cancelled) return null
-              const buildingMeshes = await core.buildBuildingMeshes(
-                bounds,
-                lod,
-                excludedBuildingIds ?? undefined
-              )
-              if (cancelled) return null
-              let mY = Infinity
-              for (const m of buildingMeshes) {
-                const p = m.positions
-                for (let i = 1; i < p.length; i += 3) {
-                  const y = p[i]
-                  if (Number.isFinite(y) && y < mY) mY = y
+              try {
+                const core = await import('@machimoki/core')
+                if (cancelled) return null
+                const buildingMeshes = await core.buildBuildingMeshes(
+                  bounds,
+                  lod,
+                  excludedBuildingIds ?? undefined,
+                )
+                if (cancelled) return null
+                let mY = Infinity
+                for (const m of buildingMeshes) {
+                  const p = m.positions
+                  for (let i = 1; i < p.length; i += 3) {
+                    const y = p[i]
+                    if (Number.isFinite(y) && y < mY) mY = y
+                  }
                 }
+                minBuildingY = Number.isFinite(mY) ? mY : null
+                buildingMinYCacheRef.current.set(cacheKey, minBuildingY)
+              } catch (e) {
+                console.warn(
+                  '[Preview3D] buildBuildingMeshes failed, fallback to boundingSphere',
+                  e,
+                )
               }
-              minBuildingY = Number.isFinite(mY) ? mY : null
-              buildingMinYCacheRef.current.set(cacheKey, minBuildingY)
-            } catch (e) {
-              console.warn('[Preview3D] buildBuildingMeshes failed, fallback to boundingSphere', e)
-            }
             }
             if (minBuildingY === null) {
               try {
                 let bestFallback: number | null = null
                 const tryUpdate = (v: number | null) => {
-                  if (v !== null && Number.isFinite(v) && (bestFallback === null || v < bestFallback)) bestFallback = v
+                  if (
+                    v !== null &&
+                    Number.isFinite(v) &&
+                    (bestFallback === null || v < bestFallback)
+                  )
+                    bestFallback = v
                 }
                 for (const ts of tilesetsRef.current as any[]) {
                   const center: Cartesian3 | undefined = ts?.boundingSphere?.center
@@ -1913,12 +1987,18 @@ export default function Preview3D({
                       const carto = Cartographic.fromCartesian(center)
                       if (Number.isFinite(carto.height)) {
                         const radius = ts.boundingSphere?.radius
-                        const approxBase = Number.isFinite(radius) ? carto.height - radius * 0.5 : carto.height
+                        const approxBase = Number.isFinite(radius)
+                          ? carto.height - radius * 0.5
+                          : carto.height
                         tryUpdate(approxBase)
                       }
                     } catch {}
                     try {
-                      const local = Matrix4.multiplyByPoint(sampleForFallback.inverseCenterMatrix, center, new Cartesian3())
+                      const local = Matrix4.multiplyByPoint(
+                        sampleForFallback.inverseCenterMatrix,
+                        center,
+                        new Cartesian3(),
+                      )
                       tryUpdate(local.z)
                     } catch {}
                   }
@@ -1927,8 +2007,16 @@ export default function Preview3D({
                     const regionMinH = region[4]
                     try {
                       const carto = Cartographic.fromRadians(region[0], region[1], regionMinH)
-                      const ecef = Cartesian3.fromRadians(carto.longitude, carto.latitude, regionMinH)
-                      const local = Matrix4.multiplyByPoint(sampleForFallback.inverseCenterMatrix, ecef, new Cartesian3())
+                      const ecef = Cartesian3.fromRadians(
+                        carto.longitude,
+                        carto.latitude,
+                        regionMinH,
+                      )
+                      const local = Matrix4.multiplyByPoint(
+                        sampleForFallback.inverseCenterMatrix,
+                        ecef,
+                        new Cartesian3(),
+                      )
                       tryUpdate(local.z)
                     } catch {}
                     tryUpdate(regionMinH)
@@ -1936,9 +2024,15 @@ export default function Preview3D({
                 }
                 if (bestFallback !== null) {
                   minBuildingY = bestFallback
-                  console.warn('[Preview3D] fallback building height (best of tilesets):', minBuildingY)
+                  console.warn(
+                    '[Preview3D] fallback building height (best of tilesets):',
+                    minBuildingY,
+                  )
                 }
-                if ((minBuildingY === null || !Number.isFinite(minBuildingY)) && viewerRef.current) {
+                if (
+                  (minBuildingY === null || !Number.isFinite(minBuildingY)) &&
+                  viewerRef.current
+                ) {
                   try {
                     const lon = (bounds.west + bounds.east) / 2
                     const lat = (bounds.south + bounds.north) / 2
@@ -1956,14 +2050,20 @@ export default function Preview3D({
               if (minBuildingY !== null) {
                 buildingMinYCacheRef.current.set(cacheKey, minBuildingY)
               } else {
-                console.warn('[Preview3D] all fallbacks failed, buildingMinY remains null, minZ will stay', sampleForFallback.minTopHeight)
+                console.warn(
+                  '[Preview3D] all fallbacks failed, buildingMinY remains null, minZ will stay',
+                  sampleForFallback.minTopHeight,
+                )
               }
             }
             return minBuildingY
           }
-          async function maybeAlignSample(sample: TerrainSampleData): Promise<{ variance: number; buildingMinY: number | null; delta: number | null }> {
+          async function maybeAlignSample(
+            sample: TerrainSampleData,
+          ): Promise<{ variance: number; buildingMinY: number | null; delta: number | null }> {
             const variance = calcVariance(sample)
-            if ((sample as any).isFallback !== true) return { variance, buildingMinY: await getBuildingMinY(sample), delta: null }
+            if ((sample as any).isFallback !== true)
+              return { variance, buildingMinY: await getBuildingMinY(sample), delta: null }
             const minBuildingY = await getBuildingMinY(sample)
             if (cancelled) return { variance, buildingMinY: minBuildingY, delta: null }
             if (minBuildingY !== null && Number.isFinite(minBuildingY)) {
@@ -1975,17 +2075,13 @@ export default function Preview3D({
                 sample.minTopHeight += delta
                 for (let i = 0; i < sample.topLocalPositions.length; i++) {
                   const local = sample.topLocalPositions[i]
-                  const ecef = Matrix4.multiplyByPoint(
-                    sample.centerMatrix,
-                    local,
-                    new Cartesian3()
-                  )
+                  const ecef = Matrix4.multiplyByPoint(sample.centerMatrix, local, new Cartesian3())
                   sample.topEcefValues[i * 3] = ecef.x
                   sample.topEcefValues[i * 3 + 1] = ecef.y
                   sample.topEcefValues[i * 3 + 2] = ecef.z
                 }
                 console.log(
-                  `[Preview3D] Terrain aligned (isFallback=${(sample as any).isFallback}, variance=${variance.toFixed(4)}) shifted by ${delta.toFixed(2)}m to building minY ${minBuildingY.toFixed(2)}m`
+                  `[Preview3D] Terrain aligned (isFallback=${(sample as any).isFallback}, variance=${variance.toFixed(4)}) shifted by ${delta.toFixed(2)}m to building minY ${minBuildingY.toFixed(2)}m`,
                 )
                 return { variance, buildingMinY: minBuildingY, delta }
               }
@@ -1999,7 +2095,10 @@ export default function Preview3D({
           let debugBuildingMinY: number | null = null
           let debugDelta: number | null = null
           const gridCenterLat = (bounds.south + bounds.north) / 2
-          const gridWidthMeters = CesiumMath.toRadians(bounds.east - bounds.west) * 6371000 * Math.cos(CesiumMath.toRadians(gridCenterLat))
+          const gridWidthMeters =
+            CesiumMath.toRadians(bounds.east - bounds.west) *
+            6371000 *
+            Math.cos(CesiumMath.toRadians(gridCenterLat))
           const gridHeightMeters = CesiumMath.toRadians(bounds.north - bounds.south) * 6371000
           const gridMaxDimMeters = Math.max(gridWidthMeters, gridHeightMeters)
           const resolvedTerrainGridSize = resolveTerrainGridSize(terrainGridSize, gridMaxDimMeters)
@@ -2018,7 +2117,12 @@ export default function Preview3D({
             sample.gridSize !== resolvedTerrainGridSize ||
             (sample.samplingLevel ?? null) !== (terrainSamplingLevel ?? null)
           if (needsFetch) {
-            sample = await sampleTerrainData(bounds, terrainProvider!, resolvedTerrainGridSize, terrainSamplingLevel)
+            sample = await sampleTerrainData(
+              bounds,
+              terrainProvider!,
+              resolvedTerrainGridSize,
+              terrainSamplingLevel,
+            )
             if (cancelled) return
             const aligned = await maybeAlignSample(sample!)
             if (cancelled) return
@@ -2081,16 +2185,17 @@ export default function Preview3D({
         const flyLat = (bounds.south + bounds.north) / 2
         const widthDeg = bounds.east - bounds.west
         const heightDeg = bounds.north - bounds.south
-        const widthMeters = CesiumMath.toRadians(widthDeg) * 6371000 * Math.cos(CesiumMath.toRadians(flyLat))
+        const widthMeters =
+          CesiumMath.toRadians(widthDeg) * 6371000 * Math.cos(CesiumMath.toRadians(flyLat))
         const heightMeters = CesiumMath.toRadians(heightDeg) * 6371000
         const maxDim = Math.max(widthMeters, heightMeters)
         const cameraHeight = Math.max(maxDim * 2, 300)
-        viewer!.scene.screenSpaceCameraController.maximumZoomDistance = previewMaxZoomDistance(maxDim)
+        viewer!.scene.screenSpaceCameraController.maximumZoomDistance =
+          previewMaxZoomDistance(maxDim)
 
         // 同じ選択範囲に対する再読み込み（LOD切替など）では視点を維持する
         const alreadyFramed =
-          cameraFramedForRef.current !== null &&
-          sameBounds(cameraFramedForRef.current, bounds)
+          cameraFramedForRef.current !== null && sameBounds(cameraFramedForRef.current, bounds)
 
         if (!alreadyFramed) {
           if (terrainBoundingSphere) {
@@ -2099,8 +2204,8 @@ export default function Preview3D({
               new HeadingPitchRange(
                 CesiumMath.toRadians(35),
                 CesiumMath.toRadians(-45),
-                Math.max(maxDim * 2.4, 300)
-              )
+                Math.max(maxDim * 2.4, 300),
+              ),
             )
             viewer!.camera.lookAtTransform(Matrix4.IDENTITY)
           } else {
@@ -2124,11 +2229,11 @@ export default function Preview3D({
         })
       } catch (err) {
         if (cancelled) return
-        const message =
-          err instanceof Error
-            ? err.message
-            : '3Dタイルの読み込みに失敗しました'
-        if (includeTerrain && message.startsWith('PLATEAU-Terrain取得失敗: 標高サンプルが不完全です')) {
+        const message = err instanceof Error ? err.message : '3Dタイルの読み込みに失敗しました'
+        if (
+          includeTerrain &&
+          message.startsWith('PLATEAU-Terrain取得失敗: 標高サンプルが不完全です')
+        ) {
           terrainSampleCacheRef.current = null
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
@@ -2159,8 +2264,17 @@ export default function Preview3D({
       cancelScheduled?.()
       estimateAbort.abort()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectionBounds, lod, onPipelineStateChange, terrainProvider, terrainError, includeTerrain, forceBuildingsBounds, terrainGridSize])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectionBounds,
+    lod,
+    onPipelineStateChange,
+    terrainProvider,
+    terrainError,
+    includeTerrain,
+    forceBuildingsBounds,
+    terrainGridSize,
+  ])
 
   useEffect(() => {
     const linear = whiteModelRef.current
@@ -2184,7 +2298,9 @@ export default function Preview3D({
         ts.customShader.setUniform('u_ambientBoost', whiteModel ? WHITE_MODEL_AMBIENT_BOOST : 0.0)
         ts.customShader.setUniform(
           'u_buildingColor',
-          whiteModel ? colorToLinearCartesian3(Color.WHITE) : colorToLinearCartesian3(baseBuildingColor()),
+          whiteModel
+            ? colorToLinearCartesian3(Color.WHITE)
+            : colorToLinearCartesian3(baseBuildingColor()),
         )
       }
     }
@@ -2240,7 +2356,7 @@ export default function Preview3D({
       hoveredFeatureRef.current = null
       canvas.style.cursor = 'default'
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionBounds])
 
   useEffect(() => {
@@ -2256,22 +2372,20 @@ export default function Preview3D({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     const next = new Set(excludedBuildingIds ?? [])
     const current = excludedIdsRef.current
-    const same =
-      next.size === current.size &&
-      Array.from(next).every((id) => current.has(id))
+    const same = next.size === current.size && Array.from(next).every((id) => current.has(id))
     if (same) return
     excludedIdsRef.current = next
     undoStackRef.current = []
     restoreFiltersAndColors()
     setExcludedCount(next.size)
     setExcludedIdsState([...next])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [excludedBuildingIds])
 
   useEffect(() => {
@@ -2294,9 +2408,21 @@ export default function Preview3D({
     const sample = terrainSampleCacheRef.current
     if (!sample || !solidTerrainPrimitiveRef.current) return
     if (!sameBounds(sample.bounds, selectionBounds)) return
-    const current = { terrainThickness: effectiveTerrainThickness, flattenBottom, reflectActualElevation, terrainColor }
+    const current = {
+      terrainThickness: effectiveTerrainThickness,
+      flattenBottom,
+      reflectActualElevation,
+      terrainColor,
+    }
     const applied = appliedTerrainParamsRef.current
-    if (applied && applied.terrainThickness === current.terrainThickness && applied.flattenBottom === current.flattenBottom && applied.reflectActualElevation === current.reflectActualElevation && applied.terrainColor === current.terrainColor) return
+    if (
+      applied &&
+      applied.terrainThickness === current.terrainThickness &&
+      applied.flattenBottom === current.flattenBottom &&
+      applied.reflectActualElevation === current.reflectActualElevation &&
+      applied.terrainColor === current.terrainColor
+    )
+      return
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -2318,7 +2444,7 @@ export default function Preview3D({
       console.error('[Preview3D] Terrain update failed:', err)
     }
     viewer.scene.requestRender()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terrainThickness, flattenBottom, terrainColor, scale, reflectActualElevation])
 
   return (
@@ -2472,24 +2598,26 @@ export default function Preview3D({
           }}
         >
           <span>{coverageWarning}</span>
-          {canForceBuildings && selectionBounds && (!forceBuildingsBounds || !sameBounds(forceBuildingsBounds, selectionBounds)) && (
-            <button
-              data-testid="coverage-warning-show-buildings"
-              onClick={() => setForceBuildingsBounds(selectionBounds)}
-              style={{
-                background: '#e6c200',
-                color: '#5c4500',
-                border: 'none',
-                borderRadius: '4px',
-                padding: '4px 10px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                flexShrink: 0,
-              }}
-            >
-              建物を表示
-            </button>
-          )}
+          {canForceBuildings &&
+            selectionBounds &&
+            (!forceBuildingsBounds || !sameBounds(forceBuildingsBounds, selectionBounds)) && (
+              <button
+                data-testid="coverage-warning-show-buildings"
+                onClick={() => setForceBuildingsBounds(selectionBounds)}
+                style={{
+                  background: '#e6c200',
+                  color: '#5c4500',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 10px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                建物を表示
+              </button>
+            )}
           <button
             data-testid="coverage-warning-close"
             onClick={() => setCoverageWarning(null)}

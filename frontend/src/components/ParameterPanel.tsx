@@ -75,7 +75,14 @@ function ParameterPanel({
 
         {/* Display Colors */}
         <div>
-          <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: 'var(--text-dim)' }}>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '12px',
+              marginBottom: '6px',
+              color: 'var(--text-dim)',
+            }}
+          >
             建物色
           </label>
           <div
@@ -107,7 +114,13 @@ function ParameterPanel({
             />
           </div>
           <label
-            style={{ display: 'block', fontSize: '12px', marginTop: '10px', marginBottom: '6px', color: 'var(--text-dim)' }}
+            style={{
+              display: 'block',
+              fontSize: '12px',
+              marginTop: '10px',
+              marginBottom: '6px',
+              color: 'var(--text-dim)',
+            }}
           >
             地形色
           </label>
@@ -144,7 +157,15 @@ function ParameterPanel({
         {/* Display Mode */}
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
           <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>表示モード</h4>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '4px' }}>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              marginBottom: '4px',
+            }}
+          >
             <input
               type="checkbox"
               checked={parameters.whiteModel}
@@ -159,12 +180,21 @@ function ParameterPanel({
 
         {/* Export Format */}
         <div>
-          <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: 'var(--text-dim)' }}>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '12px',
+              marginBottom: '6px',
+              color: 'var(--text-dim)',
+            }}
+          >
             出力形式
           </label>
           <select
             value={parameters.exportFormat}
-            onChange={(e) => handleChange('exportFormat', e.target.value as Parameters['exportFormat'])}
+            onChange={(e) =>
+              handleChange('exportFormat', e.target.value as Parameters['exportFormat'])
+            }
             style={{
               width: '100%',
               padding: '8px',
@@ -183,7 +213,14 @@ function ParameterPanel({
 
         {/* Up Axis */}
         <div>
-          <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: 'var(--text-dim)' }}>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '12px',
+              marginBottom: '6px',
+              color: 'var(--text-dim)',
+            }}
+          >
             上方向の軸
           </label>
           <select
@@ -206,7 +243,14 @@ function ParameterPanel({
 
         {/* LOD Selector */}
         <div>
-          <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: 'var(--text-dim)' }}>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '12px',
+              marginBottom: '6px',
+              color: 'var(--text-dim)',
+            }}
+          >
             建物詳細度（LOD）
           </label>
           <select
@@ -230,9 +274,7 @@ function ParameterPanel({
                   value={lod}
                   disabled={!available}
                   title={
-                    available
-                      ? undefined
-                      : `この選択範囲では${lodLabels[lod]}は提供されていません`
+                    available ? undefined : `この選択範囲では${lodLabels[lod]}は提供されていません`
                   }
                   style={available ? undefined : { color: 'var(--text-muted)' }}
                 >
@@ -257,7 +299,15 @@ function ParameterPanel({
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
           <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>地形</h4>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '12px' }}>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              marginBottom: '12px',
+            }}
+          >
             <input
               type="checkbox"
               checked={parameters.includeTerrain}
@@ -266,7 +316,15 @@ function ParameterPanel({
             <span style={{ fontSize: '14px' }}>地形を含める</span>
           </label>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '12px' }}>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              marginBottom: '12px',
+            }}
+          >
             <input
               type="checkbox"
               checked={parameters.showTerrainImagery}
@@ -275,8 +333,19 @@ function ParameterPanel({
             <span style={{ fontSize: '14px' }}>航空写真テクスチャを表示</span>
           </label>
 
-          <div style={{ opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1 }}>
-            <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: 'var(--text-dim)' }}>
+          <div
+            style={{
+              opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1,
+            }}
+          >
+            <label
+              style={{
+                display: 'block',
+                fontSize: '12px',
+                marginBottom: '6px',
+                color: 'var(--text-dim)',
+              }}
+            >
               地形厚み: {parameters.terrainThickness} mm
             </label>
             <input
@@ -295,7 +364,10 @@ function ParameterPanel({
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              cursor: parameters.reflectActualElevation || !parameters.includeTerrain ? 'default' : 'pointer',
+              cursor:
+                parameters.reflectActualElevation || !parameters.includeTerrain
+                  ? 'default'
+                  : 'pointer',
               marginTop: '12px',
               opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1,
             }}
@@ -340,7 +412,14 @@ function ParameterPanel({
           </p>
 
           <div style={{ marginTop: '12px', opacity: parameters.includeTerrain ? 1 : 0.5 }}>
-            <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-dim)', marginBottom: '6px' }}>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '12px',
+                color: 'var(--text-dim)',
+                marginBottom: '6px',
+              }}
+            >
               地形メッシュ解像度
               {parameters.terrainGridSize == null
                 ? `（自動: ${autoTerrainGridSize}分割）`
@@ -358,7 +437,8 @@ function ParameterPanel({
                   fontSize: '11px',
                   borderRadius: '4px',
                   cursor: parameters.includeTerrain ? 'pointer' : 'default',
-                  background: parameters.terrainGridSize == null ? 'var(--accent)' : 'var(--border)',
+                  background:
+                    parameters.terrainGridSize == null ? 'var(--accent)' : 'var(--border)',
                   color: parameters.terrainGridSize == null ? 'var(--text)' : 'var(--text-dim)',
                   border: '1px solid var(--border-strong)',
                   fontWeight: parameters.terrainGridSize == null ? 'bold' : 'normal',
@@ -392,7 +472,14 @@ function ParameterPanel({
                 )
               })}
             </div>
-            <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '6px', marginBottom: 0 }}>
+            <p
+              style={{
+                fontSize: '11px',
+                color: 'var(--text-dim)',
+                marginTop: '6px',
+                marginBottom: 0,
+              }}
+            >
               解像度が高いほど地形が細かくなり、処理時間とメッシュサイズが増えます
             </p>
           </div>
@@ -402,7 +489,15 @@ function ParameterPanel({
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
           <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>建物フィルタ</h4>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '4px' }}>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              marginBottom: '4px',
+            }}
+          >
             <input
               type="checkbox"
               checked={parameters.includeSpanningBuildings}

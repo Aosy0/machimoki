@@ -72,7 +72,10 @@ export function parseLodsString(value: unknown): number[] {
   if (typeof value !== 'string') return []
   const found = new Set<number>()
   for (const token of value.split(',')) {
-    const match = token.trim().toLowerCase().match(/^lod([1-4])$/)
+    const match = token
+      .trim()
+      .toLowerCase()
+      .match(/^lod([1-4])$/)
     if (match !== null) {
       found.add(Number(match[1]))
     }
@@ -103,9 +106,7 @@ function isCoveredValue(value: unknown): boolean {
  * 旧タイル互換のため lods 文字列（"lod1,lod2"）にフォールバックする。
  * 建物なし・不明は null を返す。
  */
-export function resolveMaxLod(
-  properties: Record<string, unknown> | undefined,
-): number | null {
+export function resolveMaxLod(properties: Record<string, unknown> | undefined): number | null {
   const maxLod = properties?.maxLod
   if (typeof maxLod === 'number' && Number.isFinite(maxLod)) {
     return maxLod
@@ -122,9 +123,7 @@ export function resolveMaxLod(
  * properties.maxLod（整数）を優先し、旧タイル互換のため lods 文字列にフォールバックする。
  * どちらも無い場合は properties.covered===1 なら lod1 扱いのフォールバックを返す。
  */
-export function resolveLodCategory(
-  properties: Record<string, unknown> | undefined,
-): LodCategory {
+export function resolveLodCategory(properties: Record<string, unknown> | undefined): LodCategory {
   const max = resolveMaxLod(properties)
   if (max !== null) {
     return maxLodToCategory(max)

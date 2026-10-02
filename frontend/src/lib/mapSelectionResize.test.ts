@@ -64,7 +64,10 @@ describe('selectionHandleScreenPoints', () => {
       y: lng * 5 + lat * 10,
     })
     const points = selectionHandleScreenPoints(bounds, project)
-    const mid = (a: { x: number; y: number }, b: { x: number; y: number }): { x: number; y: number } => ({
+    const mid = (
+      a: { x: number; y: number },
+      b: { x: number; y: number },
+    ): { x: number; y: number } => ({
       x: (a.x + b.x) / 2,
       y: (a.y + b.y) / 2,
     })
@@ -110,8 +113,14 @@ describe('hitTestSelectionHandle', () => {
 
   it('カプセル中心線の範囲内（辺方向・垂直方向）は辺ハンドルを返す', () => {
     // 中点から辺方向にHALF_LENGTH以内
-    assert.equal(hitTestSelectionHandle({ x: 50 + RESIZE_HANDLE_HALF_LENGTH_PX, y: 0 }, square), 'north')
-    assert.equal(hitTestSelectionHandle({ x: 100, y: 50 + RESIZE_HANDLE_HALF_LENGTH_PX }, square), 'east')
+    assert.equal(
+      hitTestSelectionHandle({ x: 50 + RESIZE_HANDLE_HALF_LENGTH_PX, y: 0 }, square),
+      'north',
+    )
+    assert.equal(
+      hitTestSelectionHandle({ x: 100, y: 50 + RESIZE_HANDLE_HALF_LENGTH_PX }, square),
+      'east',
+    )
     // 中点から垂直方向にHIT_PX以内
     assert.equal(hitTestSelectionHandle({ x: 50, y: RESIZE_HANDLE_HIT_PX }, square), 'north')
     assert.equal(hitTestSelectionHandle({ x: 100 - RESIZE_HANDLE_HIT_PX, y: 50 }, square), 'east')
@@ -160,7 +169,10 @@ describe('hitTestSelectionHandle', () => {
       'north',
     )
     assert.equal(
-      hitTestSelectionHandle({ x: rotated.north.x + nx * 10, y: rotated.north.y + ny * 10 }, rotated),
+      hitTestSelectionHandle(
+        { x: rotated.north.x + nx * 10, y: rotated.north.y + ny * 10 },
+        rotated,
+      ),
       null,
     )
   })
@@ -283,23 +295,65 @@ describe('handleVisibility', () => {
     })
     // 短辺24ちょうど（隅あり）、23（隅なし）
     assert.equal(handleVisibility(rectPoints(100, HANDLE_CORNER_MIN_DIMENSION_PX)).corners, true)
-    assert.equal(handleVisibility(rectPoints(100, HANDLE_CORNER_MIN_DIMENSION_PX - 1)).corners, false)
+    assert.equal(
+      handleVisibility(rectPoints(100, HANDLE_CORNER_MIN_DIMENSION_PX - 1)).corners,
+      false,
+    )
     // 短辺16ちょうど（南北あり）、15（南北なし）
     assert.equal(handleVisibility(rectPoints(100, HANDLE_EDGE_MIN_THICKNESS_PX)).edges.north, true)
-    assert.equal(handleVisibility(rectPoints(100, HANDLE_EDGE_MIN_THICKNESS_PX - 1)).edges.north, false)
+    assert.equal(
+      handleVisibility(rectPoints(100, HANDLE_EDGE_MIN_THICKNESS_PX - 1)).edges.north,
+      false,
+    )
   })
 })
 
 describe('applyResizeDrag', () => {
-  const cases: Array<{ handle: ResizeHandle; pointer: { lng: number; lat: number }; expect: typeof bounds }> = [
-    { handle: 'north', pointer: { lng: 5, lat: 12 }, expect: { west: 0, south: 0, east: 10, north: 12 } },
-    { handle: 'south', pointer: { lng: 5, lat: -5 }, expect: { west: 0, south: -5, east: 10, north: 10 } },
-    { handle: 'east', pointer: { lng: 20, lat: 5 }, expect: { west: 0, south: 0, east: 20, north: 10 } },
-    { handle: 'west', pointer: { lng: -5, lat: 5 }, expect: { west: -5, south: 0, east: 10, north: 10 } },
-    { handle: 'nw', pointer: { lng: -5, lat: 12 }, expect: { west: -5, south: 0, east: 10, north: 12 } },
-    { handle: 'ne', pointer: { lng: 20, lat: 12 }, expect: { west: 0, south: 0, east: 20, north: 12 } },
-    { handle: 'se', pointer: { lng: 20, lat: -5 }, expect: { west: 0, south: -5, east: 20, north: 10 } },
-    { handle: 'sw', pointer: { lng: -5, lat: -5 }, expect: { west: -5, south: -5, east: 10, north: 10 } },
+  const cases: Array<{
+    handle: ResizeHandle
+    pointer: { lng: number; lat: number }
+    expect: typeof bounds
+  }> = [
+    {
+      handle: 'north',
+      pointer: { lng: 5, lat: 12 },
+      expect: { west: 0, south: 0, east: 10, north: 12 },
+    },
+    {
+      handle: 'south',
+      pointer: { lng: 5, lat: -5 },
+      expect: { west: 0, south: -5, east: 10, north: 10 },
+    },
+    {
+      handle: 'east',
+      pointer: { lng: 20, lat: 5 },
+      expect: { west: 0, south: 0, east: 20, north: 10 },
+    },
+    {
+      handle: 'west',
+      pointer: { lng: -5, lat: 5 },
+      expect: { west: -5, south: 0, east: 10, north: 10 },
+    },
+    {
+      handle: 'nw',
+      pointer: { lng: -5, lat: 12 },
+      expect: { west: -5, south: 0, east: 10, north: 12 },
+    },
+    {
+      handle: 'ne',
+      pointer: { lng: 20, lat: 12 },
+      expect: { west: 0, south: 0, east: 20, north: 12 },
+    },
+    {
+      handle: 'se',
+      pointer: { lng: 20, lat: -5 },
+      expect: { west: 0, south: -5, east: 20, north: 10 },
+    },
+    {
+      handle: 'sw',
+      pointer: { lng: -5, lat: -5 },
+      expect: { west: -5, south: -5, east: 10, north: 10 },
+    },
   ]
 
   for (const { handle, pointer, expect } of cases) {
@@ -375,6 +429,9 @@ describe('movedBeyondTolerance', () => {
 
   it('許容pxを超えたらtrue', () => {
     assert.equal(movedBeyondTolerance({ x: 0, y: 0 }, { x: 3, y: 4 }), true)
-    assert.equal(movedBeyondTolerance({ x: 0, y: 0 }, { x: 0, y: RESIZE_MOVE_TOLERANCE_PX + 0.1 }), true)
+    assert.equal(
+      movedBeyondTolerance({ x: 0, y: 0 }, { x: 0, y: RESIZE_MOVE_TOLERANCE_PX + 0.1 }),
+      true,
+    )
   })
 })

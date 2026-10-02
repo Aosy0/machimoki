@@ -52,7 +52,12 @@ export function createSelectionBounds(
   east: number,
   north: number,
 ): SelectionBounds {
-  if (!isFiniteNumber(west) || !isFiniteNumber(south) || !isFiniteNumber(east) || !isFiniteNumber(north)) {
+  if (
+    !isFiniteNumber(west) ||
+    !isFiniteNumber(south) ||
+    !isFiniteNumber(east) ||
+    !isFiniteNumber(north)
+  ) {
     throw new Error('boundsにNaNが含まれています')
   }
   validateLon(west)
@@ -73,7 +78,12 @@ export function createSelectionBounds(
 
 export function normalizeBounds(input: BoundsInput): SelectionBounds {
   const { west, south, east, north } = input
-  if (!isFiniteNumber(west) || !isFiniteNumber(south) || !isFiniteNumber(east) || !isFiniteNumber(north)) {
+  if (
+    !isFiniteNumber(west) ||
+    !isFiniteNumber(south) ||
+    !isFiniteNumber(east) ||
+    !isFiniteNumber(north)
+  ) {
     throw new Error('boundsにNaNが含まれています')
   }
   validateLon(west)
@@ -87,7 +97,9 @@ export function normalizeBounds(input: BoundsInput): SelectionBounds {
   const normalizedNorth = Math.max(south, north)
 
   if (normalizedNorth <= normalizedSouth) {
-    throw new Error(`north (${normalizedNorth}) は south (${normalizedSouth}) より大きい必要があります`)
+    throw new Error(
+      `north (${normalizedNorth}) は south (${normalizedSouth}) より大きい必要があります`,
+    )
   }
 
   return {

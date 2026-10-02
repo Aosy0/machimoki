@@ -84,7 +84,14 @@ function createMockMap(): {
 }
 
 function mouseDown(x: number, y: number, shift: boolean, button = 0): unknown {
-  return { button, shiftKey: shift, clientX: x, clientY: y, pointerType: 'mouse', preventDefault: (): void => {} }
+  return {
+    button,
+    shiftKey: shift,
+    clientX: x,
+    clientY: y,
+    pointerType: 'mouse',
+    preventDefault: (): void => {},
+  }
 }
 
 describe('shouldStartSelection', () => {

@@ -97,8 +97,7 @@ describe('resolveMuniCodesキャッシュ', () => {
     globalThis.fetch = (() =>
       Promise.resolve({
         ok: true,
-        json: () =>
-          Promise.resolve({ results: { muniCd: '13101', lv01Nm: '千代田区' } }),
+        json: () => Promise.resolve({ results: { muniCd: '13101', lv01Nm: '千代田区' } }),
       } as Response)) as typeof fetch
 
     try {
@@ -110,8 +109,7 @@ describe('resolveMuniCodesキャッシュ', () => {
         calls += 1
         return Promise.resolve({
           ok: true,
-          json: () =>
-            Promise.resolve({ results: { muniCd: '13101', lv01Nm: '千代田区' } }),
+          json: () => Promise.resolve({ results: { muniCd: '13101', lv01Nm: '千代田区' } }),
         } as Response)
       }) as typeof fetch
       const second = await resolveMuniCodes({ ...bounds })

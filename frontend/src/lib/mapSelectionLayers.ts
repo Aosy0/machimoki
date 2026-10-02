@@ -126,9 +126,7 @@ function asSettableSource(value: unknown): SettableSource | null {
 }
 
 /** SelectionBounds→閉環Polygon Feature（座標は[lng,lat]順）。 */
-export function selectionBoundsToPolygon(
-  bounds: SelectionBounds,
-): Record<string, unknown> {
+export function selectionBoundsToPolygon(bounds: SelectionBounds): Record<string, unknown> {
   const ring: Array<[number, number]> = [
     [bounds.west, bounds.south],
     [bounds.east, bounds.south],
@@ -144,9 +142,7 @@ export function selectionBoundsToPolygon(
 }
 
 /** PickPoint[]→Point FeatureCollection。 */
-export function pickPointsToFeatureCollection(
-  points: PickPoint[],
-): Record<string, unknown> {
+export function pickPointsToFeatureCollection(points: PickPoint[]): Record<string, unknown> {
   return {
     type: 'FeatureCollection',
     features: points.map((point) => ({
@@ -262,7 +258,10 @@ function hoverPoint(
  * 画面pxからハンドル可視性を求める。projectが無いモックではundefined（=全表示）。
  * 失敗はundefinedに倒す（exportをブロックしない）。
  */
-function selectionVisibility(map: OverlayMapLike, bounds: SelectionBounds): HandleVisibility | undefined {
+function selectionVisibility(
+  map: OverlayMapLike,
+  bounds: SelectionBounds,
+): HandleVisibility | undefined {
   try {
     const project = map.project
     if (typeof project !== 'function') return undefined
@@ -500,9 +499,15 @@ function paintCapsule(
   const scale = SELECTION_CAPSULE_PIXEL_RATIO
   if (!horizontal) {
     // キャンバス自体は縦長。回転して水平カプセルと同じ座標系で描く。
-    ctx.translate((SELECTION_CAPSULE_WIDTH_PX * scale) / 2, (SELECTION_CAPSULE_LENGTH_PX * scale) / 2)
+    ctx.translate(
+      (SELECTION_CAPSULE_WIDTH_PX * scale) / 2,
+      (SELECTION_CAPSULE_LENGTH_PX * scale) / 2,
+    )
     ctx.rotate(Math.PI / 2)
-    ctx.translate(-(SELECTION_CAPSULE_LENGTH_PX * scale) / 2, -(SELECTION_CAPSULE_WIDTH_PX * scale) / 2)
+    ctx.translate(
+      -(SELECTION_CAPSULE_LENGTH_PX * scale) / 2,
+      -(SELECTION_CAPSULE_WIDTH_PX * scale) / 2,
+    )
   }
   const w = SELECTION_CAPSULE_LENGTH_PX * scale
   const h = SELECTION_CAPSULE_WIDTH_PX * scale
@@ -536,14 +541,34 @@ interface CapsuleImageSpec {
 
 /** 通常ハンドルの2枚（水平/垂直）。 */
 const HANDLE_IMAGE_SPECS: CapsuleImageSpec[] = [
-  { id: SELECTION_HANDLE_IMAGE_H_ID, horizontal: true, fill: SELECTION_HANDLE_FILL_COLOR, stroke: SELECTION_HANDLE_STROKE_COLOR },
-  { id: SELECTION_HANDLE_IMAGE_V_ID, horizontal: false, fill: SELECTION_HANDLE_FILL_COLOR, stroke: SELECTION_HANDLE_STROKE_COLOR },
+  {
+    id: SELECTION_HANDLE_IMAGE_H_ID,
+    horizontal: true,
+    fill: SELECTION_HANDLE_FILL_COLOR,
+    stroke: SELECTION_HANDLE_STROKE_COLOR,
+  },
+  {
+    id: SELECTION_HANDLE_IMAGE_V_ID,
+    horizontal: false,
+    fill: SELECTION_HANDLE_FILL_COLOR,
+    stroke: SELECTION_HANDLE_STROKE_COLOR,
+  },
 ]
 
 /** ホバー強調の2枚（通常の配色反転）。 */
 const HOVER_IMAGE_SPECS: CapsuleImageSpec[] = [
-  { id: SELECTION_HANDLE_HOVER_IMAGE_H_ID, horizontal: true, fill: SELECTION_HANDLE_HOVER_FILL_COLOR, stroke: SELECTION_HANDLE_HOVER_STROKE_COLOR },
-  { id: SELECTION_HANDLE_HOVER_IMAGE_V_ID, horizontal: false, fill: SELECTION_HANDLE_HOVER_FILL_COLOR, stroke: SELECTION_HANDLE_HOVER_STROKE_COLOR },
+  {
+    id: SELECTION_HANDLE_HOVER_IMAGE_H_ID,
+    horizontal: true,
+    fill: SELECTION_HANDLE_HOVER_FILL_COLOR,
+    stroke: SELECTION_HANDLE_HOVER_STROKE_COLOR,
+  },
+  {
+    id: SELECTION_HANDLE_HOVER_IMAGE_V_ID,
+    horizontal: false,
+    fill: SELECTION_HANDLE_HOVER_FILL_COLOR,
+    stroke: SELECTION_HANDLE_HOVER_STROKE_COLOR,
+  },
 ]
 
 /** 実行時生成カプセル画像（MapLibreのaddImageに渡すImageData相当）。 */
@@ -559,8 +584,10 @@ function createCapsuleImage(spec: CapsuleImageSpec): CapsuleImageData | null {
     if (typeof document === 'undefined') return null
     const scale = SELECTION_CAPSULE_PIXEL_RATIO
     const canvas = document.createElement('canvas')
-    canvas.width = (spec.horizontal ? SELECTION_CAPSULE_LENGTH_PX : SELECTION_CAPSULE_WIDTH_PX) * scale
-    canvas.height = (spec.horizontal ? SELECTION_CAPSULE_WIDTH_PX : SELECTION_CAPSULE_LENGTH_PX) * scale
+    canvas.width =
+      (spec.horizontal ? SELECTION_CAPSULE_LENGTH_PX : SELECTION_CAPSULE_WIDTH_PX) * scale
+    canvas.height =
+      (spec.horizontal ? SELECTION_CAPSULE_WIDTH_PX : SELECTION_CAPSULE_LENGTH_PX) * scale
     const ctx = canvas.getContext('2d')
     if (ctx === null) return null
     paintCapsule(ctx, spec.horizontal, spec.fill, spec.stroke)
@@ -604,10 +631,7 @@ function ensureHoverImages(map: OverlayMapLike): void {
  * ピック点オーバーレイを反映する。空配列で除去。
  * 失敗は吞み込む（exportをブロックしない）。
  */
-export function ensurePickOverlay(
-  map: OverlayMapLike,
-  points: PickPoint[],
-): void {
+export function ensurePickOverlay(map: OverlayMapLike, points: PickPoint[]): void {
   try {
     if (points.length === 0) {
       removePickOverlay(map)

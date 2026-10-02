@@ -55,7 +55,7 @@ describe('isTooSmall', () => {
 
 describe('calculateAreaKm2', () => {
   it('小さな範囲の面積を計算', () => {
-    const bounds = { west: 139.69, south: 35.69, east: 139.70, north: 35.70 }
+    const bounds = { west: 139.69, south: 35.69, east: 139.7, north: 35.7 }
     const area = calculateAreaKm2(bounds)
     assert.ok(area > 0)
     assert.ok(area < 100)
@@ -70,7 +70,7 @@ describe('calculateAreaKm2', () => {
 
 describe('validateArea', () => {
   it('範囲内はnull', () => {
-    const bounds = { west: 139.69, south: 35.69, east: 139.70, north: 35.70 }
+    const bounds = { west: 139.69, south: 35.69, east: 139.7, north: 35.7 }
     assert.equal(validateArea(bounds), null)
   })
 

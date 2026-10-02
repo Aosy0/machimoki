@@ -343,14 +343,17 @@ describe('ensureSelectionOverlay', () => {
     assert.equal(map.sources.size, 1)
     assert.ok(map.sources.has(SELECTION_SOURCE_ID))
     assert.equal(map.layers.size, 6)
-    assert.deepEqual([...map.layers.keys()], [
-      SELECTION_FILL_LAYER_ID,
-      SELECTION_LINE_LAYER_ID,
-      SELECTION_HANDLES_LAYER_ID,
-      SELECTION_EDGE_HANDLES_LAYER_ID,
-      SELECTION_HOVER_SYMBOL_LAYER_ID,
-      SELECTION_HOVER_CIRCLE_LAYER_ID,
-    ])
+    assert.deepEqual(
+      [...map.layers.keys()],
+      [
+        SELECTION_FILL_LAYER_ID,
+        SELECTION_LINE_LAYER_ID,
+        SELECTION_HANDLES_LAYER_ID,
+        SELECTION_EDGE_HANDLES_LAYER_ID,
+        SELECTION_HOVER_SYMBOL_LAYER_ID,
+        SELECTION_HOVER_CIRCLE_LAYER_ID,
+      ],
+    )
     const next = { ...BOUNDS, east: 139.692 }
     ensureSelectionOverlay(map, next)
     assert.equal(map.sources.size, 1)
@@ -562,10 +565,22 @@ describe('辺中点カプセル画像の登録', () => {
       ensureSelectionOverlay(map, BOUNDS)
       assert.equal(records.length, 4)
       // 通常（水平→垂直）→ホバー（水平→垂直）の順
-      assert.equal(records[0].canvas.width, SELECTION_CAPSULE_LENGTH_PX * SELECTION_CAPSULE_PIXEL_RATIO)
-      assert.equal(records[0].canvas.height, SELECTION_CAPSULE_WIDTH_PX * SELECTION_CAPSULE_PIXEL_RATIO)
-      assert.equal(records[1].canvas.width, SELECTION_CAPSULE_WIDTH_PX * SELECTION_CAPSULE_PIXEL_RATIO)
-      assert.equal(records[1].canvas.height, SELECTION_CAPSULE_LENGTH_PX * SELECTION_CAPSULE_PIXEL_RATIO)
+      assert.equal(
+        records[0].canvas.width,
+        SELECTION_CAPSULE_LENGTH_PX * SELECTION_CAPSULE_PIXEL_RATIO,
+      )
+      assert.equal(
+        records[0].canvas.height,
+        SELECTION_CAPSULE_WIDTH_PX * SELECTION_CAPSULE_PIXEL_RATIO,
+      )
+      assert.equal(
+        records[1].canvas.width,
+        SELECTION_CAPSULE_WIDTH_PX * SELECTION_CAPSULE_PIXEL_RATIO,
+      )
+      assert.equal(
+        records[1].canvas.height,
+        SELECTION_CAPSULE_LENGTH_PX * SELECTION_CAPSULE_PIXEL_RATIO,
+      )
       // addImageにはcanvas要素ではなくImageData相当を渡す（MapLibreが受け付ける形）
       for (const id of [
         SELECTION_HANDLE_IMAGE_H_ID,
@@ -596,7 +611,10 @@ describe('辺中点カプセル画像の登録', () => {
         const arcRadii = calls.filter((call) => call.name === 'arc').map((call) => call.args[2])
         assert.equal(arcRadii.length, 2)
         assert.deepEqual(arcRadii, [expectedRadius, expectedRadius])
-        assert.equal(canvas.ctx.lineWidth, SELECTION_CAPSULE_STROKE_PX * SELECTION_CAPSULE_PIXEL_RATIO)
+        assert.equal(
+          canvas.ctx.lineWidth,
+          SELECTION_CAPSULE_STROKE_PX * SELECTION_CAPSULE_PIXEL_RATIO,
+        )
         const names = calls.map((call) => call.name)
         for (const expected of ['beginPath', 'moveTo', 'lineTo', 'closePath', 'fill', 'stroke']) {
           assert.ok(names.includes(expected))

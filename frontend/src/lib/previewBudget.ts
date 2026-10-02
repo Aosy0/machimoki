@@ -189,21 +189,13 @@ const RAD2DEG = 180 / Math.PI
 function tileRegion(node: TileNode): [number, number, number, number] | null {
   const region = node.boundingVolume?.region
   if (Array.isArray(region) && region.length >= 4) {
-    return [
-      region[0] * RAD2DEG,
-      region[1] * RAD2DEG,
-      region[2] * RAD2DEG,
-      region[3] * RAD2DEG,
-    ]
+    return [region[0] * RAD2DEG, region[1] * RAD2DEG, region[2] * RAD2DEG, region[3] * RAD2DEG]
   }
   return null
 }
 
 /** bounds（度）とタイルの region（度に変換済み）が交差するか。 */
-function regionsIntersect(
-  region: [number, number, number, number],
-  bounds: Bounds
-): boolean {
+function regionsIntersect(region: [number, number, number, number], bounds: Bounds): boolean {
   const [w, s, e, n] = region
   if (e < bounds.west) return false
   if (w > bounds.east) return false
@@ -230,7 +222,7 @@ export function readB3dmBatchLength(buffer: ArrayBuffer): number {
     view.getUint8(0),
     view.getUint8(1),
     view.getUint8(2),
-    view.getUint8(3)
+    view.getUint8(3),
   )
   if (magic !== 'b3dm') return 0
   const ftJsonLen = view.getUint32(12, true)
@@ -376,7 +368,7 @@ export function classifyPreviewLoad(
   est: Pick<
     PreviewLoadEstimate,
     'intersectingTiles' | 'contentTiles' | 'totalBuildings' | 'totalContentBytes' | 'capped'
-  >
+  >,
 ): PreviewModeDecision {
   const tooLarge =
     est.capped ||
@@ -526,8 +518,7 @@ export function previewMaxZoomDistance(maxDimMeters: number): number {
 
 export function boundsMaxDimMeters(bounds: Bounds): number {
   const midLat = ((bounds.south + bounds.north) / 2) * (Math.PI / 180)
-  const width =
-    ((bounds.east - bounds.west) * (Math.PI / 180)) * 6371000 * Math.cos(midLat)
+  const width = (bounds.east - bounds.west) * (Math.PI / 180) * 6371000 * Math.cos(midLat)
   const height = (bounds.north - bounds.south) * (Math.PI / 180) * 6371000
   return Math.max(Math.abs(width), Math.abs(height))
 }

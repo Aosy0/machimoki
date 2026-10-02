@@ -186,7 +186,9 @@ export function hitTestSelectionHandle(
   }
   for (const { handle, a, b } of EDGES) {
     if (!visibility.edges[handle]) continue
-    if (distanceToHandleSpine(point, handles[handle], handles[a], handles[b]) <= RESIZE_HANDLE_HIT_PX) {
+    if (
+      distanceToHandleSpine(point, handles[handle], handles[a], handles[b]) <= RESIZE_HANDLE_HIT_PX
+    ) {
       return handle
     }
   }

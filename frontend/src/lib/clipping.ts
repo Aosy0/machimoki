@@ -28,7 +28,7 @@ export function checkFeatureBounds(
   feature: any,
   bounds: SelectionBounds,
   includeSpanning: boolean,
-  pickPoints?: Array<{ lon: number; lat: number }>
+  pickPoints?: Array<{ lon: number; lat: number }>,
 ): boolean {
   const xMinRaw = feature.getProperty('_xmin')
   const xMaxRaw = feature.getProperty('_xmax')
@@ -43,16 +43,13 @@ export function checkFeatureBounds(
   if (pickPoints && pickPoints.length > 0) {
     if (xmin !== null && xmax !== null && ymin !== null && ymax !== null) {
       return pickPoints.some(
-        (p) => p.lon >= xmin && p.lon <= xmax && p.lat >= ymin && p.lat <= ymax
+        (p) => p.lon >= xmin && p.lon <= xmax && p.lat >= ymin && p.lat <= ymax,
       )
     }
     const cx = parseNum(feature.getProperty('_x'))
     const cy = parseNum(feature.getProperty('_y'))
     if (cx !== null && cy !== null) {
-      return pickPoints.some(
-        (p) =>
-          Math.abs(p.lon - cx) <= 1e-4 && Math.abs(p.lat - cy) <= 1e-4
-      )
+      return pickPoints.some((p) => Math.abs(p.lon - cx) <= 1e-4 && Math.abs(p.lat - cy) <= 1e-4)
     }
     return true
   }
@@ -60,17 +57,11 @@ export function checkFeatureBounds(
   if (xmin !== null && xmax !== null && ymin !== null && ymax !== null) {
     if (includeSpanning) {
       return (
-        xmin <= bounds.east &&
-        xmax >= bounds.west &&
-        ymin <= bounds.north &&
-        ymax >= bounds.south
+        xmin <= bounds.east && xmax >= bounds.west && ymin <= bounds.north && ymax >= bounds.south
       )
     }
     return (
-      xmin >= bounds.west &&
-      xmax <= bounds.east &&
-      ymin >= bounds.south &&
-      ymax <= bounds.north
+      xmin >= bounds.west && xmax <= bounds.east && ymin >= bounds.south && ymax <= bounds.north
     )
   }
 
@@ -78,12 +69,7 @@ export function checkFeatureBounds(
   const cx = parseNum(feature.getProperty('_x'))
   const cy = parseNum(feature.getProperty('_y'))
   if (cx !== null && cy !== null) {
-    return (
-      cx >= bounds.west &&
-      cx <= bounds.east &&
-      cy >= bounds.south &&
-      cy <= bounds.north
-    )
+    return cx >= bounds.west && cx <= bounds.east && cy >= bounds.south && cy <= bounds.north
   }
 
   return true
@@ -93,7 +79,7 @@ function filterTileFeatures(
   tile: any,
   bounds: SelectionBounds,
   includeSpanning: boolean,
-  pickPoints?: Array<{ lon: number; lat: number }>
+  pickPoints?: Array<{ lon: number; lat: number }>,
 ): void {
   const content = tile?.content
   if (!content || !content.featuresLength) return
@@ -109,7 +95,7 @@ function traverseTiles(
   tile: any,
   bounds: SelectionBounds,
   includeSpanning: boolean,
-  pickPoints?: Array<{ lon: number; lat: number }>
+  pickPoints?: Array<{ lon: number; lat: number }>,
 ): void {
   if (!tile) return
   filterTileFeatures(tile, bounds, includeSpanning, pickPoints)
@@ -135,7 +121,7 @@ export function refilterSpanning(tileset: any, includeSpanning?: boolean): void 
 
 export function refilterPickPoints(
   tileset: any,
-  pickPoints?: Array<{ lon: number; lat: number }>
+  pickPoints?: Array<{ lon: number; lat: number }>,
 ): void {
   tileset._customPickPoints = pickPoints
   const bounds: SelectionBounds | undefined = tileset._customSelectionBounds
@@ -150,7 +136,7 @@ export function applyClippingToTileset(
   tileset: any,
   bounds: SelectionBounds,
   includeSpanning = false,
-  pickPoints?: Array<{ lon: number; lat: number }>
+  pickPoints?: Array<{ lon: number; lat: number }>,
 ): void {
   tileset.clippingPlanes = undefined
   tileset.clippingPolygons = undefined
@@ -163,11 +149,7 @@ export function applyClippingToTileset(
   if (Cesium3DTile && !patched) {
     patched = true
     const originalUpdate = Cesium3DTile.prototype.update
-    Cesium3DTile.prototype.update = function (
-      ts: any,
-      frameState: any,
-      passOptions: any
-    ) {
+    Cesium3DTile.prototype.update = function (ts: any, frameState: any, passOptions: any) {
       const b = ts._customSelectionBounds
       if (b && this._header?.boundingVolume?.region) {
         const [w, s, e, n] = this._header.boundingVolume.region
@@ -208,30 +190,30 @@ export function createGlobeClippingPlanes(bounds: SelectionBounds): ClippingPlan
   // 矩形の中心を計算
   const centerLon = (bounds.west + bounds.east) / 2
   const centerLat = (bounds.south + bounds.north) / 2
-  
+
   // 中心位置からローカル座標系（East-North-Up）を生成
   const centerCartesian = Cartesian3.fromDegrees(centerLon, centerLat, 0)
   const modelMatrix = Transforms.eastNorthUpToFixedFrame(centerCartesian)
-  
+
   // 矩形の幅と高さをメートル単位で計算
   const widthRad = CesiumMath.toRadians(bounds.east - bounds.west)
   const heightRad = CesiumMath.toRadians(bounds.north - bounds.south)
   const widthMeters = widthRad * 6371000 * Math.cos(CesiumMath.toRadians(centerLat))
   const heightMeters = heightRad * 6371000
-  
+
   // 各辺までの距離（中心から半分）
   const halfWidth = widthMeters / 2
   const halfHeight = heightMeters / 2
-  
+
   // ローカル座標系で外向きの法線を定義
   // X軸: 東向き, Y軸: 北向き, Z軸: 上向き
   const planes = [
-    new ClippingPlane(new Cartesian3(1.0, 0.0, 0.0), halfWidth),   // 東側の平面（西向きにクリップ）
-    new ClippingPlane(new Cartesian3(-1.0, 0.0, 0.0), halfWidth),  // 西側の平面（東向きにクリップ）
-    new ClippingPlane(new Cartesian3(0.0, 1.0, 0.0), halfHeight),  // 北側の平面（南向きにクリップ）
+    new ClippingPlane(new Cartesian3(1.0, 0.0, 0.0), halfWidth), // 東側の平面（西向きにクリップ）
+    new ClippingPlane(new Cartesian3(-1.0, 0.0, 0.0), halfWidth), // 西側の平面（東向きにクリップ）
+    new ClippingPlane(new Cartesian3(0.0, 1.0, 0.0), halfHeight), // 北側の平面（南向きにクリップ）
     new ClippingPlane(new Cartesian3(0.0, -1.0, 0.0), halfHeight), // 南側の平面（北向きにクリップ）
   ]
-  
+
   return new ClippingPlaneCollection({
     modelMatrix: modelMatrix,
     planes: planes,

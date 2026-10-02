@@ -48,7 +48,7 @@ export function useRectangleSelection(viewer: Viewer | null) {
       }
       return null
     },
-    []
+    [],
   )
 
   const clearError = useCallback(() => {
@@ -90,7 +90,7 @@ export function useRectangleSelection(viewer: Viewer | null) {
             selectionBounds.west,
             selectionBounds.south,
             selectionBounds.east,
-            selectionBounds.north
+            selectionBounds.north,
           ),
           material: Color.CYAN.withAlpha(0.15),
           outline: true,
@@ -138,25 +138,25 @@ export function useRectangleSelection(viewer: Viewer | null) {
                 CesiumMath.toDegrees(startCartographic.current.longitude),
                 CesiumMath.toDegrees(startCartographic.current.latitude),
                 CesiumMath.toDegrees(startCartographic.current.longitude),
-                CesiumMath.toDegrees(startCartographic.current.latitude)
+                CesiumMath.toDegrees(startCartographic.current.latitude),
               )
             return Rectangle.fromDegrees(
               Math.min(
                 CesiumMath.toDegrees(startCartographic.current.longitude),
-                CesiumMath.toDegrees(current.longitude)
+                CesiumMath.toDegrees(current.longitude),
               ),
               Math.min(
                 CesiumMath.toDegrees(startCartographic.current.latitude),
-                CesiumMath.toDegrees(current.latitude)
+                CesiumMath.toDegrees(current.latitude),
               ),
               Math.max(
                 CesiumMath.toDegrees(startCartographic.current.longitude),
-                CesiumMath.toDegrees(current.longitude)
+                CesiumMath.toDegrees(current.longitude),
               ),
               Math.max(
                 CesiumMath.toDegrees(startCartographic.current.latitude),
-                CesiumMath.toDegrees(current.latitude)
-              )
+                CesiumMath.toDegrees(current.latitude),
+              ),
             )
           }, false),
           material: Color.CYAN.withAlpha(0.3),
@@ -174,7 +174,8 @@ export function useRectangleSelection(viewer: Viewer | null) {
     }
 
     const finishSelection = () => {
-      if (!isDrawingRef.current || !startCartographic.current || !draftRectangleEntity.current) return
+      if (!isDrawingRef.current || !startCartographic.current || !draftRectangleEntity.current)
+        return
       isDrawingRef.current = false
       setIsDrawing(false)
 
@@ -192,16 +193,16 @@ export function useRectangleSelection(viewer: Viewer | null) {
       }
 
       const west = CesiumMath.toDegrees(
-        Math.min(startCartographic.current.longitude, current.longitude)
+        Math.min(startCartographic.current.longitude, current.longitude),
       )
       const south = CesiumMath.toDegrees(
-        Math.min(startCartographic.current.latitude, current.latitude)
+        Math.min(startCartographic.current.latitude, current.latitude),
       )
       const east = CesiumMath.toDegrees(
-        Math.max(startCartographic.current.longitude, current.longitude)
+        Math.max(startCartographic.current.longitude, current.longitude),
       )
       const north = CesiumMath.toDegrees(
-        Math.max(startCartographic.current.latitude, current.latitude)
+        Math.max(startCartographic.current.latitude, current.latitude),
       )
 
       const validationError = validateSelection(west, south, east, north)

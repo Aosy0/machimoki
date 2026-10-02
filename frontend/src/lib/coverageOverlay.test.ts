@@ -101,7 +101,10 @@ describe('createCoverageOverlay LoD別5色フォールバック', () => {
         const expectedOutline = Color.fromCssColorString(style.outline)
         const entity = findByOutline(added, style.outline)
         assert.ok(entity, `${category}: outline色のEntityが存在すること`)
-        assert.ok(entity?.polygon?.material instanceof Color, `${category}: materialがColorであること`)
+        assert.ok(
+          entity?.polygon?.material instanceof Color,
+          `${category}: materialがColorであること`,
+        )
         assert.ok(
           (entity?.polygon?.material as Color).equals(expectedFill),
           `${category}: fillが定義色と一致すること`,

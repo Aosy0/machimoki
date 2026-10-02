@@ -4,11 +4,14 @@ import { cors } from 'hono/cors'
 const app = new Hono<{ Bindings: Env }>()
 
 // Enable CORS for all routes
-app.use('*', cors({
-  origin: '*',
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-}))
+app.use(
+  '*',
+  cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+  }),
+)
 
 // Health check
 app.get('/health', (c) => {
@@ -51,7 +54,7 @@ app.get('/api/catalog/:muniCode', async (c) => {
     return c.json({ error: 'Failed to fetch catalog' }, 502)
   }
 
-  const data = await res.json() as { datasets: Array<Record<string, unknown>> }
+  const data = (await res.json()) as { datasets: Array<Record<string, unknown>> }
   const prefCode = muniCode.slice(0, 2)
 
   const filtered = (data.datasets || []).filter((d) => {
@@ -96,9 +99,7 @@ async function decompressIfGzipped(bytes: ArrayBuffer): Promise<ArrayBuffer> {
     // 旧形式（非圧縮）のタイルはそのまま返す
     return bytes
   }
-  const stream = new Response(bytes).body!.pipeThrough(
-    new DecompressionStream('gzip'),
-  )
+  const stream = new Response(bytes).body!.pipeThrough(new DecompressionStream('gzip'))
   return await new Response(stream).arrayBuffer()
 }
 
@@ -122,11 +123,7 @@ app.get('/api/coverage/tiles/:z/:x/:y', async (c) => {
 })
 
 // Simple fixed-window rate limiter using KV
-async function checkRateLimit(
-  kv: KVNamespace,
-  ip: string,
-  limit: number
-): Promise<boolean> {
+async function checkRateLimit(kv: KVNamespace, ip: string, limit: number): Promise<boolean> {
   const window = Math.floor(Date.now() / 60000)
   const key = `rate:${ip}:${window}`
   const countStr = await kv.get(key)
@@ -154,7 +151,7 @@ app.post('/api/export', async (c) => {
           'Origin server not configured. ブラウザ側のWASMエクスポートが失敗した場合のみこのエラーが表示されます。範囲を狭くして再試行するか、開発者に連絡してください。',
         hint: 'workerExport_failed',
       },
-      503
+      503,
     )
   }
 
@@ -176,7 +173,7 @@ app.post('/api/validate', async (c) => {
           'Origin server not configured. ブラウザ側での検証が失敗した場合のみこのエラーが表示されます。',
         hint: 'workerExport_failed',
       },
-      503
+      503,
     )
   }
 

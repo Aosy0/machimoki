@@ -241,7 +241,7 @@ export async function sampleTerrainData(
   bounds: TerrainBounds,
   terrainProvider: TerrainProvider,
   gridSize?: number,
-  samplingLevel?: number
+  samplingLevel?: number,
 ): Promise<TerrainSampleData> {
   const resolvedGridSize = Math.max(2, Math.floor(gridSize ?? DEFAULT_GRID_SIZE))
   const widthDeg = bounds.east - bounds.west
@@ -262,7 +262,9 @@ export async function sampleTerrainData(
     terrainProvider instanceof EllipsoidTerrainProvider ||
     (terrainProvider as any).availability === undefined
   if (isIncompleteProvider) {
-    throw new Error(`PLATEAU-Terrain取得失敗: TerrainProviderがPLATEAU-Terrainではありません (Ellipsoidまたはavailabilityなし)`)
+    throw new Error(
+      `PLATEAU-Terrain取得失敗: TerrainProviderがPLATEAU-Terrainではありません (Ellipsoidまたはavailabilityなし)`,
+    )
   }
   let sampledPositions: Cartographic[]
   let resolvedSamplingLevel: number | null = null
@@ -275,9 +277,10 @@ export async function sampleTerrainData(
     }
     const minimumLevel = levelProvider.minimumLevel ?? 0
     const maximumLevel = levelProvider.maximumLevel
-    const level = maximumLevel === undefined
-      ? requestedLevel
-      : Math.min(Math.max(requestedLevel, minimumLevel), maximumLevel)
+    const level =
+      maximumLevel === undefined
+        ? requestedLevel
+        : Math.min(Math.max(requestedLevel, minimumLevel), maximumLevel)
     resolvedSamplingLevel = level
     sampleBatch = (positions) => sampleTerrain(terrainProvider, level, positions)
   } else {
@@ -291,7 +294,7 @@ export async function sampleTerrainData(
       )
     }
   } catch (e) {
-    throw new Error(`PLATEAU-Terrain取得失敗: ${ (e as Error).message }`)
+    throw new Error(`PLATEAU-Terrain取得失敗: ${(e as Error).message}`)
   }
   if (
     sampledPositions.length !== samplePositions.length ||
@@ -313,7 +316,11 @@ export async function sampleTerrainData(
   for (let i = 0; i < sampledPositions.length; i++) {
     const sample = sampledPositions[i]
     const height = sample.height
-    const ecef = Cartesian3.fromRadians(sample.longitude, sample.latitude, height + TERRAIN_SURFACE_OFFSET)
+    const ecef = Cartesian3.fromRadians(
+      sample.longitude,
+      sample.latitude,
+      height + TERRAIN_SURFACE_OFFSET,
+    )
     const local = Matrix4.multiplyByPoint(inverseCenterMatrix, ecef, new Cartesian3())
 
     topLocalPositions.push(local)
@@ -342,7 +349,7 @@ export async function sampleTerrainData(
 
 export function buildSolidTerrainPrimitive(
   sample: TerrainSampleData,
-  options: SolidTerrainOptions
+  options: SolidTerrainOptions,
 ): SolidTerrainPrimitiveResult {
   const gridSize = sample.gridSize
   const topVertexCount = gridSize * gridSize
@@ -362,7 +369,7 @@ export function buildSolidTerrainPrimitive(
     const bottomLocal = new Cartesian3(
       topLocal.x,
       topLocal.y,
-      useFlatBottom ? flatBottomHeight : topLocal.z - thickness
+      useFlatBottom ? flatBottomHeight : topLocal.z - thickness,
     )
     const bottomEcef = Matrix4.multiplyByPoint(sample.centerMatrix, bottomLocal, new Cartesian3())
     const vertexIndex = topVertexCount + i
@@ -426,7 +433,7 @@ export function buildSolidTerrainPrimitive(
 export async function createSolidTerrainPrimitive(
   bounds: TerrainBounds,
   terrainProvider: TerrainProvider,
-  options: SolidTerrainOptions
+  options: SolidTerrainOptions,
 ): Promise<SolidTerrainPrimitiveResult> {
   const sample = await sampleTerrainData(bounds, terrainProvider, options.gridSize)
   return buildSolidTerrainPrimitive(sample, options)

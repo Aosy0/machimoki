@@ -9,7 +9,7 @@ export interface PickPoint {
 export function usePointPicking(
   viewer: Viewer | null,
   active: boolean,
-  onPick: (point: PickPoint) => void
+  onPick: (point: PickPoint) => void,
 ) {
   useEffect(() => {
     if (!viewer || !active) return

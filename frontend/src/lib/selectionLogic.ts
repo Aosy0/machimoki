@@ -24,7 +24,10 @@ export const MIN_WIDTH_PX = 5
 export const MIN_HEIGHT_PX = 5
 export const MIN_AREA_KM2 = 0.0001
 
-export function calculatePixelBounds(start: PixelPoint, current: PixelPoint): {
+export function calculatePixelBounds(
+  start: PixelPoint,
+  current: PixelPoint,
+): {
   minX: number
   minY: number
   maxX: number
@@ -51,7 +54,12 @@ export function isTooSmall(width: number, height: number): boolean {
 }
 
 export function calculateAreaKm2(bounds: SelectionBounds): number {
-  const widthM = ((bounds.east - bounds.west) * Math.PI * 6371000 * Math.cos((bounds.south + bounds.north) / 2 * Math.PI / 180)) / 180
+  const widthM =
+    ((bounds.east - bounds.west) *
+      Math.PI *
+      6371000 *
+      Math.cos((((bounds.south + bounds.north) / 2) * Math.PI) / 180)) /
+    180
   const heightM = ((bounds.north - bounds.south) * Math.PI * 6371000) / 180
   return (widthM * heightM) / 1_000_000
 }

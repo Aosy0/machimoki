@@ -330,13 +330,8 @@ export function createMapLibreSelectionController(
         const point = readClientPoint(e)
         const next =
           point === null
-            ? currentBounds ?? resizeStartBounds
-            : applyResizeDrag(
-                resizeStartBounds,
-                resizeHandle,
-                readLngLat(point),
-                minGapAt(point),
-              )
+            ? (currentBounds ?? resizeStartBounds)
+            : applyResizeDrag(resizeStartBounds, resizeHandle, readLngLat(point), minGapAt(point))
         const error = validateSelectionBounds(next)
         if (error === null) {
           currentBounds = next

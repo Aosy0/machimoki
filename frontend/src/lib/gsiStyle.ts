@@ -25,8 +25,7 @@ export const MAP2D_MAX_ZOOM = 16
 
 export const GSI_PBF_TILE_URL =
   'https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf'
-export const UPSTREAM_STYLE_URL =
-  'https://gsi-cyberjapan.github.io/optimal_bvmap/style/std.json'
+export const UPSTREAM_STYLE_URL = 'https://gsi-cyberjapan.github.io/optimal_bvmap/style/std.json'
 // sprite / glyphs はベンダー固定時に取得した上流のURLを明示管理する。
 export const GSI_SPRITE_URL = 'https://gsi-cyberjapan.github.io/optimal_bvmap/sprite/std'
 export const GSI_GLYPHS_URL =

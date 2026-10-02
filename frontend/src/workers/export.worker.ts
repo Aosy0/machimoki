@@ -26,9 +26,11 @@ self.onmessage = async (e: MessageEvent<ExportWorkerRequest>) => {
       message: 'WASM初期化中...',
     } as ExportWorkerResponse)
     const result = await buildPrintableModelFromMeshes(buildingMeshes, terrainMesh, bounds, options)
-    ;(self as unknown as { postMessage: (msg: unknown) => void }).postMessage(
-      { type: 'done', buffer: result.buffer, warnings: result.warnings } as ExportWorkerResponse,
-    )
+    ;(self as unknown as { postMessage: (msg: unknown) => void }).postMessage({
+      type: 'done',
+      buffer: result.buffer,
+      warnings: result.warnings,
+    } as ExportWorkerResponse)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     ;(self as unknown as { postMessage: (msg: unknown) => void }).postMessage({

@@ -11,7 +11,9 @@ export function exportSceneToSTL(scene: Scene, filename: string): void {
   })
 
   if (meshes.length === 0) {
-    throw new Error('エクスポートできるジオメトリが見つかりません。3Dプレビュータブで建物が表示されているか確認してください。')
+    throw new Error(
+      'エクスポートできるジオメトリが見つかりません。3Dプレビュータブで建物が表示されているか確認してください。',
+    )
   }
 
   const exporter = new STLExporter()
@@ -19,11 +21,13 @@ export function exportSceneToSTL(scene: Scene, filename: string): void {
   meshes.forEach((m) => tempScene.add(m.clone()))
 
   const result = exporter.parse(tempScene, { binary: true })
-  const blob = new Blob(([result] as unknown) as BlobPart[], { type: 'application/octet-stream' })
+  const blob = new Blob([result] as unknown as BlobPart[], { type: 'application/octet-stream' })
 
   const MAX_SIZE_MB = 50
   if (blob.size > MAX_SIZE_MB * 1024 * 1024) {
-    throw new Error(`ファイルサイズが大きすぎます（${(blob.size / 1024 / 1024).toFixed(1)}MB）。最大${MAX_SIZE_MB}MBまで。`)
+    throw new Error(
+      `ファイルサイズが大きすぎます（${(blob.size / 1024 / 1024).toFixed(1)}MB）。最大${MAX_SIZE_MB}MBまで。`,
+    )
   }
 
   if (blob.size === 0) {

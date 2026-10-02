@@ -285,45 +285,42 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
     [flyToHit, placeSingleMarker],
   )
 
-  const runSuggest = useCallback(
-    (q: string) => {
-      const text = q.trim()
-      if (text.length < 2) {
-        setFacilities([])
-        setAddresses([])
-        setSuggestLoading(false)
-        setSuggestError(false)
-        setDropdownOpen(false)
-        return
-      }
-      setSuggestLoading(true)
+  const runSuggest = useCallback((q: string) => {
+    const text = q.trim()
+    if (text.length < 2) {
+      setFacilities([])
+      setAddresses([])
+      setSuggestLoading(false)
       setSuggestError(false)
-      setDropdownOpen(true)
-      const id = requestIdRef.current + 1
-      requestIdRef.current = id
-      let bounds: PoiBounds
-      try {
-        bounds = boundsFromMap(mapRef.current)
-      } catch {
+      setDropdownOpen(false)
+      return
+    }
+    setSuggestLoading(true)
+    setSuggestError(false)
+    setDropdownOpen(true)
+    const id = requestIdRef.current + 1
+    requestIdRef.current = id
+    let bounds: PoiBounds
+    try {
+      bounds = boundsFromMap(mapRef.current)
+    } catch {
+      setSuggestLoading(false)
+      setSuggestError(true)
+      return
+    }
+    suggestAll(text, bounds)
+      .then((res) => {
+        if (requestIdRef.current !== id) return
+        setFacilities(res.facilities)
+        setAddresses(res.addresses)
+        setSuggestLoading(false)
+      })
+      .catch(() => {
+        if (requestIdRef.current !== id) return
         setSuggestLoading(false)
         setSuggestError(true)
-        return
-      }
-      suggestAll(text, bounds)
-        .then((res) => {
-          if (requestIdRef.current !== id) return
-          setFacilities(res.facilities)
-          setAddresses(res.addresses)
-          setSuggestLoading(false)
-        })
-        .catch(() => {
-          if (requestIdRef.current !== id) return
-          setSuggestLoading(false)
-          setSuggestError(true)
-        })
-    },
-    [],
-  )
+      })
+  }, [])
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -450,8 +447,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   const showDropdown = dropdownOpen && query.trim().length >= 2
   const bothEmpty = facilities.length === 0 && addresses.length === 0
   const submitDisabled = query.trim().length < 2 || resultsLoading
-  const popupVisible =
-    showDropdown || results !== null || resultsLoading || resultsError
+  const popupVisible = showDropdown || results !== null || resultsLoading || resultsError
 
   // ポップアップ表示中は上限を実測し、各種変化に追随する。
   // - 表示開始・件数変化（deps）: 即時再計算
@@ -465,8 +461,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
     vv?.addEventListener('resize', scheduleRecompute)
     let observer: ResizeObserver | null = null
     try {
-      const target =
-        document.querySelector('[data-testid="map2d-container"]') ?? rootRef.current
+      const target = document.querySelector('[data-testid="map2d-container"]') ?? rootRef.current
       if (target && typeof ResizeObserver !== 'undefined') {
         observer = new ResizeObserver(() => scheduleRecompute())
         observer.observe(target)

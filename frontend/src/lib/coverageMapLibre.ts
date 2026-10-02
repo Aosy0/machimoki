@@ -61,10 +61,7 @@ function exists(value: unknown): boolean {
  * 推定不能時（null/undefined/NaN）は表示側（true）に倒してチラつきを防ぐ。
  * 既定閾値は App が BUILDING_OVERLAY_MIN_ZOOM を渡す（=10）。
  */
-export function isCoverageDetailedZoom(
-  zoom: number | null | undefined,
-  minZoom = 13,
-): boolean {
+export function isCoverageDetailedZoom(zoom: number | null | undefined, minZoom = 13): boolean {
   if (zoom === null || zoom === undefined || !Number.isFinite(zoom)) {
     return true
   }
@@ -97,18 +94,14 @@ function lodMatchExpression(colors: [number, string][], fallback: string): unkno
  * lodsは "lod1,lod2" 形式のため部分一致で最大LoDを判定する（4→3→2の順）。
  * maxLodの無い旧タイル用。新タイルは数値分岐が優先される。
  */
-function lodStringCascadeExpression(lod4: string, lod3: string, lod2: string, lod1: string): unknown[] {
+function lodStringCascadeExpression(
+  lod4: string,
+  lod3: string,
+  lod2: string,
+  lod1: string,
+): unknown[] {
   const lods: unknown[] = ['coalesce', ['get', 'lods'], '']
-  return [
-    'case',
-    ['in', '4', lods],
-    lod4,
-    ['in', '3', lods],
-    lod3,
-    ['in', '2', lods],
-    lod2,
-    lod1,
-  ]
+  return ['case', ['in', '4', lods], lod4, ['in', '3', lods], lod3, ['in', '2', lods], lod2, lod1]
 }
 
 /** 詳細色の解決式。maxLod数値を優先し、無い場合はlods文字列で判定する。 */
@@ -130,12 +123,7 @@ function lodDetailedExpression(
 /** fill-color用paint式。色はLOD_CATEGORY_STYLES由来のみ。 */
 export function buildCoverageFillPaint(detailed: boolean): unknown {
   if (!detailed) {
-    return [
-      'case',
-      hasLodDataExpression(),
-      COVERAGE_BINARY_FILL,
-      LOD_CATEGORY_STYLES.none.fill,
-    ]
+    return ['case', hasLodDataExpression(), COVERAGE_BINARY_FILL, LOD_CATEGORY_STYLES.none.fill]
   }
   return [
     'case',
@@ -203,10 +191,7 @@ export function hasCoverageLayer(map: CoverageMapLike): boolean {
   }
 }
 
-export function setCoverageLayerVisible(
-  map: CoverageMapLike,
-  visible: boolean,
-): void {
+export function setCoverageLayerVisible(map: CoverageMapLike, visible: boolean): void {
   try {
     const value = visible ? 'visible' : 'none'
     map.setLayoutProperty(COVERAGE_FILL_LAYER_ID, 'visibility', value)
@@ -216,21 +201,10 @@ export function setCoverageLayerVisible(
   }
 }
 
-export function setCoverageLayerDetailed(
-  map: CoverageMapLike,
-  detailed: boolean,
-): void {
+export function setCoverageLayerDetailed(map: CoverageMapLike, detailed: boolean): void {
   try {
-    map.setPaintProperty(
-      COVERAGE_FILL_LAYER_ID,
-      'fill-color',
-      buildCoverageFillPaint(detailed),
-    )
-    map.setPaintProperty(
-      COVERAGE_LINE_LAYER_ID,
-      'line-color',
-      buildCoverageLinePaint(detailed),
-    )
+    map.setPaintProperty(COVERAGE_FILL_LAYER_ID, 'fill-color', buildCoverageFillPaint(detailed))
+    map.setPaintProperty(COVERAGE_LINE_LAYER_ID, 'line-color', buildCoverageLinePaint(detailed))
   } catch {
     /* 描画切替の失敗は無視（exportをブロックしない） */
   }
@@ -305,11 +279,7 @@ export function removeCoverageLayer(map: CoverageMapLike): void {
  * 現在ズームから詳細/簡易を同期する。レイヤー未整備時は判定のみ返す。
  * ズーム取得に失敗したら詳細側（true）に倒す。
  */
-export function syncCoverageZoom(
-  map: CoverageMapLike,
-  visible: boolean,
-  minZoom = 13,
-): boolean {
+export function syncCoverageZoom(map: CoverageMapLike, visible: boolean, minZoom = 13): boolean {
   let zoom: number | null = null
   try {
     const value = map.getZoom()

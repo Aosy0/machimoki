@@ -14,41 +14,41 @@
  * workspace via manifold-3d) so it works in Node, Workers and browsers.
  */
 
-import { strToU8, zipSync, unzipSync, strFromU8 } from 'fflate';
-import { Bounds, ExportOptions } from './types.js';
+import { strToU8, zipSync, unzipSync, strFromU8 } from 'fflate'
+import { Bounds, ExportOptions } from './types.js'
 
-export const MACHIMOKI_MANIFEST = 'manifest.json';
-export const MACHIMOKI_MODEL_3MF = 'model.3mf';
-export const MACHIMOKI_MODEL_STL = 'model.stl';
+export const MACHIMOKI_MANIFEST = 'manifest.json'
+export const MACHIMOKI_MODEL_3MF = 'model.3mf'
+export const MACHIMOKI_MODEL_STL = 'model.stl'
 
 export interface MachimokiManifest {
   /** Format version of the .machimoki container. */
-  version: 1;
+  version: 1
   /** Geographic bounds the model was exported from. */
-  bounds: Bounds;
+  bounds: Bounds
   /** The embedded model format ('3mf' | 'stl'). */
-  modelFormat: '3mf' | 'stl';
+  modelFormat: '3mf' | 'stl'
   /** Export options that produced the model. */
   options: {
-    terrainThickness: number;
-    flattenBottom: boolean;
-    reflectActualElevation?: boolean;
-    lod?: string;
-    includeTerrain?: boolean;
-    buildingColor?: string;
-    terrainColor?: string;
-    upAxis?: string;
-    scale?: number;
-    includeSpanningBuildings?: boolean;
-  };
+    terrainThickness: number
+    flattenBottom: boolean
+    reflectActualElevation?: boolean
+    lod?: string
+    includeTerrain?: boolean
+    buildingColor?: string
+    terrainColor?: string
+    upAxis?: string
+    scale?: number
+    includeSpanningBuildings?: boolean
+  }
   /** Human-readable warnings collected during export. */
-  warnings: string[];
+  warnings: string[]
   /** ISO timestamp of when the file was created. */
-  createdAt: string;
+  createdAt: string
 }
 
 function modelFileName(format: '3mf' | 'stl'): string {
-  return format === 'stl' ? MACHIMOKI_MODEL_STL : MACHIMOKI_MODEL_3MF;
+  return format === 'stl' ? MACHIMOKI_MODEL_STL : MACHIMOKI_MODEL_3MF
 }
 
 /**
@@ -85,14 +85,14 @@ export function createMachimokiBuffer(
     },
     warnings,
     createdAt: new Date().toISOString(),
-  };
+  }
 
   const files: Record<string, Uint8Array> = {
     [MACHIMOKI_MANIFEST]: strToU8(JSON.stringify(manifest, null, 2)),
     [modelFileName(modelFormat)]: modelBuffer,
-  };
+  }
 
-  return zipSync(files, { level: 6 });
+  return zipSync(files, { level: 6 })
 }
 
 /**
@@ -100,30 +100,30 @@ export function createMachimokiBuffer(
  * model bytes. Throws if the archive is malformed or missing required entries.
  */
 export function inspectMachimoki(buffer: Uint8Array): {
-  manifest: MachimokiManifest;
-  model: Uint8Array;
-  modelFormat: '3mf' | 'stl';
+  manifest: MachimokiManifest
+  model: Uint8Array
+  modelFormat: '3mf' | 'stl'
 } {
-  const files = unzipSync(buffer);
+  const files = unzipSync(buffer)
 
-  const manifestEntry = files[MACHIMOKI_MANIFEST];
+  const manifestEntry = files[MACHIMOKI_MANIFEST]
   if (!manifestEntry) {
-    throw new Error('Invalid .machimoki file: missing manifest.json');
+    throw new Error('Invalid .machimoki file: missing manifest.json')
   }
 
-  let manifest: MachimokiManifest;
+  let manifest: MachimokiManifest
   try {
-    manifest = JSON.parse(strFromU8(manifestEntry)) as MachimokiManifest;
+    manifest = JSON.parse(strFromU8(manifestEntry)) as MachimokiManifest
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Invalid .machimoki manifest: ${message}`);
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid .machimoki manifest: ${message}`)
   }
 
-  const modelFormat = manifest.modelFormat === 'stl' ? 'stl' : '3mf';
-  const model = files[modelFileName(modelFormat)];
+  const modelFormat = manifest.modelFormat === 'stl' ? 'stl' : '3mf'
+  const model = files[modelFileName(modelFormat)]
   if (!model) {
-    throw new Error(`Invalid .machimoki file: missing ${modelFileName(modelFormat)}`);
+    throw new Error(`Invalid .machimoki file: missing ${modelFileName(modelFormat)}`)
   }
 
-  return { manifest, model, modelFormat };
+  return { manifest, model, modelFormat }
 }

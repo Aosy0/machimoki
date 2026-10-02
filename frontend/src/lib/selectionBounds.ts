@@ -25,8 +25,8 @@ function isFiniteNumber(value: unknown): value is number {
 
 /** Cesium経路と同式（半径6371000mの等距換算）の概算面積。 */
 export function selectionAreaKm2(bounds: SelectionBounds): number {
-  const widthM = ((bounds.east - bounds.west) * Math.PI) / 180 * EARTH_RADIUS_M
-  const heightM = ((bounds.north - bounds.south) * Math.PI) / 180 * EARTH_RADIUS_M
+  const widthM = (((bounds.east - bounds.west) * Math.PI) / 180) * EARTH_RADIUS_M
+  const heightM = (((bounds.north - bounds.south) * Math.PI) / 180) * EARTH_RADIUS_M
   return (widthM * heightM) / 1_000_000
 }
 

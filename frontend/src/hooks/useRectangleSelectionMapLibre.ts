@@ -14,11 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
 import type { SelectionBounds } from './useRectangleSelection'
-import {
-  pixelBoundsToSelectionBounds,
-  validateArea,
-  type PixelPoint,
-} from '../lib/selectionLogic'
+import { pixelBoundsToSelectionBounds, validateArea, type PixelPoint } from '../lib/selectionLogic'
 
 export function useRectangleSelectionMapLibre(map: MapLibreMap | null) {
   const [selectionBounds, setSelectionBounds] = useState<SelectionBounds | null>(null)
@@ -77,14 +73,10 @@ export function useRectangleSelectionMapLibre(map: MapLibreMap | null) {
       e.preventDefault()
 
       const currentPoint: PixelPoint = { x: e.originalEvent.clientX, y: e.originalEvent.clientY }
-      const bounds = pixelBoundsToSelectionBounds(
-        startPointRef.current,
-        currentPoint,
-        (point) => {
-          const lngLat = map.unproject([point.x, point.y])
-          return { lng: lngLat.lng, lat: lngLat.lat }
-        },
-      )
+      const bounds = pixelBoundsToSelectionBounds(startPointRef.current, currentPoint, (point) => {
+        const lngLat = map.unproject([point.x, point.y])
+        return { lng: lngLat.lng, lat: lngLat.lat }
+      })
 
       // パン操作を再有効化
       map.dragPan.enable()

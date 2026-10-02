@@ -171,8 +171,7 @@ export default function Map2D({
     } catch (err) {
       map = null
       setErrorState('webgl')
-      const failure =
-        err instanceof Error ? err : new Error('地図の初期化に失敗しました')
+      const failure = err instanceof Error ? err : new Error('地図の初期化に失敗しました')
       webglFailureRef.current?.(failure)
       return () => {
         mapRef.current = null
@@ -194,7 +193,9 @@ export default function Map2D({
       activeMap.resize()
       const missing = getMissingMapContent(activeMap, REQUIRED_LAYER_IDS)
       if (missing.length > 0) {
-        setNotice(`地図の読み込みは完了しましたが、一部のレイヤーが見つかりません: ${missing.join(', ')}`)
+        setNotice(
+          `地図の読み込みは完了しましたが、一部のレイヤーが見つかりません: ${missing.join(', ')}`,
+        )
       }
     })
 
@@ -292,9 +293,7 @@ export default function Map2D({
           }}
         >
           <div>
-            <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
-              地図の描画に失敗しました
-            </div>
+            <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>地図の描画に失敗しました</div>
             <div>WebGL がサポートされていないか、ハードウェアアクセラレーションが無効です。</div>
             <div style={{ marginTop: '8px' }}>
               手動で範囲を入力するか、プリセットから選択してください。
@@ -307,7 +306,11 @@ export default function Map2D({
 
   return (
     <div className={className} style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <div ref={containerRef} data-testid="map2d-container" style={{ position: 'absolute', inset: 0 }} />
+      <div
+        ref={containerRef}
+        data-testid="map2d-container"
+        style={{ position: 'absolute', inset: 0 }}
+      />
       {activeMap && <FacilitySearchBox map={activeMap} />}
       <div
         data-testid="map2d-attribution"

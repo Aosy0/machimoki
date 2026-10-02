@@ -7,11 +7,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  parseManualCoords,
-  coercePresetBounds,
-  coerceCurrentViewBounds,
-} from './mapSelectionInput'
+import { parseManualCoords, coercePresetBounds, coerceCurrentViewBounds } from './mapSelectionInput'
 
 describe('parseManualCoords', () => {
   it('正常な文字列4値をSelectionBounds化する', () => {
@@ -96,16 +92,14 @@ describe('coercePresetBounds', () => {
 
   it('上限1000km²超のプリセットは例外にする', () => {
     assert.throws(
-      () =>
-        coercePresetBounds({ west: 139.0, south: 35.0, east: 140.0, north: 36.0 }),
+      () => coercePresetBounds({ west: 139.0, south: 35.0, east: 140.0, north: 36.0 }),
       /広すぎます/,
     )
   })
 
   it('順序不正のプリセットは例外にする', () => {
     assert.throws(
-      () =>
-        coercePresetBounds({ west: 140.0, south: 35.0, east: 139.0, north: 36.0 }),
+      () => coercePresetBounds({ west: 140.0, south: 35.0, east: 139.0, north: 36.0 }),
       /./,
     )
   })

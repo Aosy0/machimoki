@@ -194,7 +194,11 @@ export function nameMatchRank(name: string, query: string): number {
 export function categoryRank(category: string | undefined): number {
   if (!category || category === 'unknown') return 1 // 中立
   // 代表的な公共・交通・ランドマーク系を上位に
-  if (['transit', 'railway', 'landmark', 'government', 'education', 'medical', 'park'].includes(category))
+  if (
+    ['transit', 'railway', 'landmark', 'government', 'education', 'medical', 'park'].includes(
+      category,
+    )
+  )
     return 0
   // 地名・地域系
   if (['locality', 'place', 'neighborhood', 'quarter'].includes(category)) return 0
@@ -369,7 +373,12 @@ export async function searchAddress(query: string): Promise<PoiHit[]> {
       if (hit) entries.push({ title, hit })
     }
     // クエリ包含で無関係な地域を除外。0件時は従来どおり全件にフォールバック。
-    const kept = new Set(filterAddressTitles(entries.map((e) => e.title), q))
+    const kept = new Set(
+      filterAddressTitles(
+        entries.map((e) => e.title),
+        q,
+      ),
+    )
     return entries
       .filter((e) => kept.has(e.title))
       .map((e) => e.hit)

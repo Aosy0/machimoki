@@ -37,11 +37,7 @@ function makeB3dm(batchLength: number): ArrayBuffer {
   return buf
 }
 
-function resp(
-  status: number,
-  body?: BodyInit | null,
-  headers?: Record<string, string>
-): Response {
+function resp(status: number, body?: BodyInit | null, headers?: Record<string, string>): Response {
   return new Response(body ?? null, { status, headers })
 }
 
@@ -54,11 +50,7 @@ function mockFetch(routes: Record<string, () => Response>): MockFetch {
   const calls = new Map<string, number>()
   const fetchImpl = ((input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
     const url =
-      typeof input === 'string'
-        ? input
-        : input instanceof URL
-          ? input.href
-          : (input as Request).url
+      typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
     calls.set(url, (calls.get(url) ?? 0) + 1)
     const route = routes[url]
     if (!route) return Promise.reject(new Error(`no route for ${url}`))
@@ -77,7 +69,7 @@ function tileset(root: unknown): unknown {
 function tile(
   region: [number, number, number, number] | null,
   contentUrl: string | null,
-  children: unknown[] = []
+  children: unknown[] = [],
 ): unknown {
   const t: Record<string, unknown> = {
     boundingVolume: region ? { region: [...region, 0, 100] } : undefined,
@@ -122,7 +114,13 @@ describe('readB3dmBatchLength', () => {
 })
 
 describe('classifyPreviewLoad', () => {
-  const base = { intersectingTiles: 1, contentTiles: 1, totalBuildings: 1, totalContentBytes: 1, capped: false }
+  const base = {
+    intersectingTiles: 1,
+    contentTiles: 1,
+    totalBuildings: 1,
+    totalContentBytes: 1,
+    capped: false,
+  }
 
   it('予算内なら buildings/ok', () => {
     const d = classifyPreviewLoad(base)
@@ -131,7 +129,12 @@ describe('classifyPreviewLoad', () => {
   })
 
   it('コンテンツ・建物がゼロなら terrain-only/no-data', () => {
-    const d = classifyPreviewLoad({ ...base, contentTiles: 0, totalBuildings: 0, totalContentBytes: 0 })
+    const d = classifyPreviewLoad({
+      ...base,
+      contentTiles: 0,
+      totalBuildings: 0,
+      totalContentBytes: 0,
+    })
     assert.equal(d.mode, 'terrain-only')
     assert.equal(d.reason, 'no-data')
   })
@@ -143,12 +146,18 @@ describe('classifyPreviewLoad', () => {
   })
 
   it('交差タイル数が上限超過なら too-large', () => {
-    const d = classifyPreviewLoad({ ...base, intersectingTiles: PREVIEW_BUDGET.maxIntersectingTiles + 1 })
+    const d = classifyPreviewLoad({
+      ...base,
+      intersectingTiles: PREVIEW_BUDGET.maxIntersectingTiles + 1,
+    })
     assert.equal(d.reason, 'too-large')
   })
 
   it('コンテンツバイトが上限超過なら too-large', () => {
-    const d = classifyPreviewLoad({ ...base, totalContentBytes: PREVIEW_BUDGET.maxContentBytes + 1 })
+    const d = classifyPreviewLoad({
+      ...base,
+      totalContentBytes: PREVIEW_BUDGET.maxContentBytes + 1,
+    })
     assert.equal(d.reason, 'too-large')
   })
 
@@ -170,7 +179,12 @@ describe('classifyPreviewLoad', () => {
 
   it('地理的な広さとは無関係にカウントのみで判定する（地理サイズ独立性）', () => {
     const tiny = classifyPreviewLoad(base)
-    const huge = classifyPreviewLoad({ ...base, intersectingTiles: 10, totalBuildings: 5, totalContentBytes: 100 })
+    const huge = classifyPreviewLoad({
+      ...base,
+      intersectingTiles: 10,
+      totalBuildings: 5,
+      totalContentBytes: 100,
+    })
     assert.deepEqual(tiny, huge)
   })
 })
@@ -265,11 +279,17 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
         resp(
           200,
           JSON.stringify(
-            tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'data/1.b3dm', [tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'data/2.b3dm')]))
-          )
+            tileset(
+              tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'data/1.b3dm', [
+                tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'data/2.b3dm'),
+              ]),
+            ),
+          ),
         ),
-      'https://x/data/1.b3dm': () => resp(206, makeB3dm(10), { 'Content-Range': 'bytes 0-16383/100' }),
-      'https://x/data/2.b3dm': () => resp(206, makeB3dm(20), { 'Content-Range': 'bytes 0-16383/200' }),
+      'https://x/data/1.b3dm': () =>
+        resp(206, makeB3dm(10), { 'Content-Range': 'bytes 0-16383/100' }),
+      'https://x/data/2.b3dm': () =>
+        resp(206, makeB3dm(20), { 'Content-Range': 'bytes 0-16383/200' }),
     }
     const { fetch, calls } = mockFetch(routes)
     const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
@@ -285,8 +305,16 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
     const root = 'https://x/root.json'
     const ext = 'https://x/ext.json'
     const routes: Record<string, () => Response> = {
-      [root]: () => resp(200, JSON.stringify(tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'ext.json')))),
-      [ext]: () => resp(200, JSON.stringify(tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'b.b3dm')))),
+      [root]: () =>
+        resp(
+          200,
+          JSON.stringify(tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'ext.json'))),
+        ),
+      [ext]: () =>
+        resp(
+          200,
+          JSON.stringify(tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'b.b3dm'))),
+        ),
       'https://x/b.b3dm': () => resp(206, makeB3dm(7), { 'Content-Range': 'bytes 0-16383/50' }),
     }
     const { fetch } = mockFetch(routes)
@@ -307,11 +335,12 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
               tile(null, null, [
                 tile([rad(100), rad(100), rad(101), rad(101)], 'far.b3dm'),
                 tile([rad(139.69), rad(35.69), rad(139.7), rad(35.7)], 'near.b3dm'),
-              ])
-            )
-          )
+              ]),
+            ),
+          ),
         ),
-      'https://x/far.b3dm': () => resp(206, makeB3dm(99), { 'Content-Range': 'bytes 0-16383/1000' }),
+      'https://x/far.b3dm': () =>
+        resp(206, makeB3dm(99), { 'Content-Range': 'bytes 0-16383/1000' }),
       'https://x/near.b3dm': () => resp(206, makeB3dm(3), { 'Content-Range': 'bytes 0-16383/30' }),
     }
     const { fetch, calls } = mockFetch(routes)
@@ -334,12 +363,13 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
                 tile([rad(139.6), rad(35.6), rad(139.8), rad(35.8)], 'tokyo.b3dm'),
                 // 大阪付近（度換算 135..136, 34..35）をラジアンで指定 → B と交差しない
                 tile([rad(135), rad(34), rad(136), rad(35)], 'osaka.b3dm'),
-              ])
-            )
-          )
+              ]),
+            ),
+          ),
         ),
       'https://x/tokyo.b3dm': () => resp(206, makeB3dm(8), { 'Content-Range': 'bytes 0-16383/80' }),
-      'https://x/osaka.b3dm': () => resp(206, makeB3dm(50), { 'Content-Range': 'bytes 0-16383/500' }),
+      'https://x/osaka.b3dm': () =>
+        resp(206, makeB3dm(50), { 'Content-Range': 'bytes 0-16383/500' }),
     }
     const { fetch, calls } = mockFetch(routes)
     const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
@@ -352,8 +382,15 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
   it('相対URLをベースURL基準で解決する', async () => {
     const url = 'https://host/area/tileset.json'
     const routes: Record<string, () => Response> = {
-      [url]: () => resp(200, JSON.stringify(tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], '../shared/b.b3dm')))),
-      'https://host/shared/b.b3dm': () => resp(206, makeB3dm(5), { 'Content-Range': 'bytes 0-16383/25' }),
+      [url]: () =>
+        resp(
+          200,
+          JSON.stringify(
+            tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], '../shared/b.b3dm')),
+          ),
+        ),
+      'https://host/shared/b.b3dm': () =>
+        resp(206, makeB3dm(5), { 'Content-Range': 'bytes 0-16383/25' }),
     }
     const { fetch, calls } = mockFetch(routes)
     const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
@@ -364,8 +401,15 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
   it('content.uri形式のタイルを集計する', async () => {
     const url = 'https://x/tileset.json'
     const routes: Record<string, () => Response> = {
-      [url]: () => resp(200, JSON.stringify(tileset(uriTile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'building.b3dm')))),
-      'https://x/building.b3dm': () => resp(206, makeB3dm(4), { 'Content-Range': 'bytes 0-16383/40' }),
+      [url]: () =>
+        resp(
+          200,
+          JSON.stringify(
+            tileset(uriTile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'building.b3dm')),
+          ),
+        ),
+      'https://x/building.b3dm': () =>
+        resp(206, makeB3dm(4), { 'Content-Range': 'bytes 0-16383/40' }),
     }
     const { fetch } = mockFetch(routes)
     const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
@@ -380,11 +424,13 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
         resp(
           200,
           JSON.stringify(
-            tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], null, [
-              tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'a.b3dm'),
-              tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'b.b3dm'),
-            ]))
-          )
+            tileset(
+              tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], null, [
+                tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'a.b3dm'),
+                tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'b.b3dm'),
+              ]),
+            ),
+          ),
         ),
       'https://x/a.b3dm': () => resp(206, makeB3dm(4), { 'Content-Range': 'bytes 0-16383/1000' }),
       'https://x/b.b3dm': () => resp(200, makeB3dm(6)),
@@ -415,7 +461,11 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
   it('bounds+lod+URL でメモ化する（fetch は1回）', async () => {
     const url = 'https://x/tileset.json'
     const routes: Record<string, () => Response> = {
-      [url]: () => resp(200, JSON.stringify(tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'a.b3dm')))),
+      [url]: () =>
+        resp(
+          200,
+          JSON.stringify(tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'a.b3dm'))),
+        ),
       'https://x/a.b3dm': () => resp(206, makeB3dm(2), { 'Content-Range': 'bytes 0-16383/20' }),
     }
     const { fetch, calls } = mockFetch(routes)
@@ -433,11 +483,13 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
         resp(
           200,
           JSON.stringify(
-            tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], null, [
-              tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'ok.b3dm'),
-              tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'bad.b3dm'),
-            ]))
-          )
+            tileset(
+              tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], null, [
+                tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'ok.b3dm'),
+                tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'bad.b3dm'),
+              ]),
+            ),
+          ),
         ),
       'https://x/ok.b3dm': () => resp(206, makeB3dm(5), { 'Content-Range': 'bytes 0-16383/25' }),
       // bad.b3dm はルートなし → reject（分離される）

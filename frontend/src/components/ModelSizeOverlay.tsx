@@ -11,7 +11,8 @@ function computeNaturalDimensions(bounds: SelectionBounds): { widthM: number; de
   const centerLat = (bounds.north + bounds.south) / 2
   const widthDeg = bounds.east - bounds.west
   const heightDeg = bounds.north - bounds.south
-  const widthM = Math.abs(widthDeg) * (Math.PI / 180) * 6371000 * Math.cos((centerLat * Math.PI) / 180)
+  const widthM =
+    Math.abs(widthDeg) * (Math.PI / 180) * 6371000 * Math.cos((centerLat * Math.PI) / 180)
   const depthM = Math.abs(heightDeg) * (Math.PI / 180) * 6371000
   return { widthM, depthM }
 }
@@ -69,7 +70,7 @@ export default function ModelSizeOverlay({
         setEditingField(null)
       }
     },
-    [commitEdit]
+    [commitEdit],
   )
 
   const startDrag = useCallback(
@@ -97,7 +98,7 @@ export default function ModelSizeOverlay({
       target.addEventListener('pointermove', onMove)
       target.addEventListener('pointerup', onUp)
     },
-    [scale, onScaleChange]
+    [scale, onScaleChange],
   )
 
   if (!selectionBounds || !dims) return null

@@ -145,7 +145,9 @@ export class ContourImageryProvider implements ImageryProvider {
   requestImage(x: number, y: number, level: number): Promise<ImageryTypes> | undefined {
     const spacing = getSpacingForLevel(level)
     if (spacing === null) return Promise.resolve(createTransparentTile())
-    const url = DEM_URL_TEMPLATE.replace('{z}', String(level)).replace('{x}', String(x)).replace('{y}', String(y))
+    const url = DEM_URL_TEMPLATE.replace('{z}', String(level))
+      .replace('{x}', String(x))
+      .replace('{y}', String(y))
     return fetch(url)
       .then((res) => {
         if (!res.ok) throw new Error(`DEMタイル取得失敗: ${res.status}`)

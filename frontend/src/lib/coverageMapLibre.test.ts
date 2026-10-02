@@ -139,19 +139,13 @@ describe('buildCoverageFillPaint / buildCoverageLinePaint', () => {
 describe('ensureCoverageLayer', () => {
   it('ソース＋fill/lineの2層を冪等に整備する', () => {
     const map = new FakeMap()
-    assert.equal(
-      ensureCoverageLayer(map, { visible: true, detailed: true }),
-      true,
-    )
+    assert.equal(ensureCoverageLayer(map, { visible: true, detailed: true }), true)
     assert.ok(map.sources.has(COVERAGE_SOURCE_ID))
     assert.ok(map.layers.has(COVERAGE_FILL_LAYER_ID))
     assert.ok(map.layers.has(COVERAGE_LINE_LAYER_ID))
     assert.equal(hasCoverageLayer(map), true)
     // 2回目は作り直さず成功する
-    assert.equal(
-      ensureCoverageLayer(map, { visible: false, detailed: false }),
-      true,
-    )
+    assert.equal(ensureCoverageLayer(map, { visible: false, detailed: false }), true)
     assert.equal(map.sources.size, 1)
     assert.equal(map.layers.size, 2)
     assert.equal(map.layout.get(COVERAGE_FILL_LAYER_ID)?.get('visibility'), 'none')
@@ -160,30 +154,21 @@ describe('ensureCoverageLayer', () => {
   it('スタイル未読込時はfalseを返し何も作らない', () => {
     const map = new FakeMap()
     map.isLoaded = false
-    assert.equal(
-      ensureCoverageLayer(map, { visible: true, detailed: true }),
-      false,
-    )
+    assert.equal(ensureCoverageLayer(map, { visible: true, detailed: true }), false)
     assert.equal(hasCoverageLayer(map), false)
   })
 
   it('タイル読込中でもスタイル読込済みなら層を作る', () => {
     const map = new FakeMap()
     map.loaded = (): boolean => false
-    assert.equal(
-      ensureCoverageLayer(map, { visible: true, detailed: true }),
-      true,
-    )
+    assert.equal(ensureCoverageLayer(map, { visible: true, detailed: true }), true)
     assert.equal(hasCoverageLayer(map), true)
   })
 
   it('失敗時はfalseを返し例外を投げない（export非ブロック）', () => {
     const map = new FakeMap()
     map.failOn = 'addSource'
-    assert.equal(
-      ensureCoverageLayer(map, { visible: true, detailed: true }),
-      false,
-    )
+    assert.equal(ensureCoverageLayer(map, { visible: true, detailed: true }), false)
   })
 
   it('removeで層とソースを片付ける', () => {
@@ -204,10 +189,7 @@ describe('ensureCoverageLayer', () => {
   it('tiles指定時はそのURLでソースを作る（開発時は絶対ベース）', () => {
     const map = new FakeMap()
     const template = coverageTilesTemplate('https://machimoki.aosy.f5.si')
-    assert.equal(
-      template,
-      'https://machimoki.aosy.f5.si/api/coverage/tiles/{z}/{x}/{y}',
-    )
+    assert.equal(template, 'https://machimoki.aosy.f5.si/api/coverage/tiles/{z}/{x}/{y}')
     assert.equal(
       ensureCoverageLayer(map, {
         visible: true,
@@ -224,14 +206,8 @@ describe('ensureCoverageLayer', () => {
 
   it('tiles未指定時は相対テンプレートを使う（本番）', () => {
     const map = new FakeMap()
-    assert.equal(
-      coverageTilesTemplate(''),
-      '/api/coverage/tiles/{z}/{x}/{y}',
-    )
-    assert.equal(
-      ensureCoverageLayer(map, { visible: true, detailed: true }),
-      true,
-    )
+    assert.equal(coverageTilesTemplate(''), '/api/coverage/tiles/{z}/{x}/{y}')
+    assert.equal(ensureCoverageLayer(map, { visible: true, detailed: true }), true)
     const source = map.sources.get(COVERAGE_SOURCE_ID) as {
       tiles: string[]
     }
@@ -245,15 +221,11 @@ describe('syncCoverageZoom', () => {
     ensureCoverageLayer(map, { visible: true, detailed: false })
     map.zoom = 14
     assert.equal(syncCoverageZoom(map, true, 13), true)
-    const detailed = JSON.stringify(
-      map.paint.get(COVERAGE_FILL_LAYER_ID)?.get('fill-color'),
-    )
+    const detailed = JSON.stringify(map.paint.get(COVERAGE_FILL_LAYER_ID)?.get('fill-color'))
     assert.ok(detailed.includes(LOD_CATEGORY_STYLES.lod4.fill))
     map.zoom = 10
     assert.equal(syncCoverageZoom(map, true, 13), false)
-    const simple = JSON.stringify(
-      map.paint.get(COVERAGE_FILL_LAYER_ID)?.get('fill-color'),
-    )
+    const simple = JSON.stringify(map.paint.get(COVERAGE_FILL_LAYER_ID)?.get('fill-color'))
     assert.ok(simple.includes('rgba(0, 0, 0, 0)'))
   })
 

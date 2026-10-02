@@ -1,4 +1,5 @@
-const GSI_REVERSE_GEOCODER_URL = 'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress'
+const GSI_REVERSE_GEOCODER_URL =
+  'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress'
 const PLATEAU_CATALOG_URL = 'https://api.plateauview.mlit.go.jp/datacatalog/plateau-datasets'
 // 自治体コード解決のフォールバック用（GSI不通時）。表示用のs0001より精細な
 // s0010を使い、境界付近の誤判定を減らす。GSI失敗時のみ取得しキャッシュする。
@@ -93,9 +94,12 @@ export function clearCatalogApiCache(): void {
   tilesetUrlCache.clear()
 }
 
-export async function resolveMuniCodes(
-  bounds: { west: number; south: number; east: number; north: number }
-): Promise<string[]> {
+export async function resolveMuniCodes(bounds: {
+  west: number
+  south: number
+  east: number
+  north: number
+}): Promise<string[]> {
   const key = boundsKey(bounds)
   const cached = muniCodesCache.get(key)
   if (cached) return [...cached]
@@ -112,7 +116,7 @@ export async function resolveMuniCodes(
     ]
 
     const results = await Promise.allSettled(
-      points.map((p) => resolveMuniCodeWithFallback(p.lat, p.lon))
+      points.map((p) => resolveMuniCodeWithFallback(p.lat, p.lon)),
     )
 
     const codes = new Set<string>()
@@ -275,10 +279,7 @@ export async function resolveMuniCodeLocal(lat: number, lon: number): Promise<st
   return code
 }
 
-export async function findTilesetUrl(
-  muniCode: string,
-  lod: Lod
-): Promise<string> {
+export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string> {
   const key = `${muniCode}:${lod}`
   const cached = tilesetUrlCache.get(key)
   if (cached) return cached
@@ -299,7 +300,7 @@ export async function findTilesetUrl(
 
   if (candidates.length === 0) {
     throw new Error(
-      `該当する3D Tilesデータセットが見つかりません: muniCode=${muniCode}, lod=${lod}`
+      `該当する3D Tilesデータセットが見つかりません: muniCode=${muniCode}, lod=${lod}`,
     )
   }
 
@@ -338,7 +339,7 @@ export async function getMuniAvailableLods(muniCode: string): Promise<Lod[]> {
  */
 export async function findBestTilesetUrl(
   muniCode: string,
-  requestedLod: Lod
+  requestedLod: Lod,
 ): Promise<{ url: string; actualLod: Lod }> {
   try {
     const url = await findTilesetUrl(muniCode, requestedLod)
@@ -353,9 +354,12 @@ export async function findBestTilesetUrl(
   }
 }
 
-export async function getAvailableLods(
-  bounds: { west: number; south: number; east: number; north: number }
-): Promise<Lod[]> {
+export async function getAvailableLods(bounds: {
+  west: number
+  south: number
+  east: number
+  north: number
+}): Promise<Lod[]> {
   const muniCodes = await resolveMuniCodes(bounds)
   const datasets = await fetchCatalogDatasets()
 

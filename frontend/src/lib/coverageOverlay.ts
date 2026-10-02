@@ -1,11 +1,4 @@
-import {
-  Viewer,
-  Color,
-  Rectangle,
-  PolygonHierarchy,
-  Cartesian3,
-  type Entity,
-} from 'cesium'
+import { Viewer, Color, Rectangle, PolygonHierarchy, Cartesian3, type Entity } from 'cesium'
 import {
   LOD_CATEGORY_STYLES,
   maxLodToCategory,
@@ -281,7 +274,10 @@ export async function createCoverageOverlay(
     const features = await fetchMunicipalityFeatures()
     return await buildMunicipalityOverlay(viewer, categories, features)
   } catch (err) {
-    console.warn('[CoverageOverlay] 市区町村GeoJSONの取得に失敗しました。都道府県近似で表示します:', err)
+    console.warn(
+      '[CoverageOverlay] 市区町村GeoJSONの取得に失敗しました。都道府県近似で表示します:',
+      err,
+    )
   }
   return buildPrefectureBBoxOverlay(viewer, categories)
 }
@@ -289,7 +285,7 @@ export async function createCoverageOverlay(
 async function buildMunicipalityOverlay(
   viewer: Viewer,
   categories: Map<string, LodCategory>,
-  features: GeoJsonFeature[]
+  features: GeoJsonFeature[],
 ): Promise<CoverageOverlayHandle> {
   const entities: Entity[] = []
   const specs: { outer: number[][]; inners: number[][][]; category: LodCategory }[] = []
@@ -322,7 +318,7 @@ async function buildMunicipalityOverlay(
         } = {
           hierarchy: new PolygonHierarchy(
             toCartesian3(spec.outer),
-            spec.inners.map((r) => new PolygonHierarchy(toCartesian3(r)))
+            spec.inners.map((r) => new PolygonHierarchy(toCartesian3(r))),
           ),
           // height: 0 を明示して地形クランプを無効化し、2Dモードでも確実に描画する
           height: 0,
@@ -344,7 +340,7 @@ async function buildMunicipalityOverlay(
 
 function buildPrefectureBBoxOverlay(
   viewer: Viewer,
-  categories: Map<string, LodCategory>
+  categories: Map<string, LodCategory>,
 ): CoverageOverlayHandle {
   const entities: Entity[] = []
   const prefCategories = new Map<string, LodCategory>()
@@ -369,7 +365,7 @@ function buildPrefectureBBoxOverlay(
             outline: true,
             outlineColor: Color.fromCssColorString(style.outline),
           },
-        })
+        }),
       )
     } catch {
       /* skip */
