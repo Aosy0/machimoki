@@ -61,6 +61,19 @@ const CLEAR_BUTTON_STYLE: React.CSSProperties = {
   lineHeight: 1,
 }
 
+const SEARCH_BUTTON_STYLE: React.CSSProperties = {
+  flexShrink: 0,
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  color: '#666',
+  padding: '2px 4px',
+  lineHeight: 1,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+}
+
 const POPUP_STYLE: React.CSSProperties = {
   borderTop: '1px solid #ddd',
   maxHeight: '240px',
@@ -371,6 +384,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
 
   const showDropdown = dropdownOpen && query.trim().length >= 2
   const bothEmpty = facilities.length === 0 && addresses.length === 0
+  const submitDisabled = query.trim().length < 2 || resultsLoading
   const sourceSuffix =
     resultSource === 'nationwide' ? '（全国）' : resultSource === 'fallback' ? '（OSM）' : ''
 
@@ -400,6 +414,39 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
             ×
           </button>
         )}
+        <button
+          type="button"
+          data-testid="facility-search-submit"
+          aria-label="検索"
+          title="検索"
+          disabled={submitDisabled}
+          onClick={() => runFullSearch(query)}
+          onMouseEnter={(e) => {
+            if (!submitDisabled) e.currentTarget.style.color = '#333'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#666'
+          }}
+          style={{
+            ...SEARCH_BUTTON_STYLE,
+            cursor: submitDisabled ? 'default' : 'pointer',
+            opacity: submitDisabled ? 0.4 : 1,
+          }}
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="7" cy="7" r="4.5" />
+            <line x1="10.5" y1="10.5" x2="14" y2="14" />
+          </svg>
+        </button>
       </div>
       {showDropdown && (
         <div data-testid="facility-search-dropdown" style={POPUP_STYLE}>

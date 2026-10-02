@@ -683,21 +683,6 @@ function App() {
               >
                 Shift + ドラッグ で範囲選択
               </div>
-              {selectionBounds && (
-                <div
-                  style={{
-                    background: 'var(--surface)',
-                    color: 'var(--text-dim)',
-                    padding: '4px 12px',
-                    borderRadius: '4px',
-                    fontSize: '10px',
-                    pointerEvents: 'none',
-                    backdropFilter: 'blur(4px)',
-                  }}
-                >
-                  選択後は矩形の辺・角をドラッグで調整
-                </div>
-              )}
               <button
                 onClick={() => setIsPickMode((prev) => !prev)}
                 style={{
