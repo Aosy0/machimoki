@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Marker } from 'maplibre-gl'
 import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl'
-import { suggestAll, searchFacilities, searchFallback, isPoiFallbackEnabled } from '../lib/poiSearch'
+import {
+  suggestAll,
+  searchFacilities,
+  searchFallback,
+  searchPrimary,
+  isPoiFallbackEnabled,
+} from '../lib/poiSearch'
 import type { PoiHit, PoiBounds } from '../lib/poiSearch'
 
 export interface FacilitySearchBoxProps {
@@ -329,26 +335,32 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
         setResults([])
         return
       }
-      searchFacilities(text, bounds, 50)
-        .then((hits) => {
-          if (hits.length > 0) return showResults(hits, 'view')
-          // 表示範囲内に0件のときのみ全国検索へフォールバック
-          return searchFacilities(text, null, 50).then((allHits) => {
-            if (allHits.length > 0) return showResults(allHits, 'nationwide')
-            // 全国でも0件のときのみPhoton（OSM）へフォールバック
-            if (!isPoiFallbackEnabled) return showResults([], 'view')
-            const c = mapRef.current.getCenter()
-            return searchFallback(text, { lat: c.lat, lng: c.lng }, 20).then((fbHits) => {
-              showResults(fbHits, 'fallback')
-            })
-          })
-        })
-        .catch(() => {
-          setResultsLoading(false)
-          setResultsError(true)
-          setResultSource('view')
-          setResults([])
-        })
+      const run = async () => {
+        // 1. Photon（主プロバイダ）: 代表的な場所の座標精度を優先
+        if (isPoiFallbackEnabled) {
+          const primaryHits = await searchPrimary(text, bounds, 50).catch(() => [] as PoiHit[])
+          if (primaryHits.length > 0) return showResults(primaryHits, 'fallback')
+        }
+        // 2. OpenPOI 表示範囲内（Photon0件/未設定時）
+        const viewHits = await searchFacilities(text, bounds, 50)
+        if (viewHits.length > 0) return showResults(viewHits, 'view')
+        // 3. OpenPOI 全国
+        const allHits = await searchFacilities(text, null, 50)
+        if (allHits.length > 0) return showResults(allHits, 'nationwide')
+        // 4. Photon（center無しで再試行）
+        if (isPoiFallbackEnabled) {
+          const fbHits = await searchFallback(text, null, 20)
+          return showResults(fbHits, 'fallback')
+        }
+        showResults([], 'view')
+      }
+
+      run().catch(() => {
+        setResultsLoading(false)
+        setResultsError(true)
+        setResultSource('view')
+        setResults([])
+      })
     },
     [showResults],
   )
@@ -526,7 +538,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
                 <div style={META_STYLE}>表示範囲内に0件のため、全国から表示しています</div>
               )}
               {resultSource === 'fallback' && (
-                <div style={META_STYLE}>OpenPOIに該当がないため、OpenStreetMapデータから表示しています</div>
+                <div style={META_STYLE}>OpenStreetMapデータから表示しています</div>
               )}
               {results.map((hit) => (
                 <button

@@ -2,7 +2,8 @@
  * 2Dマップの施設・住所検索用データ取得モジュール。
  *
  * 出典:
- * - OpenPOI API (https://api.openpoiapi.com): 施設のサジェスト/検索。APIキー不要。
+ * - Photon (VITE_POI_FALLBACK_URL, 自前ホストのOSMジオコーダ): 設定時は施設検索の主プロバイダ。
+ * - OpenPOI API (https://api.openpoiapi.com): Photon0件/未設定時のフォールバック。APIキー不要。
  * - 国土地理院 地名検索API (https://msearch.gsi.go.jp/address-search/AddressSearch): 住所検索。
  *
  * catalogApi.ts と同じ流儀（素fetch・AbortSignal.timeout・Promiseキャッシュ）で実装する。
@@ -13,11 +14,11 @@ const OPENPOI_SUGGEST_URL = `${OPENPOI_BASE}/v1/suggest`
 const OPENPOI_SEARCH_URL = `${OPENPOI_BASE}/v1/search`
 const GSI_ADDRESS_SEARCH_URL = 'https://msearch.gsi.go.jp/address-search/AddressSearch'
 const FETCH_TIMEOUT_MS = 8000
-// OpenPOI/GSIで0件だったときのフォールバック（自前ホストのPhoton）。未設定なら無効。
+// 自前ホストのPhoton（OSM）。設定時は施設検索の主プロバイダ、未設定ならOpenPOI主で動作する。
 // import.meta.env はVite実行時のみ定義されるため、node（テスト）実行に備え任意チェーンにする。
 const PHOTON_BASE = (import.meta.env?.VITE_POI_FALLBACK_URL ?? '').replace(/\/+$/, '')
 
-/** Photonフォールバックが設定されているか。 */
+/** Photon（主プロバイダ）が設定されているか。 */
 export const isPoiFallbackEnabled = PHOTON_BASE !== ''
 
 export type PoiKind = 'facility' | 'address'
@@ -108,6 +109,9 @@ const addressCache = new Map<string, PoiHit[]>()
 const addressPending = new Map<string, Promise<PoiHit[]>>()
 const fallbackCache = new Map<string, PoiHit[]>()
 const fallbackPending = new Map<string, Promise<PoiHit[]>>()
+// Photonを主プロバイダとして使う場合のキャッシュ（suggest/searchでlimitが異なるためキーに含める）
+const primaryCache = new Map<string, PoiHit[]>()
+const primaryPending = new Map<string, Promise<PoiHit[]>>()
 
 /** 全キャッシュ（結果・実行中Promise）をクリアする。 */
 export function clearPoiSearchCache(): void {
@@ -119,6 +123,8 @@ export function clearPoiSearchCache(): void {
   addressPending.clear()
   fallbackCache.clear()
   fallbackPending.clear()
+  primaryCache.clear()
+  primaryPending.clear()
 }
 
 /** タイムアウトを共通メッセージに変換しつつJSONを取得する。 */
@@ -164,6 +170,11 @@ async function cachedFetch<T>(
 /** bboxを `west,south,east,north` 形式にする。 */
 function formatBbox(bounds: PoiBounds): string {
   return [bounds.west, bounds.south, bounds.east, bounds.north].map((n) => String(n)).join(',')
+}
+
+/** bboxの中心を返す（Photonのcenterバイアス用）。 */
+function boundsCenter(bounds: PoiBounds): PoiCenter {
+  return { lat: (bounds.north + bounds.south) / 2, lng: (bounds.east + bounds.west) / 2 }
 }
 
 /** クエリに対する名称一致の強さ。小さいほど上位。 */
@@ -366,7 +377,46 @@ export async function searchAddress(query: string): Promise<PoiHit[]> {
   })
 }
 
-/** Photon（OSM）フォールバック検索。未設定時は空配列。 */
+/** Photonへ問い合わせてPoiHit列に変換する（キャッシュなし）。 */
+async function fetchPhotonHits(
+  q: string,
+  center: PoiCenter | null,
+  limit: number,
+): Promise<PoiHit[]> {
+  const centerParam = center ? `&lat=${center.lat}&lon=${center.lng}` : ''
+  // lang指定はPhotonの対応言語（default/de/en/fr）外だと400になるため指定しない（default=現地語）
+  const url = `${PHOTON_BASE}/api?q=${encodeURIComponent(q)}&limit=${limit}${centerParam}`
+  const data = await fetchJson<PhotonResponse>(url)
+  const features = Array.isArray(data.features) ? data.features : []
+
+  const hits: PoiHit[] = []
+  for (const feature of features) {
+    const props = feature.properties
+    const name = props?.name ?? ''
+    if (name === '') continue
+    const coords = feature.geometry?.coordinates
+    if (!Array.isArray(coords) || coords.length < 2) continue
+    // 日本語住所想定で区切り文字なし
+    const address = [props?.state, props?.city, props?.district, props?.street, props?.housenumber]
+      .filter(Boolean)
+      .join('')
+    const hit = makeHit(
+      'photon',
+      'facility',
+      name,
+      address,
+      undefined,
+      coords[1],
+      coords[0],
+      ['ODbL'],
+      ['© OpenStreetMap contributors'],
+    )
+    if (hit) hits.push(hit)
+  }
+  return hits
+}
+
+/** Photon（OSM）フォールバック検索。未設定時は空配列。center無しは全球検索。 */
 export async function searchFallback(
   query: string,
   center: PoiCenter | null,
@@ -376,42 +426,54 @@ export async function searchFallback(
   if (!isPoiFallbackEnabled || q.length < 2) return []
   const key = `${q}|${center?.lat ?? ''},${center?.lng ?? ''}`
 
-  return cachedFetch(fallbackCache, fallbackPending, key, async () => {
-    const centerParam = center ? `&lat=${center.lat}&lon=${center.lng}` : ''
-    // lang指定はPhotonの対応言語（default/de/en/fr）外だと400になるため指定しない（default=現地語）
-    const url = `${PHOTON_BASE}/api?q=${encodeURIComponent(q)}&limit=${limit}${centerParam}`
-    const data = await fetchJson<PhotonResponse>(url)
-    const features = Array.isArray(data.features) ? data.features : []
-
-    const hits: PoiHit[] = []
-    for (const feature of features) {
-      const props = feature.properties
-      const name = props?.name ?? ''
-      if (name === '') continue
-      const coords = feature.geometry?.coordinates
-      if (!Array.isArray(coords) || coords.length < 2) continue
-      // 日本語住所想定で区切り文字なし
-      const address = [props?.state, props?.city, props?.district, props?.street, props?.housenumber]
-        .filter(Boolean)
-        .join('')
-      const hit = makeHit(
-        'photon',
-        'facility',
-        name,
-        address,
-        undefined,
-        coords[1],
-        coords[0],
-        ['ODbL'],
-        ['© OpenStreetMap contributors'],
-      )
-      if (hit) hits.push(hit)
-    }
-    return hits
-  })
+  return cachedFetch(fallbackCache, fallbackPending, key, () => fetchPhotonHits(q, center, limit))
 }
 
-/** 施設サジェストと住所検索を並行実行し、失敗した側は空配列で返す。 */
+/**
+ * Photonを主プロバイダとして検索する（一覧用・既定limit=50）。
+ * boundsがあれば中心をcenterバイアスに使う。未設定時は空配列。
+ */
+export async function searchPrimary(
+  query: string,
+  bounds: PoiBounds | null,
+  limit = 50,
+): Promise<PoiHit[]> {
+  const q = query.trim()
+  if (!isPoiFallbackEnabled || q.length < 2) return []
+  return cachedPhotonPrimary(q, bounds ? boundsCenter(bounds) : null, limit)
+}
+
+/**
+ * Photonを主プロバイダとしてサジェストする（既定limit=8）。
+ * categoryを持たないため名称一致ソートのみ適用する。
+ */
+export async function suggestPrimary(
+  query: string,
+  bounds: PoiBounds,
+  limit = 8,
+): Promise<PoiHit[]> {
+  const q = query.trim()
+  if (!isPoiFallbackEnabled || q.length < 2) return []
+  return cachedPhotonPrimary(q, boundsCenter(bounds), limit)
+}
+
+/** Photon主検索のキャッシュ付き実行。名称一致で代表的な場所を上位に寄せる。 */
+function cachedPhotonPrimary(
+  q: string,
+  center: PoiCenter | null,
+  limit: number,
+): Promise<PoiHit[]> {
+  const key = `${q}|${center?.lat ?? ''},${center?.lng ?? ''}|${limit}`
+  return cachedFetch(primaryCache, primaryPending, key, async () =>
+    sortOpenPoiHits(await fetchPhotonHits(q, center, limit), q),
+  )
+}
+
+/**
+ * 施設サジェストと住所検索を並行実行する。
+ * Photon有効時はPhotonサジェストを主とし、0件のときだけOpenPOIサジェストへ回す。
+ * 失敗した側は空配列にして部分結果を返す。
+ */
 export async function suggestAll(
   query: string,
   bounds: PoiBounds,
@@ -420,7 +482,7 @@ export async function suggestAll(
   if (q.length < 2) return { facilities: [], addresses: [] }
 
   const [facilities, addresses] = await Promise.allSettled([
-    suggestFacilities(q, bounds),
+    resolveSuggestFacilities(q, bounds),
     searchAddress(q),
   ])
 
@@ -428,4 +490,13 @@ export async function suggestAll(
     facilities: facilities.status === 'fulfilled' ? facilities.value : [],
     addresses: addresses.status === 'fulfilled' ? addresses.value : [],
   }
+}
+
+/** Photon主→OpenPOIフォールバックで施設サジェストを解決する。 */
+async function resolveSuggestFacilities(q: string, bounds: PoiBounds): Promise<PoiHit[]> {
+  if (isPoiFallbackEnabled) {
+    const primary = await suggestPrimary(q, bounds, 8).catch(() => [] as PoiHit[])
+    if (primary.length > 0) return primary
+  }
+  return suggestFacilities(q, bounds, 5)
 }
