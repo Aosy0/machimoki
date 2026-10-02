@@ -82,8 +82,8 @@ const SEARCH_BUTTON_STYLE: React.CSSProperties = {
 
 const POPUP_STYLE: React.CSSProperties = {
   borderTop: '1px solid #ddd',
-  maxHeight: '240px',
   overflowY: 'auto',
+  overscrollBehavior: 'contain',
   background: 'rgba(255, 255, 255, 0.98)',
   borderRadius: '0 0 4px 4px',
 }
@@ -151,8 +151,11 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   const [resultsLoading, setResultsLoading] = useState(false)
   const [resultsError, setResultsError] = useState(false)
   const [resultSource, setResultSource] = useState<'view' | 'nationwide' | 'fallback'>('view')
+  const [maxPopupHeight, setMaxPopupHeight] = useState(240)
 
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const inputRowRef = useRef<HTMLDivElement | null>(null)
+  const rafRef = useRef<number | null>(null)
   const markersRef = useRef<MapLibreMarker[]>([])
   const debounceRef = useRef<number | null>(null)
   const requestIdRef = useRef(0)
@@ -169,6 +172,56 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
     }
     markersRef.current = []
   }, [])
+
+  // ポップアップ（候補/結果）の最大高さを、他のUIと重ならない範囲でギリギリまで伸ばす。
+  // 下限は実測で決める: パネル列と横方向に重なり、ポップアップより下にある要素のうち
+  // 最も上のものの上端−8px。見つからなければ画面下端−8pxが絶対下限。
+  // 明示の上限クランプはしない（availableがそのまま上限）。最小120pxのみ保護。
+  const recomputeMaxPopupHeight = useCallback(() => {
+    const root = rootRef.current
+    if (!root) return
+    let popupTop: number
+    let popupLeft: number
+    let popupRight: number
+    try {
+      const row = inputRowRef.current
+      popupTop = (row ?? root).getBoundingClientRect().bottom
+      const rootRect = root.getBoundingClientRect()
+      popupLeft = rootRect.left
+      popupRight = rootRect.right
+    } catch {
+      return
+    }
+    if (!Number.isFinite(popupTop)) return
+    let lower = window.innerHeight - 8
+    try {
+      // 候補数は数十件程度に収まる想定（ボタン＋testid付き要素に限定）
+      const candidates = document.querySelectorAll('button, [data-testid]')
+      for (const el of candidates) {
+        // 自分のパネル内（送信・クリア・結果を閉じる等）は除外
+        if (root.contains(el)) continue
+        if (!(el instanceof HTMLElement)) continue
+        const rect = el.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) continue
+        // パネル列と横方向に重ならないものは無視（右下・右上パネル等）
+        if (rect.right <= popupLeft || rect.left >= popupRight) continue
+        if (!Number.isFinite(rect.top) || rect.top <= popupTop) continue
+        lower = Math.min(lower, rect.top - 8)
+      }
+    } catch {
+      // 実測に失敗した場合は画面下端基準のフォールバックを使う
+    }
+    setMaxPopupHeight(Math.max(120, lower - popupTop))
+  }, [])
+
+  // 連続resize時の過剰計算を防ぐための rAF スロットル
+  const scheduleRecompute = useCallback(() => {
+    if (rafRef.current !== null) return
+    rafRef.current = window.requestAnimationFrame(() => {
+      rafRef.current = null
+      recomputeMaxPopupHeight()
+    })
+  }, [recomputeMaxPopupHeight])
 
   // アンマウント時に全マーカー破棄
   useEffect(() => {
@@ -397,12 +450,46 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   const showDropdown = dropdownOpen && query.trim().length >= 2
   const bothEmpty = facilities.length === 0 && addresses.length === 0
   const submitDisabled = query.trim().length < 2 || resultsLoading
+  const popupVisible =
+    showDropdown || results !== null || resultsLoading || resultsError
+
+  // ポップアップ表示中は上限を実測し、各種変化に追随する。
+  // - 表示開始・件数変化（deps）: 即時再計算
+  // - window resize / visualViewport resize: rAFスロットルで再計算
+  // - map2d-container のサイズ変化（タブ切替・レイアウト変化）: ResizeObserverで再計算
+  useEffect(() => {
+    if (!popupVisible) return
+    recomputeMaxPopupHeight()
+    window.addEventListener('resize', scheduleRecompute)
+    const vv = window.visualViewport
+    vv?.addEventListener('resize', scheduleRecompute)
+    let observer: ResizeObserver | null = null
+    try {
+      const target =
+        document.querySelector('[data-testid="map2d-container"]') ?? rootRef.current
+      if (target && typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(() => scheduleRecompute())
+        observer.observe(target)
+      }
+    } catch {
+      // 監視できなくても resize 追随は維持する
+    }
+    return () => {
+      window.removeEventListener('resize', scheduleRecompute)
+      vv?.removeEventListener('resize', scheduleRecompute)
+      observer?.disconnect()
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+    }
+  }, [popupVisible, facilities, addresses, results, recomputeMaxPopupHeight, scheduleRecompute])
   const sourceSuffix =
     resultSource === 'nationwide' ? '（全国）' : resultSource === 'fallback' ? '（OSM）' : ''
 
   return (
     <div ref={rootRef} style={ROOT_STYLE}>
-      <div style={INPUT_ROW_STYLE}>
+      <div ref={inputRowRef} style={INPUT_ROW_STYLE}>
         <input
           data-testid="facility-search-input"
           aria-label="施設・住所を検索"
@@ -461,7 +548,10 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
         </button>
       </div>
       {showDropdown && (
-        <div data-testid="facility-search-dropdown" style={POPUP_STYLE}>
+        <div
+          data-testid="facility-search-dropdown"
+          style={{ ...POPUP_STYLE, maxHeight: maxPopupHeight }}
+        >
           {suggestLoading && <div style={META_STYLE}>検索中…</div>}
           {!suggestLoading && suggestError && <div style={ERROR_STYLE}>検索に失敗しました</div>}
           {!suggestLoading && !suggestError && bothEmpty && (
@@ -511,7 +601,10 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
         </div>
       )}
       {(results !== null || resultsLoading || resultsError) && (
-        <div data-testid="facility-search-results" style={POPUP_STYLE}>
+        <div
+          data-testid="facility-search-results"
+          style={{ ...POPUP_STYLE, maxHeight: maxPopupHeight }}
+        >
           <div style={RESULTS_HEADER_STYLE}>
             <span>
               {resultsLoading
