@@ -14,7 +14,8 @@ const OPENPOI_SEARCH_URL = `${OPENPOI_BASE}/v1/search`
 const GSI_ADDRESS_SEARCH_URL = 'https://msearch.gsi.go.jp/address-search/AddressSearch'
 const FETCH_TIMEOUT_MS = 8000
 // OpenPOI/GSIで0件だったときのフォールバック（自前ホストのPhoton）。未設定なら無効。
-const PHOTON_BASE = (import.meta.env.VITE_POI_FALLBACK_URL ?? '').replace(/\/+$/, '')
+// import.meta.env はVite実行時のみ定義されるため、node（テスト）実行に備え任意チェーンにする。
+const PHOTON_BASE = (import.meta.env?.VITE_POI_FALLBACK_URL ?? '').replace(/\/+$/, '')
 
 /** Photonフォールバックが設定されているか。 */
 export const isPoiFallbackEnabled = PHOTON_BASE !== ''
@@ -41,6 +42,7 @@ export interface PoiHit {
   lat: number
   lng: number
   source: 'openpoi' | 'gsi' | 'photon'
+  category?: string
   licenses?: string[]
   attributions?: string[]
 }
@@ -50,6 +52,7 @@ interface OpenPoiSuggestion {
   address?: string
   lat?: number | string
   lng?: number | string
+  category?: string
 }
 
 interface OpenPoiSuggestResponse {
@@ -64,6 +67,7 @@ interface OpenPoiResult {
   address?: string
   lat?: number | string
   lng?: number | string
+  category?: string
   licenses?: string[]
   attributions?: string[]
 }
@@ -162,12 +166,70 @@ function formatBbox(bounds: PoiBounds): string {
   return [bounds.west, bounds.south, bounds.east, bounds.north].map((n) => String(n)).join(',')
 }
 
+/** クエリに対する名称一致の強さ。小さいほど上位。 */
+export function nameMatchRank(name: string, query: string): number {
+  const n = name.trim()
+  const q = query.trim()
+  if (n === q) return 0 // 完全一致
+  if (n.startsWith(q)) return 1 // 前方一致
+  if (n.includes(q)) return 2 // 部分一致
+  return 3 // その他（住所ヒット等）
+}
+
+/**
+ * カテゴリの代表度ランク。小さいほど代表的。
+ * unknown/未設定は中立(1)に置き、nameMatchRank が効くようにする。
+ */
+export function categoryRank(category: string | undefined): number {
+  if (!category || category === 'unknown') return 1 // 中立
+  // 代表的な公共・交通・ランドマーク系を上位に
+  if (['transit', 'railway', 'landmark', 'government', 'education', 'medical', 'park'].includes(category))
+    return 0
+  // 地名・地域系
+  if (['locality', 'place', 'neighborhood', 'quarter'].includes(category)) return 0
+  // 商業・宿泊・観光（施設としては代表度が下がる）
+  if (
+    [
+      'tourism',
+      'lodging',
+      'restaurant',
+      'cafe',
+      'bakery',
+      'grocery',
+      'retail_other',
+      'commercial',
+      'service_other',
+    ].includes(category)
+  )
+    return 2
+  return 1
+}
+
+/**
+ * OpenPOI結果を「代表的な施設が上位」になるよう並べ替える。
+ * 名称一致を最優先にし、同順位内でカテゴリ代表度→名前の短さで整える。
+ * Array.prototype.sort は安定なので、同点は元の順序を維持する。
+ *
+ * 注: カテゴリを名称一致より先に評価すると、完全一致の「東京駅」(service_other)
+ * が unknown の前方一致候補に負けてしまうため、名称一致を主キーにする。
+ */
+export function sortOpenPoiHits(hits: PoiHit[], query: string): PoiHit[] {
+  return hits.sort((a, b) => {
+    const match = nameMatchRank(a.name, query) - nameMatchRank(b.name, query)
+    if (match !== 0) return match
+    const cat = categoryRank(a.category) - categoryRank(b.category)
+    if (cat !== 0) return cat
+    return a.name.trim().length - b.name.trim().length
+  })
+}
+
 /** 座標を数値化し、有効な場合のみPoiHitを生成する（不正座標はnull）。 */
 function makeHit(
   source: PoiHit['source'],
   kind: PoiKind,
   name: string,
   address: string,
+  category: string | undefined,
   lat: unknown,
   lng: unknown,
   licenses?: string[],
@@ -184,6 +246,7 @@ function makeHit(
     lat: nLat,
     lng: nLng,
     source,
+    category,
     licenses,
     attributions,
   }
@@ -203,13 +266,14 @@ export async function suggestFacilities(
     const url = `${OPENPOI_SUGGEST_URL}?q=${encodeURIComponent(q)}&bbox=${formatBbox(bounds)}&limit=${limit}&fields=minimal`
     const data = await fetchJson<OpenPoiSuggestResponse>(url)
     const list = Array.isArray(data.suggestions) ? data.suggestions : []
-    return list
+    const hits = list
       .map((s) =>
         makeHit(
           'openpoi',
           'facility',
           s.name ?? '',
           s.address ?? '',
+          s.category,
           s.lat,
           s.lng,
           data.licenses,
@@ -217,6 +281,8 @@ export async function suggestFacilities(
         ),
       )
       .filter((hit): hit is PoiHit => hit !== null)
+    // 代表的な施設が上位に来るよう並べ替える（unknownは中立）
+    return sortOpenPoiHits(hits, q)
   })
 }
 
@@ -235,13 +301,14 @@ export async function searchFacilities(
     const url = `${OPENPOI_SEARCH_URL}?q=${encodeURIComponent(q)}${bboxParam}&limit=${limit}`
     const data = await fetchJson<OpenPoiSearchResponse>(url)
     const list = Array.isArray(data.results) ? data.results : []
-    return list
+    const hits = list
       .map((r) =>
         makeHit(
           'openpoi',
           'facility',
           r.name ?? '',
           r.address ?? '',
+          r.category,
           r.lat,
           r.lng,
           r.licenses,
@@ -249,7 +316,26 @@ export async function searchFacilities(
         ),
       )
       .filter((hit): hit is PoiHit => hit !== null)
+    // 代表的な施設が上位に来るよう並べ替える（unknownは中立）
+    return sortOpenPoiHits(hits, q)
   })
+}
+
+/** 住所・施設名の表記揺れ（全角/半角・空白）を吸収する正規化。 */
+function normalizeAddressText(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/g, '')
+}
+
+/**
+ * GSI住所検索のtitleをクエリ包含でフィルタする。
+ * 「東」だけ一致する無関係な地域を除く一方、広い語での取りこぼしを救済するため、
+ * フィルタ結果が0件のときはフィルタ前の配列をそのまま返す（安全網）。
+ */
+export function filterAddressTitles(titles: string[], query: string): string[] {
+  const q = normalizeAddressText(query.trim())
+  if (q === '') return titles
+  const matched = titles.filter((title) => normalizeAddressText(title).includes(q))
+  return matched.length > 0 ? matched : titles
 }
 
 /** 国土地理院の地名検索APIで住所を検索する。 */
@@ -262,16 +348,21 @@ export async function searchAddress(query: string): Promise<PoiHit[]> {
     const data = await fetchJson<GsiFeature[]>(url)
     if (!Array.isArray(data)) return []
 
-    const hits: PoiHit[] = []
+    const entries: { title: string; hit: PoiHit }[] = []
     for (const feature of data) {
       const coords = feature.geometry?.coordinates
       if (!Array.isArray(coords) || coords.length < 2) continue
+      const title = feature.properties?.title ?? ''
       // coordinates は [lng, lat] の順。title自体が住所なのでaddressは空にする。
-      const hit = makeHit('gsi', 'address', feature.properties?.title ?? '', '', coords[1], coords[0])
-      if (hit) hits.push(hit)
+      const hit = makeHit('gsi', 'address', title, '', undefined, coords[1], coords[0])
+      if (hit) entries.push({ title, hit })
     }
-    // GSIは部分一致で大量に返るため、ドロップダウンのノイズを抑えて10件に絞る
-    return hits.slice(0, 10)
+    // クエリ包含で無関係な地域を除外。0件時は従来どおり全件にフォールバック。
+    const kept = new Set(filterAddressTitles(entries.map((e) => e.title), q))
+    return entries
+      .filter((e) => kept.has(e.title))
+      .map((e) => e.hit)
+      .slice(0, 10)
   })
 }
 
@@ -303,9 +394,17 @@ export async function searchFallback(
       const address = [props?.state, props?.city, props?.district, props?.street, props?.housenumber]
         .filter(Boolean)
         .join('')
-      const hit = makeHit('photon', 'facility', name, address, coords[1], coords[0], ['ODbL'], [
-        '© OpenStreetMap contributors',
-      ])
+      const hit = makeHit(
+        'photon',
+        'facility',
+        name,
+        address,
+        undefined,
+        coords[1],
+        coords[0],
+        ['ODbL'],
+        ['© OpenStreetMap contributors'],
+      )
       if (hit) hits.push(hit)
     }
     return hits
