@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Map as MapLibreMap, setWorkerUrl } from 'maplibre-gl'
 import FacilitySearchBox from './FacilitySearchBox'
+import { isPoiFallbackEnabled } from '../lib/poiSearch'
 import 'maplibre-gl/dist/maplibre-gl.css'
 // Vite用worker設定（削除するとworker 404で地図が白紙になるため必須）。
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
@@ -333,6 +334,14 @@ export default function Map2D({
         <a href="https://openpoiapi.com/attribution.html" target="_blank" rel="noreferrer">
           出典: OpenPOI API
         </a>
+        {isPoiFallbackEnabled && (
+          <>
+            {' / '}
+            <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+              © OpenStreetMap contributors
+            </a>
+          </>
+        )}
       </div>
       {onSelectCurrentBounds && (
         <button

@@ -13,6 +13,11 @@ const OPENPOI_SUGGEST_URL = `${OPENPOI_BASE}/v1/suggest`
 const OPENPOI_SEARCH_URL = `${OPENPOI_BASE}/v1/search`
 const GSI_ADDRESS_SEARCH_URL = 'https://msearch.gsi.go.jp/address-search/AddressSearch'
 const FETCH_TIMEOUT_MS = 8000
+// OpenPOI/GSIで0件だったときのフォールバック（自前ホストのPhoton）。未設定なら無効。
+const PHOTON_BASE = (import.meta.env.VITE_POI_FALLBACK_URL ?? '').replace(/\/+$/, '')
+
+/** Photonフォールバックが設定されているか。 */
+export const isPoiFallbackEnabled = PHOTON_BASE !== ''
 
 export type PoiKind = 'facility' | 'address'
 
@@ -23,6 +28,11 @@ export interface PoiBounds {
   north: number
 }
 
+export interface PoiCenter {
+  lat: number
+  lng: number
+}
+
 export interface PoiHit {
   id: string
   kind: PoiKind
@@ -30,7 +40,7 @@ export interface PoiHit {
   address: string
   lat: number
   lng: number
-  source: 'openpoi' | 'gsi'
+  source: 'openpoi' | 'gsi' | 'photon'
   licenses?: string[]
   attributions?: string[]
 }
@@ -67,12 +77,33 @@ interface GsiFeature {
   properties?: { title?: string }
 }
 
+interface PhotonProperties {
+  name?: string
+  street?: string
+  housenumber?: string
+  postcode?: string
+  city?: string
+  district?: string
+  state?: string
+}
+
+interface PhotonFeature {
+  geometry?: { coordinates?: unknown }
+  properties?: PhotonProperties
+}
+
+interface PhotonResponse {
+  features?: PhotonFeature[]
+}
+
 const suggestCache = new Map<string, PoiHit[]>()
 const suggestPending = new Map<string, Promise<PoiHit[]>>()
 const searchCache = new Map<string, PoiHit[]>()
 const searchPending = new Map<string, Promise<PoiHit[]>>()
 const addressCache = new Map<string, PoiHit[]>()
 const addressPending = new Map<string, Promise<PoiHit[]>>()
+const fallbackCache = new Map<string, PoiHit[]>()
+const fallbackPending = new Map<string, Promise<PoiHit[]>>()
 
 /** 全キャッシュ（結果・実行中Promise）をクリアする。 */
 export function clearPoiSearchCache(): void {
@@ -82,6 +113,8 @@ export function clearPoiSearchCache(): void {
   searchPending.clear()
   addressCache.clear()
   addressPending.clear()
+  fallbackCache.clear()
+  fallbackPending.clear()
 }
 
 /** タイムアウトを共通メッセージに変換しつつJSONを取得する。 */
@@ -187,18 +220,19 @@ export async function suggestFacilities(
   })
 }
 
-/** OpenPOI施設検索。既定limit=50。 */
+/** OpenPOI施設検索。既定limit=50。boundsがnullの場合は全国検索（bboxなし）。 */
 export async function searchFacilities(
   query: string,
-  bounds: PoiBounds,
+  bounds: PoiBounds | null,
   limit = 50,
 ): Promise<PoiHit[]> {
   const q = query.trim()
   if (q.length < 2) return []
-  const key = `${q}|${formatBbox(bounds)}`
+  const key = bounds ? `${q}|${formatBbox(bounds)}` : `${q}|all`
+  const bboxParam = bounds ? `&bbox=${formatBbox(bounds)}` : ''
 
   return cachedFetch(searchCache, searchPending, key, async () => {
-    const url = `${OPENPOI_SEARCH_URL}?q=${encodeURIComponent(q)}&bbox=${formatBbox(bounds)}&limit=${limit}`
+    const url = `${OPENPOI_SEARCH_URL}?q=${encodeURIComponent(q)}${bboxParam}&limit=${limit}`
     const data = await fetchJson<OpenPoiSearchResponse>(url)
     const list = Array.isArray(data.results) ? data.results : []
     return list
@@ -234,6 +268,44 @@ export async function searchAddress(query: string): Promise<PoiHit[]> {
       if (!Array.isArray(coords) || coords.length < 2) continue
       // coordinates は [lng, lat] の順。title自体が住所なのでaddressは空にする。
       const hit = makeHit('gsi', 'address', feature.properties?.title ?? '', '', coords[1], coords[0])
+      if (hit) hits.push(hit)
+    }
+    // GSIは部分一致で大量に返るため、ドロップダウンのノイズを抑えて10件に絞る
+    return hits.slice(0, 10)
+  })
+}
+
+/** Photon（OSM）フォールバック検索。未設定時は空配列。 */
+export async function searchFallback(
+  query: string,
+  center: PoiCenter | null,
+  limit = 20,
+): Promise<PoiHit[]> {
+  const q = query.trim()
+  if (!isPoiFallbackEnabled || q.length < 2) return []
+  const key = `${q}|${center?.lat ?? ''},${center?.lng ?? ''}`
+
+  return cachedFetch(fallbackCache, fallbackPending, key, async () => {
+    const centerParam = center ? `&lat=${center.lat}&lon=${center.lng}` : ''
+    // lang指定はPhotonの対応言語（default/de/en/fr）外だと400になるため指定しない（default=現地語）
+    const url = `${PHOTON_BASE}/api?q=${encodeURIComponent(q)}&limit=${limit}${centerParam}`
+    const data = await fetchJson<PhotonResponse>(url)
+    const features = Array.isArray(data.features) ? data.features : []
+
+    const hits: PoiHit[] = []
+    for (const feature of features) {
+      const props = feature.properties
+      const name = props?.name ?? ''
+      if (name === '') continue
+      const coords = feature.geometry?.coordinates
+      if (!Array.isArray(coords) || coords.length < 2) continue
+      // 日本語住所想定で区切り文字なし
+      const address = [props?.state, props?.city, props?.district, props?.street, props?.housenumber]
+        .filter(Boolean)
+        .join('')
+      const hit = makeHit('photon', 'facility', name, address, coords[1], coords[0], ['ODbL'], [
+        '© OpenStreetMap contributors',
+      ])
       if (hit) hits.push(hit)
     }
     return hits

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Marker } from 'maplibre-gl'
 import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl'
-import { suggestAll, searchFacilities } from '../lib/poiSearch'
+import { suggestAll, searchFacilities, searchFallback, isPoiFallbackEnabled } from '../lib/poiSearch'
 import type { PoiHit, PoiBounds } from '../lib/poiSearch'
 
 export interface FacilitySearchBoxProps {
@@ -131,6 +131,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   const [results, setResults] = useState<PoiHit[] | null>(null)
   const [resultsLoading, setResultsLoading] = useState(false)
   const [resultsError, setResultsError] = useState(false)
+  const [resultSource, setResultSource] = useState<'view' | 'nationwide' | 'fallback'>('view')
 
   const rootRef = useRef<HTMLDivElement | null>(null)
   const markersRef = useRef<MapLibreMarker[]>([])
@@ -275,12 +276,36 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
     }
   }, [])
 
+  const showResults = useCallback(
+    (hits: PoiHit[], source: 'view' | 'nationwide' | 'fallback') => {
+      const limited = hits.slice(0, 50)
+      setResults(limited)
+      setResultSource(source)
+      setResultsLoading(false)
+      clearMarkers()
+      const created: MapLibreMarker[] = []
+      for (const hit of limited) {
+        try {
+          const marker = new Marker({ color: '#e11d48' })
+            .setLngLat([hit.lng, hit.lat])
+            .addTo(mapRef.current)
+          created.push(marker)
+        } catch {
+          // 個別マーカー失敗は無視
+        }
+      }
+      markersRef.current = created
+    },
+    [clearMarkers],
+  )
+
   const runFullSearch = useCallback(
     (q: string) => {
       const text = q.trim()
       if (text.length < 2) return
       setResultsLoading(true)
       setResultsError(false)
+      setResultSource('view')
       setDropdownOpen(false)
       let bounds: PoiBounds
       try {
@@ -293,30 +318,26 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
       }
       searchFacilities(text, bounds, 50)
         .then((hits) => {
-          const limited = hits.slice(0, 50)
-          setResults(limited)
-          setResultsLoading(false)
-          clearMarkers()
-          const created: MapLibreMarker[] = []
-          for (const hit of limited) {
-            try {
-              const marker = new Marker({ color: '#e11d48' })
-                .setLngLat([hit.lng, hit.lat])
-                .addTo(mapRef.current)
-              created.push(marker)
-            } catch {
-              // 個別マーカー失敗は無視
-            }
-          }
-          markersRef.current = created
+          if (hits.length > 0) return showResults(hits, 'view')
+          // 表示範囲内に0件のときのみ全国検索へフォールバック
+          return searchFacilities(text, null, 50).then((allHits) => {
+            if (allHits.length > 0) return showResults(allHits, 'nationwide')
+            // 全国でも0件のときのみPhoton（OSM）へフォールバック
+            if (!isPoiFallbackEnabled) return showResults([], 'view')
+            const c = mapRef.current.getCenter()
+            return searchFallback(text, { lat: c.lat, lng: c.lng }, 20).then((fbHits) => {
+              showResults(fbHits, 'fallback')
+            })
+          })
         })
         .catch(() => {
           setResultsLoading(false)
           setResultsError(true)
+          setResultSource('view')
           setResults([])
         })
     },
-    [clearMarkers],
+    [showResults],
   )
 
   const handleKeyDown = useCallback(
@@ -341,6 +362,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
     setDropdownOpen(false)
     setResults(null)
     setResultsError(false)
+    setResultSource('view')
     if (debounceRef.current !== null) {
       window.clearTimeout(debounceRef.current)
       debounceRef.current = null
@@ -349,6 +371,8 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
 
   const showDropdown = dropdownOpen && query.trim().length >= 2
   const bothEmpty = facilities.length === 0 && addresses.length === 0
+  const sourceSuffix =
+    resultSource === 'nationwide' ? '（全国）' : resultSource === 'fallback' ? '（OSM）' : ''
 
   return (
     <div ref={rootRef} style={ROOT_STYLE}>
@@ -435,7 +459,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
                 ? '検索中…'
                 : resultsError
                   ? '検索に失敗しました'
-                  : `検索結果 ${results?.length ?? 0}件`}
+                  : `検索結果 ${results?.length ?? 0}件${sourceSuffix}`}
             </span>
             <button
               type="button"
@@ -451,6 +475,12 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
           )}
           {!resultsLoading && !resultsError && results !== null && results.length > 0 && (
             <div>
+              {resultSource === 'nationwide' && (
+                <div style={META_STYLE}>表示範囲内に0件のため、全国から表示しています</div>
+              )}
+              {resultSource === 'fallback' && (
+                <div style={META_STYLE}>OpenPOIに該当がないため、OpenStreetMapデータから表示しています</div>
+              )}
               {results.map((hit) => (
                 <button
                   key={hit.id}
