@@ -40,12 +40,18 @@ function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-const ABSOLUTE_URL_PATTERN = /^https?:\/\//i
+// 上流がpmtiles配信へ移行しても、sanitizeGsiStyle が sources.v を
+// 自前のPBF URL（GSI_PBF_TILE_URL）へ固定するため許可して無害。
+const ABSOLUTE_URL_PATTERN = /^(https?|pmtiles):\/\//i
 
 /**
  * スタイルJSON内のURLフィールド（sprite/glyphs/sources.*.tiles）と
  * 帰属（attribution）を検証し、問題があれば問題リストとして返す。
  * 問題がなければ空配列を返す。
+ *
+ * - URL: 絶対URL（http/https/pmtiles）であること。pmtiles は上流移行に伴い許可する。
+ * - attribution: 非空の文字列であること。文言の完全一致は求めない
+ *   （sanitize で「© 国土地理院」に固定するため、上流の文言変更で弾く意味が薄い）。
  */
 export function validateStyleUrls(style: unknown): string[] {
   const problems: string[] = []
@@ -75,7 +81,8 @@ export function validateStyleUrls(style: unknown): string[] {
         })
       }
       const attribution = sourceValue['attribution']
-      if (typeof attribution !== 'string' || attribution !== GSI_ATTRIBUTION_TEXT) {
+      // 空文字・非文字列のみ問題とする（文言変更は許容）
+      if (typeof attribution !== 'string' || attribution.trim() === '') {
         problems.push(`sources.${sourceName}.帰属が不正です: ${String(attribution)}`)
       }
     }

@@ -42,9 +42,18 @@ describe('validateStyleUrls', () => {
     const style = asObject(structuredClone(vendoredStyleJson))
     const sources = asObject(style['sources'])
     const v = asObject(sources['v'])
-    v['attribution'] = 'someone else'
+    v['attribution'] = ''
     const problems = validateStyleUrls(style)
     assert.ok(problems.some((p) => p.includes('帰属')))
+  })
+
+  it('pmtilesのタイルURLと非空attributionを許可する', () => {
+    const style = asObject(structuredClone(vendoredStyleJson))
+    const sources = asObject(style['sources'])
+    const v = asObject(sources['v'])
+    v['tiles'] = ['pmtiles://https://example.com/optimal.pmtiles/{z}/{x}/{y}']
+    v['attribution'] = '任意の帰属文言'
+    assert.deepEqual(validateStyleUrls(style), [])
   })
 })
 

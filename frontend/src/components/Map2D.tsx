@@ -235,15 +235,13 @@ export default function Map2D({
         // 取得したスタイルのURLも検証
         const problems = validateStyleUrls(json)
         if (problems.length > 0) {
-          setNotice('上流スタイルのURLが不正なため固定スタイルで表示しています')
+          // 固定スタイルで正常表示できているためユーザーへの通知は不要
           return
         }
         activeMap.setStyle(sanitizeGsiStyle(json))
       })
       .catch(() => {
-        if (!cancelled) {
-          setNotice('上流スタイルの取得に失敗したため固定スタイルで表示しています')
-        }
+        // 固定スタイルで正常表示できているためユーザーへの通知は不要
       })
       .finally(() => {
         window.clearTimeout(timeoutId)
