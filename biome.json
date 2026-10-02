@@ -1,0 +1,68 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "files": {
+    "includes": [
+      "frontend/src/**",
+      "core/src/**",
+      "worker/src/**",
+      "!**/node_modules/**",
+      "!**/dist/**",
+      "!**/coverage/**",
+      "!**/*.json",
+      "!**/*.css",
+      "!**/.codegraph/**",
+      "!**/.omo/**"
+    ]
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "semicolons": "asNeeded",
+      "trailingCommas": "all"
+    }
+  },
+  "assist": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "a11y": {
+        "useButtonType": "off",
+        "noLabelWithoutControl": "off",
+        "noStaticElementInteractions": "off",
+        "useKeyWithClickEvents": "off",
+        "noSvgWithoutTitle": "off",
+        "useAriaPropsSupportedByRole": "off"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "off",
+        "noUnsafeOptionalChaining": "off"
+      },
+      "suspicious": {
+        "useIterableCallbackReturn": "off",
+        "noArrayIndexKey": "off",
+        "noShadowRestrictedNames": "off",
+        "noExplicitAny": "off",
+        "noGlobalIsFinite": "off",
+        "noGlobalIsNan": "off",
+        "useBiomeIgnoreFolder": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off",
+        "useImportType": "off",
+        "useConst": "off"
+      },
+      "complexity": {
+        "useOptionalChain": "off",
+        "useLiteralKeys": "off"
+      }
+    }
+  }
+}

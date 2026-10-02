@@ -12,9 +12,14 @@
     "dev:worker": "npm run dev -w worker",
     "dev:api": "npm run dev -w core",
     "build": "npm run build -w core && npm run build -w frontend",
-    "test": "npm run test -w core"
+    "test": "npm run test -w core",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint:biome": "biome check .",
+    "lint:biome:fix": "biome check --write ."
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
     "concurrently": "^9.1.2",
     "wrangler": "^4.127.0"
   }
