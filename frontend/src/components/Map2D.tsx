@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Map as MapLibreMap, setWorkerUrl } from 'maplibre-gl'
+import FacilitySearchBox from './FacilitySearchBox'
 import 'maplibre-gl/dist/maplibre-gl.css'
 // Vite用worker設定（削除するとworker 404で地図が白紙になるため必須）。
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
@@ -91,6 +92,7 @@ export default function Map2D({
 }: Map2DProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
+  const [activeMap, setActiveMap] = useState<MapLibreMap | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [errorState, setErrorState] = useState<MapErrorKind | null>(null)
   // コールバックはref経由で参照し、地図インスタンスの再生成を抑止する
@@ -184,6 +186,7 @@ export default function Map2D({
     const activeMap: MapLibreMap = createdMap
     mapRef.current = activeMap
     readyRef.current?.(activeMap)
+    setActiveMap(activeMap)
 
     // load イベントで source/layer の存在を検証
     activeMap.on('load', () => {
@@ -253,6 +256,7 @@ export default function Map2D({
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       activeMap.remove()
       mapRef.current = null
+      setActiveMap(null)
       unloadRef.current?.()
     }
   }, [handleVisibilityChange, handleWindowResize, vendoredStyleValid])
@@ -305,6 +309,7 @@ export default function Map2D({
   return (
     <div className={className} style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} data-testid="map2d-container" style={{ position: 'absolute', inset: 0 }} />
+      {activeMap && <FacilitySearchBox map={activeMap} />}
       <div
         data-testid="map2d-attribution"
         style={{
@@ -323,6 +328,10 @@ export default function Map2D({
       >
         <a href={GSI_LICENSE_URL} target="_blank" rel="noreferrer">
           {GSI_ATTRIBUTION_TEXT}
+        </a>
+        {' / '}
+        <a href="https://openpoiapi.com/attribution.html" target="_blank" rel="noreferrer">
+          出典: OpenPOI API
         </a>
       </div>
       {onSelectCurrentBounds && (
@@ -351,7 +360,7 @@ export default function Map2D({
           data-testid="map2d-fallback-notice"
           style={{
             position: 'absolute',
-            top: '8px',
+            top: '48px',
             left: '8px',
             fontSize: '11px',
             background: 'rgba(255, 255, 255, 0.9)',
