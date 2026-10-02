@@ -3,6 +3,9 @@
 HMRのため、毎回サーバーを再起動する必要はありません。必要だと判断したときだけ再起動してください。
 
 ## テストについて
+テストは全ワークスペースで Vitest を使用する（`npm test`）。新しいテストの書き方・
+実行コマンド・絞り込み・フォーマット/lint の使い分けは `machimoki-testing` SKILL を参照。
+
 実装後の動作確認では、まずcurlコマンドやPlaywrightのヘッドレスモードを使用して、
 サーバーが正しく起動されていること、想定通りの結果が返ってきていることを確認してください。
 その後実際にブラウザを起動し、動作を確認してください。
@@ -64,10 +67,13 @@ npm run test -w core   # 47 tests
 
 ## AIエージェント用 SKILL
 
-`skills/machimoki-pipeline.md` に SKILL 文書がある。
-AIエージェントが `machimoki-pipeline` をトリガーすると、
-normalize → export → validate → judge のワークフローを自動実行できる。
-CLI/API の呼び出し手順と合否ルールが記載されている。
+`skills/<name>/SKILL.md` にプロジェクト固有の SKILL 文書がある
+（`opencode.jsonc` の `skills.paths` で読み込む）。
+
+| SKILL | 内容 |
+|-------|------|
+| `machimoki-pipeline` | normalize → export → validate → judge のワークフロー。CLI/API の呼び出し手順と合否ルール |
+| `machimoki-testing` | テストの書き方・実行コマンド・絞り込み・フォーマット/lint の使い分け |
 
 ## 既知の問題
 

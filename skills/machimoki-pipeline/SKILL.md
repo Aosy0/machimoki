@@ -1,7 +1,6 @@
 ---
 name: machimoki-pipeline
 description: 3D printable model export and validation pipeline for machimoki. Use when user asks to "export 3D model", "validate mesh", "check printability", "generate 3MF/STL", "run machimoki pipeline", or "build printable model from PLATEAU data".
-allowed-tools: [Bash, Read, Write]
 ---
 
 # Machimoki 3D Pipeline SKILL
