@@ -8,7 +8,7 @@
  *
  * 実行: npx tsx --test frontend/src/lib/mapBounds.test.ts
  */
-import { describe, it } from 'node:test'
+import { describe, it } from 'vitest'
 import assert from 'node:assert/strict'
 import {
   createSelectionBounds,

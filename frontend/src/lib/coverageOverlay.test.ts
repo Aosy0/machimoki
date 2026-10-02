@@ -5,7 +5,7 @@
  * 実行方法（新規npm依存の追加なし・ローカル実行のみ）:
  *   npx -y tsx --test frontend/src/lib/coverageOverlay.test.ts
  */
-import { describe, it } from 'node:test'
+import { describe, it } from 'vitest'
 import assert from 'node:assert/strict'
 import { Color, type Viewer, type Entity } from 'cesium'
 import { LOD_CATEGORY_STYLES } from './coverageCategories'

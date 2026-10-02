@@ -5,7 +5,7 @@
  * 実行方法:
  *   npx tsx --test frontend/src/lib/map2dStyle.test.ts
  */
-import { describe, it } from 'node:test'
+import { describe, it } from 'vitest'
 import assert from 'node:assert/strict'
 import vendoredStyleJson from './gsiVectorStyle.json'
 import {

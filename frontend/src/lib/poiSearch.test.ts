@@ -4,7 +4,7 @@
  * 実行方法:
  *   npx tsx --test src/lib/poiSearch.test.ts
  */
-import { describe, it } from 'node:test'
+import { describe, it } from 'vitest'
 import assert from 'node:assert/strict'
 import { nameMatchRank, categoryRank, sortOpenPoiHits, filterAddressTitles } from './poiSearch'
 import type { PoiHit } from './poiSearch'

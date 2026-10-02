@@ -5,7 +5,7 @@
  * 実行方法:
  *   npx tsx --test frontend/src/hooks/useMapLibreRectangleSelection.test.ts
  */
-import { describe, it } from 'node:test'
+import { describe, it } from 'vitest'
 import assert from 'node:assert/strict'
 import {
   shouldStartSelection,
