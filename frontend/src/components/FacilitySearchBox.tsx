@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Marker } from 'maplibre-gl'
 import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl'
 import {
@@ -140,6 +140,17 @@ const RESULTS_HEADER_STYLE: React.CSSProperties = {
   background: '#f3f3f3',
 }
 
+/**
+ * 下限計算の測定対象（実行時はこの固定リストのみ測り、全要素走査はしない）。
+ * いずれも地図上の下部オーバーレイで、検索パネル列と横方向に重なりうるもの。
+ */
+const POPUP_LOWER_BOUND_TESTIDS = [
+  'map2d-coord-panel',
+  'map2d-drag-hint',
+  'map2d-attribution',
+  'map2d-fallback-notice',
+] as const
+
 export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   const [query, setQuery] = useState('')
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -174,9 +185,10 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   }, [])
 
   // ポップアップ（候補/結果）の最大高さを、他のUIと重ならない範囲でギリギリまで伸ばす。
-  // 下限は実測で決める: パネル列と横方向に重なり、ポップアップより下にある要素のうち
+  // 下限は実測で決める: パネル列と横方向に重なり、ポップアップより下にある既知UIのうち
   // 最も上のものの上端−8px。見つからなければ画面下端−8pxが絶対下限。
   // 明示の上限クランプはしない（availableがそのまま上限）。最小120pxのみ保護。
+  // 実行時は軽量に: 固定の既知UIだけを個別取得する（全要素走査はしない）。
   const recomputeMaxPopupHeight = useCallback(() => {
     const root = rootRef.current
     if (!root) return
@@ -195,15 +207,15 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
     if (!Number.isFinite(popupTop)) return
     let lower = window.innerHeight - 8
     try {
-      // 候補数は数十件程度に収まる想定（ボタン＋testid付き要素に限定）
-      const candidates = document.querySelectorAll('button, [data-testid]')
-      for (const el of candidates) {
-        // 自分のパネル内（送信・クリア・結果を閉じる等）は除外
-        if (root.contains(el)) continue
+      // 固定の既知UIだけを個別取得する（最大4要素。querySelectorAll('*') は使わない）。
+      for (const testid of POPUP_LOWER_BOUND_TESTIDS) {
+        const el = document.querySelector(`[data-testid="${testid}"]`)
+        // 自分のパネル内は除外（現状いずれも外部だが念のため）
+        if (el && root.contains(el)) continue
         if (!(el instanceof HTMLElement)) continue
         const rect = el.getBoundingClientRect()
         if (rect.width <= 0 || rect.height <= 0) continue
-        // パネル列と横方向に重ならないものは無視（右下・右上パネル等）
+        // パネル列と横方向に重ならないものは無視（右上パネル等）
         if (rect.right <= popupLeft || rect.left >= popupRight) continue
         if (!Number.isFinite(rect.top) || rect.top <= popupTop) continue
         lower = Math.min(lower, rect.top - 8)
@@ -453,7 +465,8 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   // - 表示開始・件数変化（deps）: 即時再計算
   // - window resize / visualViewport resize: rAFスロットルで再計算
   // - map2d-container のサイズ変化（タブ切替・レイアウト変化）: ResizeObserverで再計算
-  useEffect(() => {
+  // useLayoutEffect で描画前に maxHeight を確定させ、開いた瞬間のちらつきを防ぐ。
+  useLayoutEffect(() => {
     if (!popupVisible) return
     recomputeMaxPopupHeight()
     window.addEventListener('resize', scheduleRecompute)

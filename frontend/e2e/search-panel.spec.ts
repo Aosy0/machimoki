@@ -30,6 +30,21 @@ for (const viewport of [
   })
 }
 
+for (const viewport of [
+  { width: 1024, height: 1200 },
+  { width: 1440, height: 700 },
+]) {
+  test(`候補多数時、Shift + ドラッグのヒントと重ならない (${viewport.width}x${viewport.height})`, async ({
+    page,
+  }) => {
+    // パネルを十分伸ばすため候補を多めにする（後登録の route が優先される）
+    await mockPoiSearch(page, { facilityCount: 50 })
+    await page.setViewportSize(viewport)
+    await openSuggestions(page)
+    await assertNoOverlap(page, 'facility-search-dropdown', DEFAULT_OTHER_UI(page))
+  })
+}
+
 test('ウィンドウを縮めても重ならない', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
   await openSuggestions(page)
@@ -63,6 +78,25 @@ test('候補が多いとき、パネルが下限まで伸びる', async ({ page 
     .poll(async () => (await getBox(page.getByTestId('facility-search-dropdown')))?.height ?? 0)
     .toBeGreaterThan(240)
   await assertNoOverlap(page, 'facility-search-dropdown', DEFAULT_OTHER_UI(page))
+})
+
+test('操作ヒントは右下（座標パネル内）に配置される', async ({ page }) => {
+  const viewport = { width: 1280, height: 720 }
+  await page.setViewportSize(viewport)
+  await page.goto('/')
+  const hint = page.getByTestId('map2d-drag-hint')
+  await expect(hint).toBeVisible()
+  const box = await getBox(hint)
+  const panelBox = await getBox(page.getByTestId('map2d-coord-panel'))
+  expect(box).not.toBeNull()
+  expect(panelBox).not.toBeNull()
+  // 右半分にあること（左下クラスタ廃止の確認）
+  expect(box!.x).toBeGreaterThan(viewport.width / 2)
+  // 座標パネル内に収まっていること（干渉なし）
+  expect(box!.x).toBeGreaterThanOrEqual(panelBox!.x)
+  expect(box!.y).toBeGreaterThanOrEqual(panelBox!.y)
+  expect(box!.x + box!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width + 1)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(panelBox!.y + panelBox!.height + 1)
 })
 
 test('検索結果パネルも他UIと重ならない', async ({ page }) => {

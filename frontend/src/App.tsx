@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import type { Map as MapLibreMap, MapMouseEvent } from 'maplibre-gl'
+import type { Map as MapLibreMap } from 'maplibre-gl'
 import Preview3D, { DEFAULT_BUILDING_COLOR } from './components/Preview3D'
 import ParameterPanel from './components/ParameterPanel'
 import type { Parameters } from './components/ParameterPanel'
@@ -27,7 +27,6 @@ import {
   coverageTilesTemplate,
 } from './lib/coverageMapLibre'
 import {
-  ensurePickOverlay,
   ensureSelectionHover,
   ensureSelectionOverlay,
   type PickPoint,
@@ -86,9 +85,9 @@ function App() {
 
   const coverageAvailableRef = useRef(false)
   const coverageProbedMapRef = useRef<MapLibreMap | null>(null)
-  const [pickPoints, setPickPoints] = useState<PickPoint[]>([])
+  // ピックUIは廃止したため常に空。エクスポート引数の形は維持する。
+  const [pickPoints] = useState<PickPoint[]>([])
   const [excludedBuildingIds, setExcludedBuildingIds] = useState<string[]>([])
-  const [isPickMode, setIsPickMode] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [pipelineState, setPipelineState] = useState<PipelineState>({
     phase: 'idle',
@@ -139,14 +138,6 @@ function App() {
     clearError: clearSelectionError,
   } = useMapLibreRectangleSelection(mapLibreMap, handleSelectionPreview, handleSelectionHover)
 
-  const handlePickPoint = useCallback((point: PickPoint) => {
-    setPickPoints((prev) => [...prev, point])
-  }, [])
-
-  const clearPickPoints = useCallback(() => {
-    setPickPoints([])
-  }, [])
-
   useEffect(() => {
     setExcludedBuildingIds([])
   }, [selectionBounds])
@@ -159,11 +150,6 @@ function App() {
     }
     ensureSelectionOverlay(mapLibreMap, selectionBounds, hoverHandleRef.current)
   }, [mapLibreMap, selectionBounds])
-
-  useEffect(() => {
-    if (!mapLibreMap) return
-    ensurePickOverlay(mapLibreMap, pickPoints)
-  }, [mapLibreMap, pickPoints])
 
   useEffect(() => {
     if (!selectionBounds) return
@@ -488,7 +474,6 @@ function App() {
       if (disposed) return
       // ドラッグ中のプレビューを巻き戻さないよう、確定stateではなく最新値(ref)を使う
       ensureSelectionOverlay(map, selectionBoundsRef.current, hoverHandleRef.current)
-      ensurePickOverlay(map, pickPoints)
       const coverageReady = ensureCoverageLayer(map, {
         visible: coverageVisible,
         detailed: true,
@@ -559,23 +544,7 @@ function App() {
         /* ignore */
       }
     }
-  }, [mapLibreMap, activeTab, selectionBounds, pickPoints, coverageVisible])
-
-  useEffect(() => {
-    if (!mapLibreMap || activeTab !== 'map' || !isPickMode) return
-    const handleMapClick = (event: MapMouseEvent): void => {
-      if (event.originalEvent.shiftKey) return
-      handlePickPoint({ lon: event.lngLat.lng, lat: event.lngLat.lat })
-    }
-    mapLibreMap.on('click', handleMapClick)
-    return () => {
-      try {
-        mapLibreMap.off('click', handleMapClick)
-      } catch {
-        /* ignore */
-      }
-    }
-  }, [mapLibreMap, activeTab, isPickMode, handlePickPoint])
+  }, [mapLibreMap, activeTab, selectionBounds, coverageVisible])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -726,103 +695,9 @@ function App() {
               地図描画に失敗しました。座標入力・プリセットで範囲を指定できます。
             </div>
           )}
-          {/* Left cluster: raised above attribution */}
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '36px',
-              left: '16px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'flex-start',
-              gap: '6px',
-              zIndex: 100,
-            }}
-          >
-            <div
-              style={{
-                background: 'var(--surface)',
-                color: 'var(--text-dim)',
-                padding: '6px 12px',
-                borderRadius: '4px',
-                fontSize: '13px',
-                pointerEvents: 'none',
-                backdropFilter: 'blur(4px)',
-              }}
-            >
-              Shift + ドラッグ で範囲選択
-            </div>
-            <button
-              onClick={() => setIsPickMode((prev) => !prev)}
-              style={{
-                padding: '6px 12px',
-                borderRadius: '4px',
-                fontSize: '13px',
-                cursor: 'pointer',
-                background: isPickMode ? 'var(--accent)' : 'var(--surface)',
-                color: 'var(--text)',
-                border: isPickMode ? '1px solid var(--accent)' : '1px solid var(--border-strong)',
-                backdropFilter: 'blur(4px)',
-              }}
-            >
-              {isPickMode ? '建物ピック中（地図をクリック）' : '建物をピックする'}
-            </button>
-            {isPickMode && (
-              <div
-                style={{
-                  background: 'var(--surface)',
-                  color: 'var(--text-dim)',
-                  padding: '6px 12px',
-                  borderRadius: '4px',
-                  fontSize: '13px',
-                  pointerEvents: 'none',
-                  backdropFilter: 'blur(4px)',
-                }}
-              >
-                クリックした位置の建物だけをエクスポートします
-              </div>
-            )}
-            {pickPoints.length > 0 && (
-              <div
-                style={{
-                  background: 'var(--surface)',
-                  color: 'var(--text)',
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  maxWidth: '280px',
-                  backdropFilter: 'blur(4px)',
-                }}
-              >
-                <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>
-                  ピック: {pickPoints.length}件
-                </div>
-                {isDevMode &&
-                  pickPoints.map((p, idx) => (
-                    <div key={idx} style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
-                      {idx + 1}. lon {p.lon.toFixed(5)}, lat {p.lat.toFixed(5)}
-                    </div>
-                  ))}
-                <button
-                  onClick={clearPickPoints}
-                  style={{
-                    marginTop: '6px',
-                    padding: '4px 10px',
-                    fontSize: '13px',
-                    background: 'var(--border)',
-                    color: 'var(--text)',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  クリア
-                </button>
-              </div>
-            )}
-          </div>
           {/* Coordinate panel */}
           <div
+            data-testid="map2d-coord-panel"
             style={{
               position: 'absolute',
               bottom: '44px',
@@ -968,6 +843,12 @@ function App() {
             >
               適用
             </button>
+            <div
+              data-testid="map2d-drag-hint"
+              style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)' }}
+            >
+              Shift + ドラッグ で範囲選択
+            </div>
           </div>
           {/* Coverage overlay panel */}
           <div

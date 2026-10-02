@@ -88,11 +88,9 @@ export async function assertNoOverlap(
 /** 干渉テストの既定「他UI」セット。存在しないものは findOverlaps 側でスキップされる。 */
 export function DEFAULT_OTHER_UI(page: Page): OverlapTarget[] {
   return [
-    {
-      name: '建物をピックするボタン',
-      selector: page.getByRole('button', { name: /建物をピック/ }),
-    },
     { name: '現在の表示範囲を選択', selector: page.getByTestId('map2d-select-current-bounds') },
+    { name: 'Shift + ドラッグ で範囲選択', selector: page.getByTestId('map2d-drag-hint') },
+    { name: '座標で選択パネル', selector: page.getByTestId('map2d-coord-panel') },
     { name: 'dev-badge', selector: page.getByTestId('dev-badge') },
   ]
 }
