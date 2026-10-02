@@ -611,7 +611,7 @@ function App() {
             padding: '8px 12px',
             background: 'var(--surface-solid)',
             color: 'var(--text-dim)',
-            fontSize: '12px',
+            fontSize: '14px',
             borderBottom: '1px solid var(--border)',
             fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
           }}
@@ -649,7 +649,7 @@ function App() {
                   color: 'var(--text-dim)',
                   padding: '6px 12px',
                   borderRadius: '4px',
-                  fontSize: '11px',
+                  fontSize: '13px',
                   zIndex: 100,
                   backdropFilter: 'blur(4px)',
                 }}
@@ -676,7 +676,7 @@ function App() {
                   color: 'var(--text-dim)',
                   padding: '6px 12px',
                   borderRadius: '4px',
-                  fontSize: '11px',
+                  fontSize: '13px',
                   pointerEvents: 'none',
                   backdropFilter: 'blur(4px)',
                 }}
@@ -688,7 +688,7 @@ function App() {
                 style={{
                   padding: '6px 12px',
                   borderRadius: '4px',
-                  fontSize: '11px',
+                  fontSize: '13px',
                   cursor: 'pointer',
                   background: isPickMode ? 'var(--accent)' : 'var(--surface)',
                   color: 'var(--text)',
@@ -705,7 +705,7 @@ function App() {
                     color: 'var(--text-dim)',
                     padding: '6px 12px',
                     borderRadius: '4px',
-                    fontSize: '11px',
+                    fontSize: '13px',
                     pointerEvents: 'none',
                     backdropFilter: 'blur(4px)',
                   }}
@@ -720,8 +720,8 @@ function App() {
                     color: 'var(--text)',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    fontSize: '11px',
-                    maxWidth: '260px',
+                    fontSize: '13px',
+                    maxWidth: '280px',
                     backdropFilter: 'blur(4px)',
                   }}
                 >
@@ -739,7 +739,7 @@ function App() {
                     style={{
                       marginTop: '6px',
                       padding: '4px 10px',
-                      fontSize: '11px',
+                      fontSize: '13px',
                       background: 'var(--border)',
                       color: 'var(--text)',
                       border: 'none',
@@ -764,9 +764,9 @@ function App() {
                 backdropFilter: 'blur(4px)',
                 padding: '10px',
                 borderRadius: '6px',
-                fontSize: '12px',
+                fontSize: '14px',
                 zIndex: 100,
-                width: '220px',
+                width: '240px',
               }}
             >
               <div style={{ marginBottom: '6px', fontWeight: 'bold' }}>座標で選択</div>
@@ -780,7 +780,7 @@ function App() {
                   <div key={key}>
                     <div
                       style={{
-                        fontSize: '9px',
+                        fontSize: '12px',
                         color: 'var(--text-muted)',
                         marginBottom: '2px',
                         letterSpacing: '0.05em',
@@ -796,7 +796,7 @@ function App() {
                       style={{
                         width: '100%',
                         padding: '4px',
-                        fontSize: '11px',
+                        fontSize: '13px',
                         background: 'var(--border)',
                         color: 'var(--text)',
                         border: '1px solid var(--border-strong)',
@@ -814,7 +814,7 @@ function App() {
                     style={{
                       flex: 1,
                       padding: '4px',
-                      fontSize: '10px',
+                      fontSize: '12px',
                       background: 'var(--border)',
                       color: 'var(--text)',
                       border: 'none',
@@ -830,7 +830,7 @@ function App() {
                     style={{
                       flex: 1,
                       padding: '4px',
-                      fontSize: '10px',
+                      fontSize: '12px',
                       background: 'var(--border)',
                       color: 'var(--text)',
                       border: 'none',
@@ -846,7 +846,7 @@ function App() {
                     style={{
                       flex: 1,
                       padding: '4px',
-                      fontSize: '10px',
+                      fontSize: '12px',
                       background: 'var(--border)',
                       color: 'var(--text)',
                       border: 'none',
@@ -863,7 +863,7 @@ function App() {
                 style={{
                   width: '100%',
                   padding: '6px',
-                  fontSize: '11px',
+                  fontSize: '13px',
                   background: 'var(--accent)',
                   color: 'var(--text)',
                   border: 'none',
@@ -887,9 +887,9 @@ function App() {
                 backdropFilter: 'blur(4px)',
                 padding: '10px',
                 borderRadius: '6px',
-                fontSize: '12px',
+                fontSize: '14px',
                 zIndex: 100,
-                width: '200px',
+                width: '220px',
               }}
             >
               <div
@@ -906,7 +906,7 @@ function App() {
                   title={coverageVisible ? 'カバレッジ表示をオフにする' : 'カバレッジ表示をオンにする'}
                   style={{
                     padding: '4px 10px',
-                    fontSize: '11px',
+                    fontSize: '13px',
                     cursor: 'pointer',
                     background: coverageVisible ? 'var(--accent)' : 'var(--border)',
                     color: 'var(--text)',
@@ -919,7 +919,7 @@ function App() {
                 </button>
               </div>
               {coverageLoading && (
-                <div style={{ color: 'var(--text-muted)', fontSize: '11px', marginBottom: '6px' }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '6px' }}>
                   カバレッジデータを読み込み中...
                 </div>
               )}
@@ -939,11 +939,11 @@ function App() {
                             flexShrink: 0,
                           }}
                         />
-                        <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>{style.label}</span>
+                        <span style={{ color: 'var(--text-dim)', fontSize: '13px' }}>{style.label}</span>
                       </div>
                     )
                   })}
-                  <div style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
                     整備状況をLoD別に色分けしています
                   </div>
                 </div>

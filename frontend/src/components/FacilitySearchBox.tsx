@@ -22,42 +22,42 @@ const ROOT_STYLE: React.CSSProperties = {
   position: 'absolute',
   top: '8px',
   left: '8px',
-  width: 'min(300px, calc(100% - 16px))',
+  width: 'min(360px, calc(100% - 16px))',
   zIndex: 2,
   background: 'rgba(255, 255, 255, 0.95)',
   border: '1px solid #ccc',
   borderRadius: '4px',
   boxShadow: '0 1px 4px rgba(0, 0, 0, 0.15)',
-  fontSize: '12px',
+  fontSize: '16px',
   color: '#333',
 }
 
 const INPUT_ROW_STYLE: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: '4px',
-  padding: '4px 6px',
+  gap: '8px',
+  padding: '10px 12px',
 }
 
 const INPUT_STYLE: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
-  fontSize: '12px',
+  fontSize: '16px',
   border: 'none',
   outline: 'none',
   background: 'transparent',
   color: '#333',
-  padding: '2px 0',
+  padding: '6px 0',
 }
 
 const CLEAR_BUTTON_STYLE: React.CSSProperties = {
   flexShrink: 0,
-  fontSize: '12px',
+  fontSize: '18px',
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
   color: '#666',
-  padding: '2px 4px',
+  padding: '4px 8px',
   lineHeight: 1,
 }
 
@@ -67,7 +67,7 @@ const SEARCH_BUTTON_STYLE: React.CSSProperties = {
   border: 'none',
   cursor: 'pointer',
   color: '#666',
-  padding: '2px 4px',
+  padding: '4px 8px',
   lineHeight: 1,
   display: 'flex',
   alignItems: 'center',
@@ -83,10 +83,10 @@ const POPUP_STYLE: React.CSSProperties = {
 }
 
 const SECTION_TITLE_STYLE: React.CSSProperties = {
-  fontSize: '11px',
+  fontSize: '13px',
   color: '#666',
   background: '#f3f3f3',
-  padding: '3px 8px',
+  padding: '5px 12px',
 }
 
 const ITEM_BUTTON_STYLE: React.CSSProperties = {
@@ -96,15 +96,15 @@ const ITEM_BUTTON_STYLE: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
-  padding: '5px 8px',
-  fontSize: '12px',
+  padding: '8px 12px',
+  fontSize: '15px',
   color: '#333',
   lineHeight: 1.4,
 }
 
 const ITEM_SUB_STYLE: React.CSSProperties = {
   display: 'block',
-  fontSize: '11px',
+  fontSize: '13px',
   color: '#777',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
@@ -112,14 +112,14 @@ const ITEM_SUB_STYLE: React.CSSProperties = {
 }
 
 const META_STYLE: React.CSSProperties = {
-  padding: '6px 8px',
-  fontSize: '12px',
+  padding: '8px 12px',
+  fontSize: '14px',
   color: '#666',
 }
 
 const ERROR_STYLE: React.CSSProperties = {
-  padding: '6px 8px',
-  fontSize: '12px',
+  padding: '8px 12px',
+  fontSize: '14px',
   color: '#555',
 }
 
@@ -128,8 +128,8 @@ const RESULTS_HEADER_STYLE: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: '8px',
-  padding: '4px 8px',
-  fontSize: '12px',
+  padding: '8px 12px',
+  fontSize: '14px',
   color: '#333',
   background: '#f3f3f3',
 }
@@ -434,8 +434,8 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
           }}
         >
           <svg
-            width="15"
-            height="15"
+            width="20"
+            height="20"
             viewBox="0 0 16 16"
             fill="none"
             stroke="currentColor"
