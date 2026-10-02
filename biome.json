@@ -3,6 +3,8 @@
   "files": {
     "includes": [
       "frontend/src/**",
+      "frontend/e2e/**",
+      "frontend/playwright.config.ts",
       "core/src/**",
       "worker/src/**",
       "!**/node_modules/**",

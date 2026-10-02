@@ -51,9 +51,52 @@ describe('対象の関数', () => {
 - `beforeEach` なども `vitest` から import する（`import { describe, it, beforeEach } from 'vitest'`）。
 - 環境は `node`（jsdom なし）。DOM に依存するテストは書けない。
 
-## DOM / 画面のテスト（E2E）
+## DOM / 画面のテスト（E2E / Playwright）
 
-DOM レイアウトやブラウザ操作が必要なテストは単体テストでは書けない。Playwright を使う（基盤は今後整備予定。追加時にこの節へ追記する）。
+DOM レイアウトや実ブラウザでの操作が必要なテストは Playwright を使う。frontend に基盤がある。
+
+### 実行コマンド
+
+| 目的 | コマンド |
+|------|---------|
+| E2E 実行 | `npm run test:e2e` |
+| E2E UI モード | `npm run test:e2e:ui` |
+
+- `webServer` が Vite dev（port 5173）を自動起動する。既に起動中なら再利用される。
+- 初回は Chromium が必要: `npx playwright install chromium`。
+
+### 置き場所とモック
+
+- テストは `frontend/e2e/*.spec.ts` に置く。
+- **外部APIは必ずモックする**（オフラインでも安定させるため）。`e2e/helpers/api.ts` の `mockPoiSearch(page, options?)` が OpenPOI / GSI / Photon をスタブする。
+  - `facilityCount`（既定20）/ `facilityNames` / `addressCount` で候補を制御できる。
+
+### 要素の干渉テスト（独自ヘルパー）
+
+`e2e/helpers/overlap.ts` に再利用可能な干渉検出がある。新しいオーバーレイUIを追加したら、`others` に足すだけで回帰テストを書ける。
+
+```ts
+import { assertNoOverlap, DEFAULT_OTHER_UI } from './helpers/overlap'
+
+// 対象要素（data-testid）が既知の他UIと重なっていないことを検証
+await assertNoOverlap(page, 'facility-search-dropdown', DEFAULT_OTHER_UI(page))
+```
+
+| ヘルパー | 用途 |
+|----------|------|
+| `getBox(locator)` | `boundingBox()` を返す |
+| `rectsOverlap(a, b, margin)` | 2矩形の重なり判定 |
+| `findOverlaps(page, targetTestId, others, margin)` | 重なっている相手の名前配列を返す |
+| `assertNoOverlap(page, targetTestId, others, margin)` | 重なれば失敗（矩形付き） |
+| `DEFAULT_OTHER_UI(page)` | 既定の他UIセット（建物ピック等）。`[{ name, selector }]` を足して拡張 |
+
+- `others` の `selector` は CSS 文字列でも `Locator` でもよい。
+- `margin` で許容余白（px）を指定できる。
+
+### 参考
+
+- パネルの干渉・リサイズ追随テストは `frontend/e2e/search-panel.spec.ts` を参照。
+- 主要な `data-testid`: `facility-search-input` / `facility-search-submit` / `facility-search-dropdown` / `facility-search-results` / `map2d-container` / `map2d-select-current-bounds` / `dev-badge`。
 
 ## フォーマットと lint
 

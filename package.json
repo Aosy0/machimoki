@@ -18,6 +18,8 @@
     "test:worker": "npm run test -w worker",
     "test:watch": "npm run test:watch -w core",
     "test:file": "npm exec --workspace frontend -- vitest run",
+    "test:e2e": "npm run test:e2e -w frontend",
+    "test:e2e:ui": "npm run test:e2e:ui -w frontend",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint:biome": "biome check .",

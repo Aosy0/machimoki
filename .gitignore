@@ -10,6 +10,8 @@ omo/
 screenshots/
 test/
 report/
+test-results/
+playwright-report/
 *.3mf
 .agents/skills/
 .wrangler/
