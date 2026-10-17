@@ -1,26 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
+import { computeNaturalDimensions, formatMm, formatScale } from '../lib/selectionBounds'
 
 interface ModelSizeOverlayProps {
   selectionBounds: SelectionBounds | null
   scale: number
   onScaleChange: (newScale: number) => void
-}
-
-function computeNaturalDimensions(bounds: SelectionBounds): { widthM: number; depthM: number } {
-  const centerLat = (bounds.north + bounds.south) / 2
-  const widthDeg = bounds.east - bounds.west
-  const heightDeg = bounds.north - bounds.south
-  const widthM =
-    Math.abs(widthDeg) * (Math.PI / 180) * 6371000 * Math.cos((centerLat * Math.PI) / 180)
-  const depthM = Math.abs(heightDeg) * (Math.PI / 180) * 6371000
-  return { widthM, depthM }
-}
-
-function formatMm(m: number): string {
-  if (m >= 100) return `${m.toFixed(0)} mm`
-  if (m >= 10) return `${m.toFixed(1)} mm`
-  return `${m.toFixed(2)} mm`
 }
 
 export default function ModelSizeOverlay({
@@ -173,6 +158,13 @@ export default function ModelSizeOverlay({
             {formatMm(outputDepth)}
           </span>
         )}
+      </div>
+
+      <div style={dividerStyle} />
+
+      <div style={rowStyle}>
+        <span style={{ ...labelStyle, width: 28 }}>縮尺</span>
+        <span style={{ ...valueStyle, cursor: 'default' }}>{formatScale(scale)}</span>
       </div>
 
       {showReset && (

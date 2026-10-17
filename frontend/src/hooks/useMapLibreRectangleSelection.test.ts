@@ -662,3 +662,96 @@ describe('ホバー通知 onHover', () => {
     assert.deepEqual(hovers, [null])
   })
 })
+
+describe('作成ドラッグ中の onDrawPreview', () => {
+  it('非微小の作成ドラッグで bounds 付きで複数回呼ばれる', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    const draws: Array<SelectionBounds | null> = []
+    let selectedCount = 0
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (): void => {
+        selectedCount += 1
+      },
+      onDrawPreview: (bounds: SelectionBounds | null): void => {
+        draws.push(bounds)
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    canvas.dispatch('mousemove', { clientX: 50, clientY: 50 })
+    canvas.dispatch('mousemove', { clientX: 110, clientY: 90 })
+    // 確定前なので onSelection は呼ばれない
+    assert.equal(selectedCount, 0)
+    assert.equal(draws.length, 2)
+    assert.ok(draws[0])
+    assert.ok(draws[1])
+    assert.notDeepEqual(draws[0], draws[1])
+    controller.destroy()
+  })
+
+  it('微小矩形では呼ばれない', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let called = 0
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (): void => {},
+      onDrawPreview: (): void => {
+        called += 1
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    canvas.dispatch('mousemove', { clientX: 11, clientY: 11 })
+    assert.equal(called, 0)
+    controller.destroy()
+  })
+
+  it('Esc取消で直前の確定boundsに戻る', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    const draws: Array<SelectionBounds | null> = []
+    let selectedCount = 0
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (): void => {
+        selectedCount += 1
+      },
+      onDrawPreview: (bounds: SelectionBounds | null): void => {
+        draws.push(bounds)
+      },
+    })
+    const prev: SelectionBounds = { west: 139.69, south: 35.699, east: 139.691, north: 35.7 }
+    controller.setBounds({ ...prev })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    canvas.dispatch('mousemove', { clientX: 110, clientY: 90 })
+    globalTarget.dispatch('keydown', { key: 'Escape' })
+    assert.equal(selectedCount, 0)
+    assert.ok(draws.length >= 2)
+    assert.deepEqual(draws[draws.length - 1], prev)
+    controller.destroy()
+  })
+
+  it('確定前のEsc取消では null が呼ばれる', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    const draws: Array<SelectionBounds | null> = []
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (): void => {},
+      onDrawPreview: (bounds: SelectionBounds | null): void => {
+        draws.push(bounds)
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    canvas.dispatch('mousemove', { clientX: 110, clientY: 90 })
+    globalTarget.dispatch('keydown', { key: 'Escape' })
+    assert.ok(draws.length >= 2)
+    assert.equal(draws[draws.length - 1], null)
+    controller.destroy()
+  })
+})

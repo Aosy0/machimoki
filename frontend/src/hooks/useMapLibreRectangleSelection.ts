@@ -72,6 +72,8 @@ export interface SelectionControllerOptions {
   globalTarget: Pick<Window, 'addEventListener' | 'removeEventListener'>
   onSelection: (bounds: SelectionBounds) => void
   onPreview?: (bounds: SelectionBounds) => void
+  /** 作成ドラッグ中・取消時の寸法ラベル用プレビュー（確定stateに触れない） */
+  onDrawPreview?: (bounds: SelectionBounds | null) => void
   /** ホバーハンドルの変化通知（ハイライト用。ヒットテスト結果と完全整合） */
   onHover?: (handle: ResizeHandle | null) => void
   onError?: (message: string) => void
@@ -129,6 +131,7 @@ export function createMapLibreSelectionController(
 ): SelectionController {
   const { map, globalTarget, onSelection } = options
   const onPreview = options.onPreview ?? ((): void => {})
+  const onDrawPreview = options.onDrawPreview ?? ((): void => {})
   const onHover = options.onHover ?? ((): void => {})
   const onError = options.onError ?? ((): void => {})
   const onDrawingChange = options.onDrawingChange ?? ((): void => {})
@@ -174,6 +177,8 @@ export function createMapLibreSelectionController(
     map.dragPan.enable()
     overlay?.remove()
     overlay = null
+    // 描画の中止・確定時は直前の確定表示へ戻す（無ければ消す）。
+    onDrawPreview(currentBounds)
   }
 
   const finish = (): void => {
@@ -310,6 +315,11 @@ export function createMapLibreSelectionController(
     if (drawing && startPx) {
       currentPx = point
       overlay?.update(startPx, point)
+      // 作成中も寸法ラベルだけはライブ更新する（微小・不正時は発行しない）。
+      if (!isTinyRectangle(startPx, point) && shiftAtStart) {
+        const result = boundsFromLngLat(readLngLat(startPx), readLngLat(point))
+        if (result.ok) onDrawPreview(result.bounds)
+      }
       return
     }
 
@@ -431,6 +441,7 @@ export function useMapLibreRectangleSelection(
   map: SelectionMapLike | null,
   onPreview?: (bounds: SelectionBounds) => void,
   onHover?: (handle: ResizeHandle | null) => void,
+  onDrawPreview?: (bounds: SelectionBounds | null) => void,
 ): {
   selectionBounds: SelectionBounds | null
   setSelectionBounds: Dispatch<SetStateAction<SelectionBounds | null>>
@@ -447,11 +458,16 @@ export function useMapLibreRectangleSelection(
   // 最新のonPreview・onHover・boundsをrefで保持し、コントローラーeffectの依存を[map]に保つ。
   const onPreviewRef = useRef(onPreview)
   const onHoverRef = useRef(onHover)
+  const onDrawPreviewRef = useRef(onDrawPreview)
   const boundsRef = useRef<SelectionBounds | null>(null)
 
   useEffect(() => {
     onPreviewRef.current = onPreview
   }, [onPreview])
+
+  useEffect(() => {
+    onDrawPreviewRef.current = onDrawPreview
+  }, [onDrawPreview])
 
   useEffect(() => {
     onHoverRef.current = onHover
@@ -468,6 +484,9 @@ export function useMapLibreRectangleSelection(
       },
       onPreview: (bounds: SelectionBounds): void => {
         onPreviewRef.current?.(bounds)
+      },
+      onDrawPreview: (bounds: SelectionBounds | null): void => {
+        onDrawPreviewRef.current?.(bounds)
       },
       onHover: (handle: ResizeHandle | null): void => {
         onHoverRef.current?.(handle)

@@ -65,3 +65,49 @@ export function boundsFromLngLat(a: LngLat, b: LngLat): BoundsResult {
   if (error !== null) return { ok: false, error }
   return { ok: true, bounds: candidate }
 }
+
+/** 選択矩形の実寸（m）。横=東西（中心緯度でcos補正）、縦=南北。 */
+export function computeNaturalDimensions(bounds: SelectionBounds): {
+  widthM: number
+  depthM: number
+} {
+  const centerLat = (bounds.north + bounds.south) / 2
+  const widthDeg = bounds.east - bounds.west
+  const heightDeg = bounds.north - bounds.south
+  const widthM =
+    Math.abs(widthDeg) * (Math.PI / 180) * EARTH_RADIUS_M * Math.cos((centerLat * Math.PI) / 180)
+  const depthM = Math.abs(heightDeg) * (Math.PI / 180) * EARTH_RADIUS_M
+  return { widthM, depthM }
+}
+
+/** モデル長さの表示用。100mm以上は整数、10mm以上は小数1桁、未満は小数2桁。 */
+export function formatMm(m: number): string {
+  if (m >= 100) return `${m.toFixed(0)} mm`
+  if (m >= 10) return `${m.toFixed(1)} mm`
+  return `${m.toFixed(2)} mm`
+}
+
+/** 実寸の表示用（m）。小数1桁＋桁区切り。 */
+export function formatMeters(m: number): string {
+  return `${m.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} m`
+}
+
+/** scale（無次元 m/m）から縮尺分母。例: 0.00075 → 1333（1:1,333）。 */
+export function scaleDenominator(scale: number): number {
+  return Math.round(1 / scale)
+}
+
+/** 縮尺の表示用。例: 0.00075 → "1 : 1,333"。 */
+export function formatScale(scale: number): string {
+  if (!Number.isFinite(scale) || scale <= 0) return '1 : —'
+  return `1 : ${scaleDenominator(scale).toLocaleString('en-US')}`
+}
+
+/** 実寸＋モデル長さの一括計算。scale は無次元 (m/m)。 */
+export function computeModelDimensions(
+  bounds: SelectionBounds,
+  scale: number,
+): { widthM: number; depthM: number; widthMm: number; depthMm: number } {
+  const { widthM, depthM } = computeNaturalDimensions(bounds)
+  return { widthM, depthM, widthMm: widthM * scale * 1000, depthMm: depthM * scale * 1000 }
+}

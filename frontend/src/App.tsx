@@ -7,6 +7,7 @@ import LoadingOverlay from './components/LoadingOverlay'
 import ErrorToast from './components/ErrorToast'
 import HelpPanel from './components/HelpPanel'
 import Map2D from './components/Map2D'
+import MapSelectionInfoOverlay from './components/MapSelectionInfoOverlay'
 import { exportModel } from './lib/apiClient'
 import { runWorkerExport, triggerDownload } from './lib/workerExport'
 import { useMapLibreRectangleSelection } from './hooks/useMapLibreRectangleSelection'
@@ -110,12 +111,15 @@ function App() {
   // ホバー中の辺・角を強調する。styledata再適用用にrefへ保持する。
   const hoverHandleRef = useRef<ResizeHandle | null>(null)
   const selectionBoundsRef = useRef<SelectionBounds | null>(null)
+  // 寸法ラベルへのライブ更新口（作成ドラッグ中・リサイズ中に使う）。
+  const selectionInfoPreviewRef = useRef<((bounds: SelectionBounds | null) => void) | null>(null)
 
   // リサイズ中のライブプレビュー（確定は従来どおりフック内で行う）。
   // 単一ソースへ hover 込みで1回だけ setData する（全レイヤー同一リビジョン）。
   const handleSelectionPreview = useCallback(
     (bounds: SelectionBounds) => {
       selectionBoundsRef.current = bounds
+      selectionInfoPreviewRef.current?.(bounds)
       if (!mapLibreMap) return
       ensureSelectionOverlay(mapLibreMap, bounds, hoverHandleRef.current)
     },
@@ -131,12 +135,22 @@ function App() {
     [mapLibreMap],
   )
 
+  // 作成ドラッグ中の寸法ラベル用プレビュー（GeoJSONオーバーレイには触れない）。
+  const handleSelectionDrawPreview = useCallback((bounds: SelectionBounds | null) => {
+    selectionInfoPreviewRef.current?.(bounds)
+  }, [])
+
   const {
     selectionBounds,
     setSelectionBounds,
     errorMessage: selectionErrorMessage,
     clearError: clearSelectionError,
-  } = useMapLibreRectangleSelection(mapLibreMap, handleSelectionPreview, handleSelectionHover)
+  } = useMapLibreRectangleSelection(
+    mapLibreMap,
+    handleSelectionPreview,
+    handleSelectionHover,
+    handleSelectionDrawPreview,
+  )
 
   useEffect(() => {
     setExcludedBuildingIds([])
@@ -676,6 +690,12 @@ function App() {
             onMapUnload={handleMapUnload}
             onWebGLFailure={handleWebGLFailure}
             onSelectCurrentBounds={handleSelectCurrentBounds}
+          />
+          <MapSelectionInfoOverlay
+            map={mapLibreMap}
+            bounds={selectionBounds}
+            scale={scale}
+            previewRef={selectionInfoPreviewRef}
           />
           {mapFailed && (
             <div
