@@ -24,6 +24,8 @@ interface ParameterPanelProps {
   onExport: () => void
   availableLods?: Lod[]
   autoTerrainGridSize?: number
+  buildingsVisible: boolean
+  onBuildingsVisibleChange: (visible: boolean) => void
 }
 
 function ParameterPanel({
@@ -32,6 +34,8 @@ function ParameterPanel({
   onExport,
   availableLods = ['lod1', 'lod2'],
   autoTerrainGridSize = 128,
+  buildingsVisible,
+  onBuildingsVisibleChange,
 }: ParameterPanelProps) {
   const handleChange = <K extends keyof Parameters>(key: K, value: Parameters[K]) => {
     onChange({ ...parameters, [key]: value })
@@ -157,6 +161,56 @@ function ParameterPanel({
         {/* Display Mode */}
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
           <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>表示モード</h4>
+          <div style={{ marginBottom: '12px' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                marginBottom: '4px',
+              }}
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={buildingsVisible}
+                onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
+                style={{
+                  width: '36px',
+                  height: '20px',
+                  borderRadius: '999px',
+                  border: '1px solid var(--border-strong)',
+                  background: buildingsVisible ? 'var(--accent)' : 'var(--border)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '2px',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  transition: 'background-color 150ms ease',
+                }}
+              >
+                <span
+                  style={{
+                    width: '14px',
+                    height: '14px',
+                    borderRadius: '50%',
+                    background: '#fff',
+                    transform: buildingsVisible ? 'translateX(16px)' : 'translateX(0)',
+                    transition: 'transform 150ms ease',
+                  }}
+                />
+              </button>
+              <span
+                onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
+                style={{ fontSize: '14px', cursor: 'pointer' }}
+              >
+                建物を表示
+              </span>
+            </div>
+            <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '0 0 0 44px' }}>
+              オフにすると地形のみ表示になり、動作が軽くなります
+            </p>
+          </div>
           <label
             style={{
               display: 'flex',

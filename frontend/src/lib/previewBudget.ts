@@ -4,17 +4,38 @@ export type { Lod }
 
 /** 中心的なプレビュー予算の制限値。Preview3D の建物読み込み可否判定に使う。 */
 export const PREVIEW_BUDGET = {
-  maxIntersectingTiles: 1500,
-  maxBuildings: 2500,
-  maxContentBytes: 256 * 1024 * 1024, // 256 MiB
-  scanNodeCap: 6000,
-  probeRangeBytes: 16384, // bytes=0..16383
+  // 警告閾値（旧値をそのまま改名。超えたら警告表示しつつ建物は読み込む）
+  warnIntersectingTiles: 1500,
+  warnBuildings: 2500,
+  warnContentBytes: 256 * 1024 * 1024, // 256 MiB
+  warnTriangles: 2_000_000,
+  smallRangeMaxDimMeters: 750,
+  largeRangeMaxDimMeters: 5000,
+  // ハード上限（超えたら地形のみ表示）
+  hardIntersectingTiles: 12_000,
+  hardBuildings: 100_000,
+  hardContentBytes: 1024 * 1024 * 1024, // 1 GiB
+  hardTriangles: 15_000_000,
+  hardRangeMaxDimMeters: 15_000,
+  // スキャン/プローブ
+  scanNodeCap: 100_000,
+  probeRangeBytes: 256,
+  glbProbeBytes: 4096,
+  triangleProbeSampleCap: 32,
   probeConcurrency: 8,
   fetchTimeoutMs: 15000,
-  /** この最大辺(m)以下は予算判定をスキップして無条件で建物表示する。 */
-  smallRangeMaxDimMeters: 750,
-  /** この最大辺(m)を超える範囲は大規模範囲として扱う。 */
-  largeRangeMaxDimMeters: 5000,
+} as const
+
+/** 実行時（ロード後）負荷ガードの閾値。Preview3D から使用する。 */
+export const RUNTIME_LOAD_LIMITS = {
+  trianglesSelected: 8_000_000,
+  totalMemoryBytes: 1536 * 1024 * 1024,
+  commands: 2000,
+  fpsLow: 20,
+  windowMs: 2000,
+  gapResetMs: 1200,
+  consecutiveWindows: 2,
+  settleMs: 5000,
 } as const
 
 export type PreviewMode = 'buildings' | 'terrain-only' | 'no-data'
@@ -47,6 +68,8 @@ export interface PreviewLoadEstimate {
   maxIntersectingTiles: number
   maxBuildings: number
   maxContentBytes: number
+  estimatedTriangles: number | null
+  overWarnBudget: boolean
   capped: boolean
   municipalities: PreviewMuniResult[]
 }
@@ -100,20 +123,36 @@ interface EstimateCtx {
   capped: boolean
   exceededBudget: boolean
   failures: number
+  sampledTriangles: number
+  sampledBuildings: number
+  triangleProbes: number
+  estimatedTriangles: number | null
+  overWarnBudget: boolean
   visitedTilesets: Set<string>
   visitedContent: Set<string>
 }
 
-/** 予算超過（交差タイル数・建物数・コンテンツ量）を判定する。 */
+/** ハード上限（交差タイル数・建物数・コンテンツ量・推定三角形数）を超えたか。 */
 function overBudget(ctx: EstimateCtx): boolean {
   return (
-    ctx.intersectingTiles > PREVIEW_BUDGET.maxIntersectingTiles ||
-    ctx.totalBuildings > PREVIEW_BUDGET.maxBuildings ||
-    ctx.totalContentBytes > PREVIEW_BUDGET.maxContentBytes
+    ctx.intersectingTiles > PREVIEW_BUDGET.hardIntersectingTiles ||
+    ctx.totalBuildings > PREVIEW_BUDGET.hardBuildings ||
+    ctx.totalContentBytes > PREVIEW_BUDGET.hardContentBytes ||
+    (ctx.estimatedTriangles !== null && ctx.estimatedTriangles > PREVIEW_BUDGET.hardTriangles)
   )
 }
 
-/** 予算超過なら走査・プローブの打ち切りフラグを立てる。 */
+/** 警告閾値を超えたらフラグを立てる（走査は継続する）。 */
+function noteWarnBudget(ctx: EstimateCtx): void {
+  if (ctx.overWarnBudget) return
+  ctx.overWarnBudget =
+    ctx.intersectingTiles > PREVIEW_BUDGET.warnIntersectingTiles ||
+    ctx.totalBuildings > PREVIEW_BUDGET.warnBuildings ||
+    ctx.totalContentBytes > PREVIEW_BUDGET.warnContentBytes ||
+    (ctx.estimatedTriangles !== null && ctx.estimatedTriangles > PREVIEW_BUDGET.warnTriangles)
+}
+
+/** ハード上限超過なら走査・プローブの打ち切りフラグを立てる。 */
 function markOverBudget(ctx: EstimateCtx): boolean {
   if (!overBudget(ctx)) return false
   ctx.exceededBudget = true
@@ -211,12 +250,15 @@ function parseContentRangeTotal(contentRange: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
-/**
- * b3dm ヘッダ（28バイト）の feature table JSON（オフセット12のバイト長）から
- * BATCH_LENGTH を読み取る。判別できない場合は 0 を返す。
- */
-export function readB3dmBatchLength(buffer: ArrayBuffer): number {
-  if (buffer.byteLength < 28) return 0
+export interface B3dmInfo {
+  batchLength: number
+  /** b3dmヘッダから算出したglb先頭オフセット（バッファ長が足りなくても返す） */
+  glbOffset: number
+}
+
+/** b3dmヘッダ(28B)から BATCH_LENGTH と glbOffset を読む。不正・非b3dmは null。 */
+export function readB3dmInfo(buffer: ArrayBuffer): B3dmInfo | null {
+  if (buffer.byteLength < 28) return null
   const view = new DataView(buffer)
   const magic = String.fromCharCode(
     view.getUint8(0),
@@ -224,19 +266,83 @@ export function readB3dmBatchLength(buffer: ArrayBuffer): number {
     view.getUint8(2),
     view.getUint8(3),
   )
-  if (magic !== 'b3dm') return 0
+  if (magic !== 'b3dm') return null
+  if (view.getUint32(4, true) !== 1) return null
   const ftJsonLen = view.getUint32(12, true)
-  if (ftJsonLen === 0) return 0
-  const available = Math.min(ftJsonLen, buffer.byteLength - 28)
-  if (available <= 0) return 0
-  const bytes = new Uint8Array(buffer, 28, available)
+  const ftBinLen = view.getUint32(16, true)
+  const btJsonLen = view.getUint32(20, true)
+  const btBinLen = view.getUint32(24, true)
+  const glbOffset = 28 + ftJsonLen + ftBinLen + btJsonLen + btBinLen
+  if (ftJsonLen === 0 || 28 + ftJsonLen > buffer.byteLength) {
+    return { batchLength: 0, glbOffset }
+  }
   try {
+    const bytes = new Uint8Array(buffer, 28, ftJsonLen)
     const text = new TextDecoder().decode(bytes).replace(/\0/g, '')
     const ft = JSON.parse(text) as Record<string, unknown>
     const v = ft.BATCH_LENGTH
-    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
+    const batchLength = typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
+    return { batchLength, glbOffset }
   } catch {
-    return 0
+    return { batchLength: 0, glbOffset }
+  }
+}
+
+const GLB_MAGIC = 0x46546c67 // 'glTF'
+const GLB_CHUNK_JSON = 0x4e4f534a // 'JSON'
+
+interface GltfAccessor {
+  count?: number
+}
+
+interface GltfPrimitive {
+  attributes?: Record<string, number>
+  indices?: number
+  mode?: number
+}
+
+interface GltfJson {
+  accessors?: GltfAccessor[]
+  meshes?: Array<{ primitives?: GltfPrimitive[] }>
+}
+
+/** glbのJSONチャンクから 三角形数・頂点数 を合算する。パース不能は null。 */
+export function readGltfTriangleCount(
+  glb: ArrayBuffer,
+): { triangles: number; vertices: number } | null {
+  try {
+    if (glb.byteLength < 20) return null
+    const view = new DataView(glb)
+    if (view.getUint32(0, true) !== GLB_MAGIC) return null
+    const chunkLen = view.getUint32(12, true)
+    if (view.getUint32(16, true) !== GLB_CHUNK_JSON) return null
+    if (20 + chunkLen > glb.byteLength) return null
+    const bytes = new Uint8Array(glb, 20, chunkLen)
+    const json = JSON.parse(new TextDecoder().decode(bytes).replace(/\0/g, '')) as GltfJson
+    const accessors = json.accessors ?? []
+    let triangles = 0
+    let vertices = 0
+    for (const mesh of json.meshes ?? []) {
+      for (const prim of mesh.primitives ?? []) {
+        const posIdx = prim.attributes?.POSITION
+        const pos = typeof posIdx === 'number' ? accessors[posIdx] : undefined
+        const posCount =
+          typeof pos?.count === 'number' && Number.isFinite(pos.count) ? pos.count : 0
+        if (posCount > 0) vertices += posCount
+        if (prim.mode !== undefined && prim.mode !== 4) continue
+        if (typeof prim.indices === 'number') {
+          const idx = accessors[prim.indices]
+          if (typeof idx?.count === 'number' && Number.isFinite(idx.count)) {
+            triangles += Math.floor(idx.count / 3)
+          }
+        } else if (posCount > 0) {
+          triangles += Math.floor(posCount / 3)
+        }
+      }
+    }
+    return { triangles, vertices }
+  } catch {
+    return null
   }
 }
 
@@ -300,14 +406,43 @@ async function probeContent(url: string, ctx: EstimateCtx, stat: MuniStat): Prom
       const totalFromRange = contentRange ? parseContentRangeTotal(contentRange) : null
       const buf = await readProbeBytes(res, ctx.probeRangeBytes)
       if (res.status === 200) ctx.capped = true
-      const batch = readB3dmBatchLength(buf)
-      if (batch > 0) {
-        ctx.totalBuildings += batch
-        stat.totalBuildings += batch
+      const info = readB3dmInfo(buf)
+      const batchLength = info?.batchLength ?? 0
+      if (batchLength > 0) {
+        ctx.totalBuildings += batchLength
+        stat.totalBuildings += batchLength
       }
       const bytes = totalFromRange ?? buf.byteLength
       ctx.totalContentBytes += bytes
       stat.totalContentBytes += bytes
+
+      if (info && batchLength > 0 && ctx.triangleProbes < PREVIEW_BUDGET.triangleProbeSampleCap) {
+        ctx.triangleProbes++
+        try {
+          const res2 = await ctx.fetchImpl(url, {
+            signal: handle.signal,
+            headers: {
+              Range: `bytes=${info.glbOffset}-${info.glbOffset + PREVIEW_BUDGET.glbProbeBytes - 1}`,
+            },
+          })
+          if (res2.ok) {
+            const glb = await readProbeBytes(res2, PREVIEW_BUDGET.glbProbeBytes)
+            const tri = readGltfTriangleCount(glb)
+            if (tri && tri.triangles > 0) {
+              ctx.sampledTriangles += tri.triangles
+              ctx.sampledBuildings += batchLength
+            }
+          }
+        } catch {
+          // 2本目の失敗はサンプリング不足として握りつぶす
+        }
+      }
+
+      if (ctx.sampledBuildings > 0) {
+        ctx.estimatedTriangles = Math.round(
+          (ctx.totalBuildings * ctx.sampledTriangles) / ctx.sampledBuildings,
+        )
+      }
     } catch {
       ctx.failures++
     } finally {
@@ -342,6 +477,7 @@ async function walkTileset(url: string, ctx: EstimateCtx, stat: MuniStat): Promi
     if (region && !regionsIntersect(region, ctx.bounds)) continue
     ctx.intersectingTiles++
     stat.intersectingTiles++
+    noteWarnBudget(ctx)
     if (markOverBudget(ctx)) return
 
     const contentUrl = node.content?.url ?? node.content?.uri
@@ -353,6 +489,7 @@ async function walkTileset(url: string, ctx: EstimateCtx, stat: MuniStat): Promi
         ctx.contentTiles++
         stat.contentTiles++
         await probeContent(resolved, ctx, stat)
+        noteWarnBudget(ctx)
         if (markOverBudget(ctx)) return
       }
     }
@@ -368,13 +505,15 @@ export function classifyPreviewLoad(
   est: Pick<
     PreviewLoadEstimate,
     'intersectingTiles' | 'contentTiles' | 'totalBuildings' | 'totalContentBytes' | 'capped'
-  >,
+  > & { estimatedTriangles?: number | null },
 ): PreviewModeDecision {
+  const triangles = est.estimatedTriangles ?? 0
   const tooLarge =
     est.capped ||
-    est.intersectingTiles > PREVIEW_BUDGET.maxIntersectingTiles ||
-    est.totalBuildings > PREVIEW_BUDGET.maxBuildings ||
-    est.totalContentBytes > PREVIEW_BUDGET.maxContentBytes
+    est.intersectingTiles > PREVIEW_BUDGET.hardIntersectingTiles ||
+    est.totalBuildings > PREVIEW_BUDGET.hardBuildings ||
+    est.totalContentBytes > PREVIEW_BUDGET.hardContentBytes ||
+    triangles > PREVIEW_BUDGET.hardTriangles
   if (tooLarge) return { mode: 'terrain-only', reason: 'too-large' }
   if (est.contentTiles === 0 && est.totalBuildings === 0 && est.totalContentBytes === 0) {
     return { mode: 'terrain-only', reason: 'no-data' }
@@ -405,6 +544,11 @@ async function doEstimate(input: EstimateInput): Promise<PreviewLoadEstimate> {
     capped: false,
     exceededBudget: false,
     failures: 0,
+    sampledTriangles: 0,
+    sampledBuildings: 0,
+    triangleProbes: 0,
+    estimatedTriangles: null,
+    overWarnBudget: false,
     visitedTilesets: new Set(),
     visitedContent: new Set(),
   }
@@ -433,14 +577,16 @@ async function doEstimate(input: EstimateInput): Promise<PreviewLoadEstimate> {
     totalContentBytes: ctx.totalContentBytes,
     capped: ctx.capped,
   }
-  const decision = classifyPreviewLoad(base)
+  const decision = classifyPreviewLoad({ ...base, estimatedTriangles: ctx.estimatedTriangles })
   return {
     ...base,
     mode: decision.mode,
     reason: decision.reason,
-    maxIntersectingTiles: PREVIEW_BUDGET.maxIntersectingTiles,
-    maxBuildings: PREVIEW_BUDGET.maxBuildings,
-    maxContentBytes: PREVIEW_BUDGET.maxContentBytes,
+    maxIntersectingTiles: PREVIEW_BUDGET.hardIntersectingTiles,
+    maxBuildings: PREVIEW_BUDGET.hardBuildings,
+    maxContentBytes: PREVIEW_BUDGET.hardContentBytes,
+    estimatedTriangles: ctx.estimatedTriangles,
+    overWarnBudget: ctx.overWarnBudget,
     municipalities,
   }
 }
@@ -529,4 +675,75 @@ export function isSmallRange(bounds: Bounds): boolean {
 
 export function isLargeRange(bounds: Bounds): boolean {
   return boundsMaxDimMeters(bounds) > PREVIEW_BUDGET.largeRangeMaxDimMeters
+}
+
+/** 最大辺が hardRangeMaxDimMeters を超える（地形のみ＋地形最高解像度の対象） */
+export function isBeyondHardRange(bounds: Bounds): boolean {
+  return boundsMaxDimMeters(bounds) > PREVIEW_BUDGET.hardRangeMaxDimMeters
+}
+
+export interface FpsGuardThresholds {
+  fpsLow: number
+  windowMs: number
+  gapResetMs: number
+  consecutiveWindows: number
+}
+
+export interface FpsGuard {
+  /** フレーム時刻(ms)を投入。低FPSが連続閾値に達した瞬間だけ true を返す。 */
+  push(timestampMs: number): boolean
+  reset(): void
+}
+
+export function createFpsGuard(thresholds?: Partial<FpsGuardThresholds>): FpsGuard {
+  const cfg: FpsGuardThresholds = {
+    fpsLow: RUNTIME_LOAD_LIMITS.fpsLow,
+    windowMs: RUNTIME_LOAD_LIMITS.windowMs,
+    gapResetMs: RUNTIME_LOAD_LIMITS.gapResetMs,
+    consecutiveWindows: RUNTIME_LOAD_LIMITS.consecutiveWindows,
+    ...thresholds,
+  }
+  let lastTs: number | null = null
+  let windowStart: number | null = null
+  let frames = 0
+  let lowStreak = 0
+
+  return {
+    push(timestampMs: number): boolean {
+      if (lastTs !== null && timestampMs - lastTs > cfg.gapResetMs) {
+        windowStart = null
+        frames = 0
+        lowStreak = 0
+      }
+      if (windowStart === null) {
+        windowStart = timestampMs
+        frames = 0
+      }
+      frames++
+      let fired = false
+      const elapsed = timestampMs - windowStart
+      if (elapsed >= cfg.windowMs) {
+        const fps = frames / (elapsed / 1000)
+        if (fps < cfg.fpsLow) {
+          lowStreak++
+          if (lowStreak >= cfg.consecutiveWindows) {
+            fired = true
+            lowStreak = 0
+          }
+        } else {
+          lowStreak = 0
+        }
+        windowStart = timestampMs
+        frames = 0
+      }
+      lastTs = timestampMs
+      return fired
+    },
+    reset(): void {
+      lastTs = null
+      windowStart = null
+      frames = 0
+      lowStreak = 0
+    },
+  }
 }

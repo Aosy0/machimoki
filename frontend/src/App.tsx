@@ -99,6 +99,11 @@ function App() {
 
   const [scale, setScale] = useState(1)
   const [availableLods, setAvailableLods] = useState<Lod[]>(['lod1', 'lod2'])
+  // Preview3D側で建物が表示できない範囲（サイズ・データ量起因）になったとき true。
+  // 地形解像度の自動値とエクスポートに反映する。
+  const [terrainResolutionBoost, setTerrainResolutionBoost] = useState(false)
+  // 3Dプレビューの建物表示ON/OFF（サイドパネルのトグル）。
+  const [buildingsVisible, setBuildingsVisible] = useState(true)
   const { isDevMode } = useDeveloperMode()
 
   const [manualCoords, setManualCoords] = useState({
@@ -268,17 +273,21 @@ function App() {
     setCoverageLayerVisible(mapLibreMap, coverageVisible)
   }, [mapLibreMap, coverageVisible])
 
+  // 建物が表示できない範囲（サイズ・データ量起因）では自動の地形解像度を最高（256分割）にする
   const autoTerrainGridSize = useMemo(
-    () => (selectionBounds ? adaptiveTerrainGridSize(boundsMaxDimMeters(selectionBounds)) : 128),
-    [selectionBounds],
-  )
-  const resolvedTerrainGridSize = useMemo(
     () =>
       selectionBounds
-        ? resolveTerrainGridSize(parameters.terrainGridSize, boundsMaxDimMeters(selectionBounds))
+        ? terrainResolutionBoost
+          ? 256
+          : adaptiveTerrainGridSize(boundsMaxDimMeters(selectionBounds))
         : 128,
-    [selectionBounds, parameters.terrainGridSize],
+    [selectionBounds, terrainResolutionBoost],
   )
+  const resolvedTerrainGridSize = useMemo(() => {
+    if (!selectionBounds) return 128
+    if (parameters.terrainGridSize == null && terrainResolutionBoost) return 256
+    return resolveTerrainGridSize(parameters.terrainGridSize, boundsMaxDimMeters(selectionBounds))
+  }, [selectionBounds, parameters.terrainGridSize, terrainResolutionBoost])
 
   const handleExport = useCallback(async () => {
     if (!selectionBounds) {
@@ -1034,6 +1043,9 @@ function App() {
               excludedBuildingIds={excludedBuildingIds}
               onExcludedBuildingIdsChange={setExcludedBuildingIds}
               isDevMode={isDevMode}
+              onTerrainResolutionBoostChange={setTerrainResolutionBoost}
+              buildingsVisible={buildingsVisible}
+              onBuildingsVisibleChange={setBuildingsVisible}
             />
             <LoadingOverlay
               message={pipelineState.message}
@@ -1056,6 +1068,8 @@ function App() {
             onExport={handleExport}
             availableLods={availableLods}
             autoTerrainGridSize={autoTerrainGridSize}
+            buildingsVisible={buildingsVisible}
+            onBuildingsVisibleChange={setBuildingsVisible}
           />
         </div>
         <HelpPanel mode={activeTab} isOpen={helpOpen} />

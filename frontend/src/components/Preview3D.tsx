@@ -73,7 +73,10 @@ import {
   previewMaxZoomDistance,
   isSmallRange,
   isLargeRange,
+  isBeyondHardRange,
   pickTerrainLevel,
+  createFpsGuard,
+  RUNTIME_LOAD_LIMITS,
   type PreviewLoadEstimate,
 } from '../lib/previewBudget'
 import ModelSizeOverlay from './ModelSizeOverlay'
@@ -104,28 +107,22 @@ const WHITE_MODEL_LIGHT_COLOR = 0.7
 // ズームで地形メッシュの裏へ抜けて見えるのを防ぐ(preRender で地表+この値まで戻す)。
 const CAMERA_GROUND_CLEARANCE = 2
 
-// 白模型用の球面調和係数(PLATEAU公式チュートリアル tpc06-2 の値)。
-// 指向性ライトだけでは陰面が暗く平坦になるため、全方位の拡散光で陰影に階調を作る。
-const WHITE_MODEL_SH_COEFFICIENTS = [
+// 建物の環境光(IBL拡散)に使う球面調和係数。全方位で一定のL0成分のみにする。
+// 指向性成分(L1/L2)を持つ係数セットでは法線の向きにより環境光が負になる領域が
+// 生まれ、真横＋特定方角から見た壁面が黒く沈む(実測: 真横の建物平均輝度 46/255
+// → L0のみで154)。L0=1.5 は PLATEAU公式チュートリアル tpc06-2 の先頭係数と同じ値。
+// 陰影は直射光(scene.light)のみが作る。
+const FLAT_SH_COEFFICIENTS = [
   new Cartesian3(1.5, 1.5, 1.5),
-  new Cartesian3(1.25, 1.25, 1.25),
-  new Cartesian3(1.5, 1.5, 1.5),
-  new Cartesian3(-1.25, -1.25, -1.25),
-  new Cartesian3(-1.0, -1.0, -1.0),
-  new Cartesian3(1.25, 1.25, 1.25),
   new Cartesian3(0, 0, 0),
-  new Cartesian3(-1.0, -1.0, -1.0),
+  new Cartesian3(0, 0, 0),
+  new Cartesian3(0, 0, 0),
+  new Cartesian3(0, 0, 0),
+  new Cartesian3(0, 0, 0),
+  new Cartesian3(0, 0, 0),
+  new Cartesian3(0, 0, 0),
   new Cartesian3(0, 0, 0),
 ]
-
-// 通常表示(白模型OFF)用の球面調和係数。白模型と同じ係数を0.43倍し、先頭係数を
-// PLATEAU View 5.0 (Map環境) の 0.651 と同水準(0.645)にした値。Cesium既定の
-// 環境IBL(暗く青い)のままでは壁面が暗く沈み、視点角度で建物の色が変わる
-// (実測: 建物平均輝度 俯瞰102.9/低角58.6)。この値では俯瞰166.9/低角161.6と
-// 角度によらず安定し、色味もニュートラルになる(R-B: -13/-17 → +6/+7)。
-const BUILDING_SH_COEFFICIENTS = WHITE_MODEL_SH_COEFFICIENTS.map(
-  (v) => new Cartesian3(v.x * 0.43, v.y * 0.43, v.z * 0.43),
-)
 
 function createBuildingCustomShader(color: Color): CustomShader {
   return new CustomShader({
@@ -202,8 +199,6 @@ function attachOrthographicZoom(viewer: Viewer): () => void {
 interface WhiteModelSaved {
   fogDensity: number | null
   fogEnabled: boolean | null
-  aoEnabled: boolean | null
-  aoUniforms: Record<string, number | boolean> | null
   imageryBrightness: number | null
   imagerySaturation: number | null
   tilesetOriginals: WeakMap<object, { lightColor?: Cartesian3 }>
@@ -217,6 +212,31 @@ function saveTilesetOriginal(ts: Cesium3DTileset, saved: WhiteModelSaved | undef
     saved.tilesetOriginals.set(ts as object, {
       lightColor: t.lightColor?.clone?.() ?? t.lightColor,
     })
+  } catch {
+    void 0
+  }
+}
+
+// 建物の接地感を出すためのAO。白模型のON/OFFに関わらず両モードで使う。
+// 現行より弱い設定(intensity 0.4 / bias 0.5 / lengthCap 0.5)にすると、
+// 中距離で出ていた地形上面の水平縞・壁面の網目モアレが実用上消え、
+// 建物足元の薄い接地の締まりは残る(実測確認済み)。
+function applyPreviewAo(viewer: Viewer): void {
+  try {
+    const ao = (
+      viewer.scene.postProcessStages as unknown as {
+        ambientOcclusion?: {
+          enabled: boolean
+          uniforms: Record<string, number | boolean>
+        }
+      }
+    ).ambientOcclusion
+    if (!ao) return
+    ao.enabled = true
+    ao.uniforms['intensity'] = 0.4
+    ao.uniforms['bias'] = 0.5
+    ao.uniforms['lengthCap'] = 0.5
+    ao.uniforms['ambientOcclusionOnly'] = false
   } catch {
     void 0
   }
@@ -242,7 +262,7 @@ function applyWhiteModelToTileset(
         // 鏡面(specular)=0 で空由来の青い反射を遮断し、拡散光はニュートラルな
         // 球面調和係数で与える。IBL既定値のままだと白が青く濁って灰色に見える。
         ibl.imageBasedLightingFactor = new Cartesian2(1.0, 0.0)
-        ibl.sphericalHarmonicCoefficients = WHITE_MODEL_SH_COEFFICIENTS
+        ibl.sphericalHarmonicCoefficients = FLAT_SH_COEFFICIENTS
       }
       if ('lightColor' in ts) {
         t.lightColor = new Cartesian3(
@@ -266,7 +286,7 @@ function applyWhiteModelToTileset(
     }
     if (ibl) {
       ibl.imageBasedLightingFactor = new Cartesian2(1.0, 0.0)
-      ibl.sphericalHarmonicCoefficients = BUILDING_SH_COEFFICIENTS
+      ibl.sphericalHarmonicCoefficients = FLAT_SH_COEFFICIENTS
     }
   } catch {
     void 0
@@ -286,31 +306,9 @@ function applyWhiteModelLook(
     } catch {
       void 0
     }
-    try {
-      const stages = viewer.scene.postProcessStages as unknown as {
-        ambientOcclusion?: {
-          enabled: boolean
-          uniforms: Record<string, number | boolean>
-        }
-      }
-      const ao = stages?.ambientOcclusion
-      if (ao && saved.aoEnabled !== null) {
-        ao.enabled = saved.aoEnabled
-        if (saved.aoUniforms) {
-          for (const [key, value] of Object.entries(saved.aoUniforms)) {
-            try {
-              ao.uniforms[key] = value
-            } catch {
-              void 0
-            }
-          }
-        }
-        saved.aoEnabled = null
-        saved.aoUniforms = null
-      }
-    } catch {
-      void 0
-    }
+    // 白模型OFF時も接地の締まり(AO)を残す。無いと白い建物と地形の境界が
+    // 溶けて見えるため。
+    applyPreviewAo(viewer)
     try {
       const fog = viewer.scene.fog
       if (fog) {
@@ -352,30 +350,7 @@ function applyWhiteModelLook(
   } catch {
     void 0
   }
-  try {
-    const stages = viewer.scene.postProcessStages as unknown as {
-      ambientOcclusion?: {
-        enabled: boolean
-        uniforms: Record<string, number | boolean>
-      }
-    }
-    const ao = stages?.ambientOcclusion
-    if (ao) {
-      if (saved.aoEnabled === null) {
-        saved.aoEnabled = ao.enabled
-        saved.aoUniforms = { ...ao.uniforms }
-      }
-      ao.enabled = true
-      // AOの細かい縞ノイズ対策。lengthCap を小さくするとサンプリングが高周波化して
-      // モアレ状の縞が出るため、Cesium既定の 0.26 を使い bias も強めにする。
-      ao.uniforms['intensity'] = 1.1
-      ao.uniforms['bias'] = 0.3
-      ao.uniforms['lengthCap'] = 0.26
-      ao.uniforms['ambientOcclusionOnly'] = false
-    }
-  } catch {
-    void 0
-  }
+  applyPreviewAo(viewer)
   try {
     const fog = viewer.scene.fog
     if (fog) {
@@ -666,6 +641,18 @@ function sameBounds(a: SelectionBounds, b: SelectionBounds): boolean {
   return a.west === b.west && a.south === b.south && a.east === b.east && a.north === b.north
 }
 
+/** Cesium3DTileset.statistics は公開型定義に無いため、必要なフィールドだけ型付けして読む。 */
+interface TilesetStatsLike {
+  numberOfPendingRequests: number
+  numberOfTilesProcessing: number
+  numberOfTrianglesSelected: number
+  numberOfCommands: number
+}
+
+function tilesetStats(ts: Cesium3DTileset): TilesetStatsLike {
+  return (ts as unknown as { statistics: TilesetStatsLike }).statistics
+}
+
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
   lod: Lod
@@ -686,6 +673,12 @@ interface Preview3DProps {
   excludedBuildingIds?: string[]
   onExcludedBuildingIdsChange?: (ids: string[]) => void
   isDevMode?: boolean
+  /** サイズ・データ量起因で地形のみ表示になったとき true（App側の自動地形解像度・エクスポートに反映）。 */
+  onTerrainResolutionBoostChange?: (boost: boolean) => void
+  /** 建物表示のON/OFF（サイドパネルのトグル）。 */
+  buildingsVisible?: boolean
+  /** 建物表示のON/OFF変更をAppへ通知する（バナーの切替ボタン用）。 */
+  onBuildingsVisibleChange?: (visible: boolean) => void
 }
 
 export default function Preview3D({
@@ -708,6 +701,9 @@ export default function Preview3D({
   excludedBuildingIds,
   onExcludedBuildingIdsChange,
   isDevMode = false,
+  onTerrainResolutionBoostChange,
+  buildingsVisible = true,
+  onBuildingsVisibleChange,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -777,8 +773,6 @@ export default function Preview3D({
   const whiteModelSavedRef = useRef<WhiteModelSaved>({
     fogDensity: null,
     fogEnabled: null,
-    aoEnabled: null,
-    aoUniforms: null,
     imageryBrightness: null,
     imagerySaturation: null,
     tilesetOriginals: new WeakMap(),
@@ -795,6 +789,10 @@ export default function Preview3D({
   const [coverageWarning, setCoverageWarning] = useState<string | null>(null)
   const [forceBuildingsBounds, setForceBuildingsBounds] = useState<SelectionBounds | null>(null)
   const [canForceBuildings, setCanForceBuildings] = useState(false)
+  /** サイズ・データ量起因で地形のみ表示中（地形を自動で最高解像度にする）。 */
+  const [terrainOnlyBySize, setTerrainOnlyBySize] = useState(false)
+  /** 予測警告時に「地形のみ表示」ボタンを出すか。 */
+  const [canDowngradeBuildings, setCanDowngradeBuildings] = useState(false)
   const maxTilesRef = useRef(0)
   const pendingMapRef = useRef<Map<Cesium3DTileset, number>>(new Map())
   const progressListenersRef = useRef<
@@ -802,10 +800,37 @@ export default function Preview3D({
   >(new Map())
   const progressThrottleRef = useRef(0)
   const listRafRef = useRef<number | null>(null)
+  const fpsGuardCleanupRef = useRef<(() => void) | null>(null)
+  const statsCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const heavyNowRef = useRef(false)
+  // 実測負荷ガード（FPS低下の警告）のON/OFF。設定画面は未実装のため内部フラグで常時ON（将来ここへ設定画面を接続する）。
+  const fpsWarningEnabledRef = useRef(true)
+  const buildingsVisibleRef = useRef(buildingsVisible)
+  const prevBuildingsVisibleRef = useRef(buildingsVisible)
+
+  // 地形最高解像度ブーストの通知（App側の自動分割数表示・エクスポートに反映）
+  useEffect(() => {
+    onTerrainResolutionBoostChange?.(terrainOnlyBySize)
+  }, [terrainOnlyBySize, onTerrainResolutionBoostChange])
+
+  // 建物表示トグル: 表示/非表示をタイルセットへ適用し、非表示→表示に戻したとき未読み込みなら読み込む
+  useEffect(() => {
+    for (const ts of tilesetsRef.current) {
+      ts.show = buildingsVisible
+    }
+    viewerRef.current?.scene.requestRender()
+    const wasVisible = prevBuildingsVisibleRef.current
+    prevBuildingsVisibleRef.current = buildingsVisible
+    if (!wasVisible && buildingsVisible && selectionBounds && tilesetsRef.current.length === 0) {
+      // 建物が未読み込みの状態でONに戻された場合は、明示操作として読み込む
+      setForceBuildingsBounds(selectionBounds)
+    }
+  }, [buildingsVisible, selectionBounds])
 
   buildingColorRef.current = buildingColor
   whiteModelRef.current = whiteModel
   onExcludedChangeRef.current = onExcludedBuildingIdsChange
+  buildingsVisibleRef.current = buildingsVisible
 
   const baseBuildingColor = (): Color => Color.fromCssColorString(buildingColorRef.current)
 
@@ -1495,6 +1520,15 @@ export default function Preview3D({
     setBuildingLoadProgress(null)
     setCoverageWarning(null)
     setCanForceBuildings(false)
+    fpsGuardCleanupRef.current?.()
+    fpsGuardCleanupRef.current = null
+    if (statsCheckTimerRef.current !== null) {
+      clearTimeout(statsCheckTimerRef.current)
+      statsCheckTimerRef.current = null
+    }
+    heavyNowRef.current = false
+    setTerrainOnlyBySize(false)
+    setCanDowngradeBuildings(false)
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -1591,14 +1625,18 @@ export default function Preview3D({
 
         let urls: string[] = []
         let terrainOnlyDueToBudget = false
+        // サイズ・データ量起因で地形のみ表示になる場合、地形を最高解像度（256分割＋mostDetailed）にする
+        let terrainBoost = false
 
-        const largeFastPath = isLargeRange(bounds) && !forceBuildings
+        const largeFastPath = isBeyondHardRange(bounds) && !forceBuildings
         if (largeFastPath) {
-          // 大規模範囲はURL解決・予算推定をスキップし、即座に地形のみ表示へ進む
+          // ハード上限を超える広さはURL解決・予算推定をスキップし、即座に地形のみ表示へ進む
           terrainOnlyDueToBudget = true
+          terrainBoost = true
+          setTerrainOnlyBySize(true)
           setCanForceBuildings(true)
           setCoverageWarning(
-            '選択範囲が広いため、地形のみ表示しています（建物を表示すると時間がかかります）',
+            '選択範囲が非常に広いため、地形のみ表示しています（建物を表示すると非常に時間がかかります）',
           )
           setBuildingLoadDetail('大規模範囲（地形のみ表示）')
           setBuildingLoadProgress(null)
@@ -1703,6 +1741,7 @@ export default function Preview3D({
           console.log('[Preview3D] Resolved tileset URLs:', urls)
 
           if (urls.length > 0 && !forceBuildings && !isSmallRange(bounds)) {
+            setBuildingLoadDetail('建物データ量を確認中')
             let estimate: PreviewLoadEstimate | null = null
             try {
               estimate = await estimatePreviewLoad({
@@ -1741,6 +1780,9 @@ export default function Preview3D({
                     ? '建物データが大きいため、地形のみ表示しています'
                     : '建物データがないため、地形のみ表示しています'
                 if (decision.reason === 'too-large') {
+                  // 建物が表示できない広さ・データ量のため、地形を最高解像度（256分割＋mostDetailed）にする
+                  terrainBoost = true
+                  setTerrainOnlyBySize(true)
                   setCanForceBuildings(true)
                   setCoverageWarning(
                     `選択範囲の建物データが大きいため、地形のみ表示しています（建物約${estimate.totalBuildings}件 / タイル${estimate.contentTiles}件）`,
@@ -1758,6 +1800,12 @@ export default function Preview3D({
                   message: terrainOnlyMessage,
                   error: null,
                 })
+              } else if (isLargeRange(bounds) || estimate.overWarnBudget) {
+                // 警告閾値（旧閾値）超え: 建物は読み込むが、重くなる可能性を警告し「地形のみ表示」で切替可能にする
+                setCanDowngradeBuildings(true)
+                setCoverageWarning(
+                  `選択範囲が広いため、動作が重くなる可能性があります（建物約${estimate.totalBuildings}件・タイル${estimate.contentTiles}件）`,
+                )
               }
             }
           }
@@ -1775,6 +1823,8 @@ export default function Preview3D({
         }
 
         const loadedTilesets: Cesium3DTileset[] = []
+        // ロード中でも「地形のみ表示」切替が効くよう、逐次更新される配列を先に共有する
+        tilesetsRef.current = loadedTilesets
         if (!terrainOnlyDueToBudget) {
           const loadOne = async (url: string): Promise<void> => {
             if (cancelled) return
@@ -1796,6 +1846,8 @@ export default function Preview3D({
 
               viewer!.scene.primitives.add(tileset)
               loadedTilesets.push(tileset)
+              // 非表示トグル中でも読み込みは継続し、到着分は非表示のまま保持する
+              tileset.show = buildingsVisibleRef.current
               // 白模型ON時はPLATEAU Viewと同様に拡散色を純白へ置換する
               tileset.customShader = createBuildingCustomShader(
                 whiteModelRef.current ? Color.WHITE : baseBuildingColor(),
@@ -1918,6 +1970,70 @@ export default function Preview3D({
           setLoadedTiles(null)
         }, 800)
         console.log('[Preview3D] Loaded tilesets:', loadedTilesets.length)
+
+        // 実測負荷ガード: settle後に統計で「重くなりそう」を判定し、以降の描画フレームでFPSを監視する
+        if (loadedTilesets.length > 0) {
+          // ユーザーが明示的に建物を再表示した後はFPS警告を抑止する
+          const fpsWarningEnabled = fpsWarningEnabledRef.current && !forceBuildings
+          const settleAt = performance.now() + RUNTIME_LOAD_LIMITS.settleMs
+          let statsChecked = false
+          const fpsGuard = createFpsGuard()
+          const onPostRender = (): void => {
+            if (cancelled || heavyNowRef.current) return
+            const now = performance.now()
+            if (now < settleAt) return
+            if (!statsChecked) {
+              statsChecked = true
+              let triangles = 0
+              let memoryBytes = 0
+              let commands = 0
+              for (const ts of tilesetsRef.current) {
+                const st = tilesetStats(ts)
+                triangles += st.numberOfTrianglesSelected
+                commands += st.numberOfCommands
+                memoryBytes += ts.totalMemoryUsageInBytes
+              }
+              console.log('[Preview3D] runtime stats', { triangles, memoryBytes, commands })
+              if (
+                triangles > RUNTIME_LOAD_LIMITS.trianglesSelected ||
+                memoryBytes > RUNTIME_LOAD_LIMITS.totalMemoryBytes ||
+                commands > RUNTIME_LOAD_LIMITS.commands
+              ) {
+                setCanDowngradeBuildings(true)
+                setCoverageWarning((prev) => prev ?? '建物が多く、動作が重くなる可能性があります')
+              }
+            }
+            if (!fpsWarningEnabled) return
+            const busy = tilesetsRef.current.some((ts) => {
+              const st = tilesetStats(ts)
+              return st.numberOfPendingRequests + st.numberOfTilesProcessing > 0
+            })
+            if (busy) {
+              fpsGuard.reset()
+              return
+            }
+            if (fpsGuard.push(now)) {
+              // 全表示後に建物を自動で消さない。警告と手動切替ボタンのみ提示する。
+              heavyNowRef.current = true
+              setCanDowngradeBuildings(true)
+              setCoverageWarning('動作が重くなっています（地形のみ表示に切り替えられます）')
+            }
+          }
+          viewer!.scene.postRender.addEventListener(onPostRender)
+          fpsGuardCleanupRef.current = () => {
+            try {
+              viewer!.scene.postRender.removeEventListener(onPostRender)
+            } catch {
+              void 0
+            }
+          }
+          // settle時点で1フレーム描画させ、統計チェックを発火させる
+          statsCheckTimerRef.current = setTimeout(() => {
+            statsCheckTimerRef.current = null
+            if (cancelled) return
+            viewer!.scene.requestRender()
+          }, RUNTIME_LOAD_LIMITS.settleMs)
+        }
 
         let terrainBoundingSphere: BoundingSphere | null = null
 
@@ -2101,16 +2217,22 @@ export default function Preview3D({
             Math.cos(CesiumMath.toRadians(gridCenterLat))
           const gridHeightMeters = CesiumMath.toRadians(bounds.north - bounds.south) * 6371000
           const gridMaxDimMeters = Math.max(gridWidthMeters, gridHeightMeters)
-          const resolvedTerrainGridSize = resolveTerrainGridSize(terrainGridSize, gridMaxDimMeters)
-          // 大規模範囲のみサンプリングレベルを適応させ、通常範囲は現行の mostDetailed 品質を維持する
+          // 建物が表示できない範囲（サイズ・データ量起因）は地形を最高解像度にする:
+          // メッシュ256分割＋mostDetailed サンプリング（グリッド明示指定時はユーザー値を尊重）
+          const boostGrid = terrainBoost && terrainGridSize == null
+          const resolvedTerrainGridSize = boostGrid
+            ? 256
+            : resolveTerrainGridSize(terrainGridSize, gridMaxDimMeters)
           const spanDeg = Math.max(bounds.east - bounds.west, bounds.north - bounds.south)
-          const terrainSamplingLevel = isLargeRange(bounds)
-            ? pickTerrainLevel(
-                spanDeg,
-                (terrainProvider as any)?.minimumLevel ?? 0,
-                (terrainProvider as any)?.maximumLevel ?? 99,
-              )
-            : undefined
+          const terrainSamplingLevel = boostGrid
+            ? undefined
+            : isLargeRange(bounds)
+              ? pickTerrainLevel(
+                  spanDeg,
+                  (terrainProvider as any)?.minimumLevel ?? 0,
+                  (terrainProvider as any)?.maximumLevel ?? 99,
+                )
+              : undefined
           const needsFetch =
             !sample ||
             !sameBounds(sample.bounds, bounds) ||
@@ -2598,12 +2720,47 @@ export default function Preview3D({
           }}
         >
           <span>{coverageWarning}</span>
+          {canDowngradeBuildings && selectionBounds && (
+            <button
+              data-testid="coverage-warning-hide-buildings"
+              onClick={() => {
+                // サイドパネルの建物トグルをOFFへ（タイルセットは保持したまま非表示にする）
+                onBuildingsVisibleChange?.(false)
+                setCanDowngradeBuildings(false)
+                setCanForceBuildings(true)
+                setCoverageWarning('建物を非表示にしました')
+              }}
+              style={{
+                background: '#e6c200',
+                color: '#5c4500',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '4px 10px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+            >
+              地形のみ表示
+            </button>
+          )}
           {canForceBuildings &&
             selectionBounds &&
-            (!forceBuildingsBounds || !sameBounds(forceBuildingsBounds, selectionBounds)) && (
+            (!buildingsVisible ||
+              !forceBuildingsBounds ||
+              !sameBounds(forceBuildingsBounds, selectionBounds)) && (
               <button
                 data-testid="coverage-warning-show-buildings"
-                onClick={() => setForceBuildingsBounds(selectionBounds)}
+                onClick={() => {
+                  onBuildingsVisibleChange?.(true)
+                  if (tilesetsRef.current.length === 0) {
+                    setForceBuildingsBounds(selectionBounds)
+                  }
+                  // 復帰後は非表示を知らせるバナーと切替ボタンを片付ける
+                  setCoverageWarning(null)
+                  setCanForceBuildings(false)
+                  setCanDowngradeBuildings(false)
+                }}
                 style={{
                   background: '#e6c200',
                   color: '#5c4500',

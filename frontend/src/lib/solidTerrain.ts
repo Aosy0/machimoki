@@ -14,6 +14,7 @@ import {
   PerInstanceColorAppearance,
   Primitive,
   PrimitiveType,
+  ShadowMode,
   Transforms,
   sampleTerrain,
   sampleTerrainMostDetailed,
@@ -418,6 +419,9 @@ export function buildSolidTerrainPrimitive(
       vertexShaderSource: RELIEF_VERTEX_SHADER,
       fragmentShaderSource: RELIEF_FRAGMENT_SHADER,
     }),
+    // 建物(tileset)の影を地形に落とすため受影のみ有効化する。
+    // DISABLED(既定)のままだと地形の上に影が一切乗らない。
+    shadows: ShadowMode.RECEIVE_ONLY,
     asynchronous: false,
   }) as SolidTerrainPrimitive
   primitive._machimokiSolidTerrain = true

@@ -2,13 +2,14 @@
  * previewBudget（プレビュー読み込み負荷推定）のテスト。
  *
  * 実行方法:
- *   npx tsx --test frontend/src/lib/previewBudget.test.ts
+ *   npx vitest run frontend/src/lib/previewBudget.test.ts
  */
 import { describe, it, beforeEach } from 'vitest'
 import assert from 'node:assert/strict'
 import {
   PREVIEW_BUDGET,
-  readB3dmBatchLength,
+  readB3dmInfo,
+  readGltfTriangleCount,
   classifyPreviewLoad,
   estimatePreviewLoad,
   adaptiveTerrainGridSize,
@@ -17,6 +18,8 @@ import {
   boundsMaxDimMeters,
   isSmallRange,
   isLargeRange,
+  isBeyondHardRange,
+  createFpsGuard,
   pickTerrainLevel,
   clearPreviewBudgetCache,
   type Bounds,
@@ -37,8 +40,84 @@ function makeB3dm(batchLength: number): ArrayBuffer {
   return buf
 }
 
+/** Draco圧縮を想定した最小glTF（JSONチャンクのみ）を構築する。 */
+function makeGlb(vertices: number, triangles: number): ArrayBuffer {
+  const json = JSON.stringify({
+    asset: { version: '2.0' },
+    accessors: [
+      { count: vertices, type: 'VEC3', componentType: 5126 },
+      { count: triangles * 3, type: 'SCALAR', componentType: 5125 },
+    ],
+    meshes: [
+      {
+        primitives: [
+          {
+            attributes: { POSITION: 0 },
+            indices: 1,
+            mode: 4,
+            extensions: {
+              KHR_draco_mesh_compression: { bufferView: 0, attributes: { POSITION: 0 } },
+            },
+          },
+        ],
+      },
+    ],
+    extensionsUsed: ['KHR_draco_mesh_compression'],
+  })
+  const encoded = new TextEncoder().encode(json)
+  const chunkLen = Math.ceil(encoded.byteLength / 4) * 4
+  const total = 12 + 8 + chunkLen
+  const buf = new ArrayBuffer(total)
+  const view = new DataView(buf)
+  view.setUint32(0, 0x46546c67, true) // 'glTF'
+  view.setUint32(4, 2, true) // version
+  view.setUint32(8, total, true)
+  view.setUint32(12, chunkLen, true)
+  view.setUint32(16, 0x4e4f534a, true) // 'JSON'
+  const chunk = new Uint8Array(buf, 20, chunkLen)
+  chunk.fill(0x20) // スペースパディング
+  chunk.set(encoded)
+  return buf
+}
+
+/** b3dm ヘッダ + feature table JSON + glb を連結したバッファ。 */
+function makeB3dmWithGlb(
+  batchLength: number,
+  opts: { vertices: number; triangles: number },
+): ArrayBuffer {
+  const ftBytes = new TextEncoder().encode(JSON.stringify({ BATCH_LENGTH: batchLength }))
+  const glb = makeGlb(opts.vertices, opts.triangles)
+  const total = 28 + ftBytes.byteLength + glb.byteLength
+  const buf = new ArrayBuffer(total)
+  const view = new DataView(buf)
+  ;['b', '3', 'd', 'm'].forEach((c, i) => view.setUint8(i, c.charCodeAt(0)))
+  view.setUint32(4, 1, true)
+  view.setUint32(8, total, true)
+  view.setUint32(12, ftBytes.byteLength, true)
+  new Uint8Array(buf, 28, ftBytes.byteLength).set(ftBytes)
+  new Uint8Array(buf, 28 + ftBytes.byteLength).set(new Uint8Array(glb))
+  return buf
+}
+
+function glbOffsetOf(batchLength: number): number {
+  return 28 + JSON.stringify({ BATCH_LENGTH: batchLength }).length
+}
+
 function resp(status: number, body?: BodyInit | null, headers?: Record<string, string>): Response {
   return new Response(body ?? null, { status, headers })
+}
+
+/** Rangeヘッダに応じて部分レスポンスを返す。 */
+function ranged(buf: ArrayBuffer, init?: RequestInit): Response {
+  const range = new Headers(init?.headers).get('range')
+  const m = range ? /bytes=(\d+)-(\d+)/.exec(range) : null
+  if (!m) return resp(200, buf)
+  const start = Number(m[1])
+  const end = Math.min(Number(m[2]) + 1, buf.byteLength)
+  const body = buf.slice(start, end)
+  return resp(206, body, {
+    'Content-Range': `bytes ${start}-${start + body.byteLength - 1}/${buf.byteLength}`,
+  })
 }
 
 interface MockFetch {
@@ -46,15 +125,15 @@ interface MockFetch {
   calls: Map<string, number>
 }
 
-function mockFetch(routes: Record<string, () => Response>): MockFetch {
+function mockFetch(routes: Record<string, (init?: RequestInit) => Response>): MockFetch {
   const calls = new Map<string, number>()
-  const fetchImpl = ((input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+  const fetchImpl = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
     calls.set(url, (calls.get(url) ?? 0) + 1)
     const route = routes[url]
     if (!route) return Promise.reject(new Error(`no route for ${url}`))
-    return Promise.resolve(route())
+    return Promise.resolve(route(init))
   }) as typeof fetch
   return { fetch: fetchImpl, calls }
 }
@@ -83,33 +162,98 @@ function uriTile(region: [number, number, number, number], contentUri: string): 
   return { boundingVolume: { region: [...region, 0, 100] }, content: { uri: contentUri } }
 }
 
+function pushFrames(
+  guard: ReturnType<typeof createFpsGuard>,
+  from: number,
+  count: number,
+  stepMs: number,
+): boolean[] {
+  const out: boolean[] = []
+  for (let i = 0; i < count; i++) out.push(guard.push(from + i * stepMs))
+  return out
+}
+
 const B: Bounds = { west: 139.69, south: 35.69, east: 139.7, north: 35.7 }
 
-describe('readB3dmBatchLength', () => {
-  it('BATCH_LENGTH を読み取る', () => {
-    assert.equal(readB3dmBatchLength(makeB3dm(42)), 42)
+describe('readB3dmInfo', () => {
+  it('BATCH_LENGTH と glbOffset を読み取る', () => {
+    const info = readB3dmInfo(makeB3dmWithGlb(42, { vertices: 30, triangles: 10 }))
+    assert.ok(info)
+    assert.equal(info.batchLength, 42)
+    assert.equal(info.glbOffset, glbOffsetOf(42))
   })
 
-  it('不正データは 0 を返す（短い/非b3dm/JSONなし）', () => {
-    assert.equal(readB3dmBatchLength(new ArrayBuffer(4)), 0)
+  it('不正データは null（短い/非b3dm/バージョン不一致）', () => {
+    assert.equal(readB3dmInfo(new ArrayBuffer(4)), null)
     const notB3dm = new ArrayBuffer(28)
-    assert.equal(readB3dmBatchLength(notB3dm), 0)
-    const zeroLen = new ArrayBuffer(32)
-    const view = new DataView(zeroLen)
+    assert.equal(readB3dmInfo(notB3dm), null)
+    const wrongVersion = new ArrayBuffer(28)
+    const view = new DataView(wrongVersion)
     ;['b', '3', 'd', 'm'].forEach((c, i) => view.setUint8(i, c.charCodeAt(0)))
-    view.setUint32(12, 0, true)
-    assert.equal(readB3dmBatchLength(zeroLen), 0)
+    view.setUint32(4, 0, true)
+    assert.equal(readB3dmInfo(wrongVersion), null)
+  })
+
+  it('feature table が切り詰められていても glbOffset は返す', () => {
+    const buf = new ArrayBuffer(28)
+    const view = new DataView(buf)
+    ;['b', '3', 'd', 'm'].forEach((c, i) => view.setUint8(i, c.charCodeAt(0)))
+    view.setUint32(4, 1, true)
+    view.setUint32(12, 100, true) // ftJsonLen が実バッファ長を超える
+    const info = readB3dmInfo(buf)
+    assert.ok(info)
+    assert.equal(info.batchLength, 0)
+    assert.equal(info.glbOffset, 128)
   })
 
   it('BATCH_LENGTH が非数・負なら 0 を返す', () => {
-    const ft = JSON.stringify({ BATCH_LENGTH: -5 })
-    const total = 28 + ft.length
-    const buf = new ArrayBuffer(total)
+    const info = readB3dmInfo(makeB3dm(-5))
+    assert.ok(info)
+    assert.equal(info.batchLength, 0)
+  })
+})
+
+describe('readGltfTriangleCount', () => {
+  it('POSITION/indices から三角形数・頂点数を合算する（Draco JSON）', () => {
+    const tri = readGltfTriangleCount(makeGlb(300, 100))
+    assert.deepEqual(tri, { triangles: 100, vertices: 300 })
+  })
+
+  it('非glTF・短すぎるバッファは null', () => {
+    assert.equal(readGltfTriangleCount(makeB3dm(10)), null)
+    assert.equal(readGltfTriangleCount(new ArrayBuffer(10)), null)
+  })
+
+  it('JSONチャンク長がバッファ長を超えたら null（切り詰め）', () => {
+    const buf = new ArrayBuffer(20)
     const view = new DataView(buf)
-    ;['b', '3', 'd', 'm'].forEach((c, i) => view.setUint8(i, c.charCodeAt(0)))
-    view.setUint32(12, ft.length, true)
-    new TextEncoder().encodeInto(ft, new Uint8Array(buf, 28, ft.length))
-    assert.equal(readB3dmBatchLength(buf), 0)
+    view.setUint32(0, 0x46546c67, true)
+    view.setUint32(4, 2, true)
+    view.setUint32(8, 120, true)
+    view.setUint32(12, 100, true)
+    view.setUint32(16, 0x4e4f534a, true)
+    assert.equal(readGltfTriangleCount(buf), null)
+  })
+
+  it('JSONチャンク以外・壊れたJSONは null', () => {
+    const binChunk = new ArrayBuffer(20)
+    const view = new DataView(binChunk)
+    view.setUint32(0, 0x46546c67, true)
+    view.setUint32(4, 2, true)
+    view.setUint32(8, 20, true)
+    view.setUint32(12, 0, true)
+    view.setUint32(16, 0x004e4942, true)
+    assert.equal(readGltfTriangleCount(binChunk), null)
+
+    const broken = new ArrayBuffer(24)
+    const bview = new DataView(broken)
+    bview.setUint32(0, 0x46546c67, true)
+    bview.setUint32(4, 2, true)
+    bview.setUint32(8, 24, true)
+    bview.setUint32(12, 4, true)
+    bview.setUint32(16, 0x4e4f534a, true)
+    new TextEncoder().encodeInto('xxxx', new Uint8Array(broken, 20, 4))
+    assert.equal(readGltfTriangleCount(broken), null)
   })
 })
 
@@ -139,26 +283,46 @@ describe('classifyPreviewLoad', () => {
     assert.equal(d.reason, 'no-data')
   })
 
-  it('建物数が上限超過なら terrain-only/too-large', () => {
-    const d = classifyPreviewLoad({ ...base, totalBuildings: PREVIEW_BUDGET.maxBuildings + 1 })
+  it('建物数がハード上限超過なら terrain-only/too-large', () => {
+    const d = classifyPreviewLoad({ ...base, totalBuildings: PREVIEW_BUDGET.hardBuildings + 1 })
     assert.equal(d.mode, 'terrain-only')
     assert.equal(d.reason, 'too-large')
   })
 
-  it('交差タイル数が上限超過なら too-large', () => {
+  it('交差タイル数がハード上限超過なら too-large', () => {
     const d = classifyPreviewLoad({
       ...base,
-      intersectingTiles: PREVIEW_BUDGET.maxIntersectingTiles + 1,
+      intersectingTiles: PREVIEW_BUDGET.hardIntersectingTiles + 1,
     })
     assert.equal(d.reason, 'too-large')
   })
 
-  it('コンテンツバイトが上限超過なら too-large', () => {
+  it('コンテンツバイトがハード上限超過なら too-large', () => {
     const d = classifyPreviewLoad({
       ...base,
-      totalContentBytes: PREVIEW_BUDGET.maxContentBytes + 1,
+      totalContentBytes: PREVIEW_BUDGET.hardContentBytes + 1,
     })
     assert.equal(d.reason, 'too-large')
+  })
+
+  it('推定三角形数がハード上限超過なら too-large', () => {
+    const d = classifyPreviewLoad({
+      ...base,
+      estimatedTriangles: PREVIEW_BUDGET.hardTriangles + 1,
+    })
+    assert.equal(d.reason, 'too-large')
+  })
+
+  it('警告閾値超えでは too-large にしない', () => {
+    const d = classifyPreviewLoad({
+      ...base,
+      intersectingTiles: PREVIEW_BUDGET.warnIntersectingTiles + 1,
+      totalBuildings: PREVIEW_BUDGET.warnBuildings + 1,
+      totalContentBytes: PREVIEW_BUDGET.warnContentBytes + 1,
+      estimatedTriangles: PREVIEW_BUDGET.warnTriangles + 1,
+    })
+    assert.equal(d.mode, 'buildings')
+    assert.equal(d.reason, 'ok')
   })
 
   it('capped なら too-large', () => {
@@ -166,12 +330,13 @@ describe('classifyPreviewLoad', () => {
     assert.equal(d.reason, 'too-large')
   })
 
-  it('上限ちょうどなら buildings/ok（境界）', () => {
+  it('ハード上限ちょうどなら buildings/ok（境界）', () => {
     const d = classifyPreviewLoad({
-      intersectingTiles: PREVIEW_BUDGET.maxIntersectingTiles,
+      intersectingTiles: PREVIEW_BUDGET.hardIntersectingTiles,
       contentTiles: 1,
-      totalBuildings: PREVIEW_BUDGET.maxBuildings,
-      totalContentBytes: PREVIEW_BUDGET.maxContentBytes,
+      totalBuildings: PREVIEW_BUDGET.hardBuildings,
+      totalContentBytes: PREVIEW_BUDGET.hardContentBytes,
+      estimatedTriangles: PREVIEW_BUDGET.hardTriangles,
       capped: false,
     })
     assert.equal(d.mode, 'buildings')
@@ -210,7 +375,7 @@ describe('adaptiveTerrainGridSize / previewMaxZoomDistance', () => {
 
   it('小範囲判定は最大辺750mが境界', () => {
     assert.equal(PREVIEW_BUDGET.smallRangeMaxDimMeters, 750)
-    assert.equal(PREVIEW_BUDGET.maxBuildings, 2500)
+    assert.equal(PREVIEW_BUDGET.warnBuildings, 2500)
     const tiny: Bounds = { west: 139.69, south: 35.69, east: 139.696, north: 35.694 }
     assert.ok(boundsMaxDimMeters(tiny) < 750)
     assert.equal(isSmallRange(tiny), true)
@@ -233,7 +398,7 @@ describe('resolveTerrainGridSize', () => {
   })
 })
 
-describe('isLargeRange', () => {
+describe('isLargeRange / isBeyondHardRange', () => {
   it('最大辺5kmを境界に大規模判定する', () => {
     assert.equal(PREVIEW_BUDGET.largeRangeMaxDimMeters, 5000)
     const tiny: Bounds = { west: 139.69, south: 35.69, east: 139.696, north: 35.694 }
@@ -246,6 +411,15 @@ describe('isLargeRange', () => {
   it('boundsMaxDimMeters の閾値と一致する', () => {
     const bounds: Bounds = { west: 139.65, south: 35.65, east: 139.72, north: 35.71 }
     assert.equal(isLargeRange(bounds), boundsMaxDimMeters(bounds) > 5000)
+  })
+
+  it('最大辺15000mがハード範囲の境界', () => {
+    const under: Bounds = { west: 0, south: 0, east: 0.13, north: 0 }
+    const over: Bounds = { west: 0, south: 0, east: 0.14, north: 0 }
+    assert.ok(boundsMaxDimMeters(under) <= PREVIEW_BUDGET.hardRangeMaxDimMeters)
+    assert.equal(isBeyondHardRange(under), false)
+    assert.ok(boundsMaxDimMeters(over) > PREVIEW_BUDGET.hardRangeMaxDimMeters)
+    assert.equal(isBeyondHardRange(over), true)
   })
 })
 
@@ -267,6 +441,41 @@ describe('pickTerrainLevel', () => {
   })
 })
 
+describe('createFpsGuard', () => {
+  it('高FPSが続けば発報しない', () => {
+    const results = pushFrames(createFpsGuard(), 0, 300, 16)
+    assert.equal(results.some(Boolean), false)
+  })
+
+  it('低FPSが2窓連続した瞬間だけ発報する', () => {
+    const results = pushFrames(createFpsGuard(), 0, 41, 100) // 0..4000ms
+    const firedAt = results.flatMap((fired, i) => (fired ? [i] : []))
+    assert.deepEqual(firedAt, [40])
+  })
+
+  it('単発の低下では発報しない', () => {
+    const guard = createFpsGuard()
+    const low = pushFrames(guard, 0, 21, 100) // 最初の1窓だけ低FPS
+    const high = pushFrames(guard, 2020, 100, 20) // 次の窓は高FPS
+    assert.equal([...low, ...high].some(Boolean), false)
+  })
+
+  it('アイドルギャップで連続カウントをリセットする', () => {
+    const guard = createFpsGuard()
+    assert.equal(pushFrames(guard, 0, 21, 100).some(Boolean), false) // streak 1
+    assert.equal(pushFrames(guard, 5000, 21, 100).some(Boolean), false) // ギャップ後 streak 1
+    assert.equal(pushFrames(guard, 7100, 20, 100).some(Boolean), true) // streak 2 で発報
+  })
+
+  it('reset で状態をクリアする', () => {
+    const guard = createFpsGuard()
+    assert.equal(pushFrames(guard, 0, 21, 100).some(Boolean), false)
+    guard.reset()
+    assert.equal(pushFrames(guard, 0, 21, 100).some(Boolean), false)
+    assert.equal(pushFrames(guard, 2100, 20, 100).some(Boolean), true)
+  })
+})
+
 describe('estimatePreviewLoad (mocked fetch)', () => {
   beforeEach(() => {
     clearPreviewBudgetCache()
@@ -274,7 +483,7 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
 
   it('単一タイルセットの建物数を集計する', async () => {
     const url = 'https://x/tileset.json'
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () =>
         resp(
           200,
@@ -304,7 +513,7 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
   it('外部タイルセットJSONへ再帰する', async () => {
     const root = 'https://x/root.json'
     const ext = 'https://x/ext.json'
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [root]: () =>
         resp(
           200,
@@ -326,7 +535,7 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
   it('bounds 外の region を枝刈りする', async () => {
     const url = 'https://x/tileset.json'
     // 第1子は bounds(B: 139.69..139.7) 外、第2子は内側（region はラジアン）。
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () =>
         resp(
           200,
@@ -352,7 +561,7 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
 
   it('実東京のラジアンregionは交差し、遠方regionは交差しない', async () => {
     const url = 'https://x/tileset.json'
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () =>
         resp(
           200,
@@ -375,13 +584,14 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
     const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
     assert.equal(est.contentTiles, 1)
     assert.equal(est.totalBuildings, 8)
-    assert.equal(calls.get('https://x/tokyo.b3dm'), 1)
+    // 1回目は建物数、2回目は三角形数サンプリング
+    assert.equal(calls.get('https://x/tokyo.b3dm'), 2)
     assert.equal(calls.get('https://x/osaka.b3dm'), undefined)
   })
 
   it('相対URLをベースURL基準で解決する', async () => {
     const url = 'https://host/area/tileset.json'
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () =>
         resp(
           200,
@@ -395,12 +605,13 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
     const { fetch, calls } = mockFetch(routes)
     const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
     assert.equal(est.totalBuildings, 5)
-    assert.equal(calls.get('https://host/shared/b.b3dm'), 1)
+    // 1回目は建物数、2回目は三角形数サンプリング
+    assert.equal(calls.get('https://host/shared/b.b3dm'), 2)
   })
 
   it('content.uri形式のタイルを集計する', async () => {
     const url = 'https://x/tileset.json'
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () =>
         resp(
           200,
@@ -419,7 +630,7 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
 
   it('206 は Content-Range 総数、200 は実バイト数で集計する', async () => {
     const url = 'https://x/tileset.json'
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () =>
         resp(
           200,
@@ -448,7 +659,7 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
     for (let i = 0; i < PREVIEW_BUDGET.scanNodeCap + 500; i++) {
       children.push(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], null))
     }
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () => resp(200, JSON.stringify(tileset(tile(null, null, children)))),
     }
     const { fetch } = mockFetch(routes)
@@ -460,7 +671,7 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
 
   it('bounds+lod+URL でメモ化する（fetch は1回）', async () => {
     const url = 'https://x/tileset.json'
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () =>
         resp(
           200,
@@ -478,7 +689,7 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
 
   it('失敗したタイル/タイルセットを分離して他は集計する', async () => {
     const url = 'https://x/tileset.json'
-    const routes: Record<string, () => Response> = {
+    const routes: Record<string, (init?: RequestInit) => Response> = {
       [url]: () =>
         resp(
           200,
@@ -504,12 +715,12 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
     const url = 'https://x/tileset.json'
     const count = 10
     const children: unknown[] = []
-    const routes: Record<string, () => Response> = {}
+    const routes: Record<string, (init?: RequestInit) => Response> = {}
     for (let i = 0; i < count; i++) {
       const name = `t${i}.b3dm`
       children.push(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], name))
       routes[`https://x/${name}`] = () =>
-        resp(206, makeB3dm(PREVIEW_BUDGET.maxBuildings + 1), {
+        resp(206, makeB3dm(PREVIEW_BUDGET.hardBuildings + 1), {
           'Content-Range': 'bytes 0-16383/100',
         })
     }
@@ -518,8 +729,69 @@ describe('estimatePreviewLoad (mocked fetch)', () => {
     const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
     const probed = [...calls.keys()].filter((u) => u.endsWith('.b3dm')).length
     assert.ok(probed < count)
-    assert.equal(est.totalBuildings, PREVIEW_BUDGET.maxBuildings + 1)
+    assert.equal(est.totalBuildings, PREVIEW_BUDGET.hardBuildings + 1)
     assert.equal(est.mode, 'terrain-only')
     assert.equal(est.reason, 'too-large')
+  })
+
+  it('三角形数をサンプリングして建物数から外挿する', async () => {
+    const url = 'https://x/tileset.json'
+    const count = 4
+    const children: unknown[] = []
+    const routes: Record<string, (init?: RequestInit) => Response> = {}
+    for (let i = 0; i < count; i++) {
+      const name = `s${i}.b3dm`
+      children.push(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], name))
+      const buf = makeB3dmWithGlb(10, { vertices: 300, triangles: 100 })
+      routes[`https://x/${name}`] = (init) => ranged(buf, init)
+    }
+    routes[url] = () => resp(200, JSON.stringify(tileset(tile(null, null, children))))
+    const { fetch } = mockFetch(routes)
+    const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
+    assert.equal(est.totalBuildings, 40)
+    // 10建物あたり100三角形 → 40建物で400三角形
+    assert.equal(est.estimatedTriangles, 400)
+    assert.equal(est.overWarnBudget, false)
+    assert.equal(est.mode, 'buildings')
+  })
+
+  it('推定三角形数がハード上限を超えたら too-large で打ち切る', async () => {
+    const url = 'https://x/tileset.json'
+    const count = 10
+    const children: unknown[] = []
+    const routes: Record<string, (init?: RequestInit) => Response> = {}
+    for (let i = 0; i < count; i++) {
+      const name = `h${i}.b3dm`
+      children.push(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], name))
+      const buf = makeB3dmWithGlb(1, { vertices: 300, triangles: 20_000_000 })
+      routes[`https://x/${name}`] = (init) => ranged(buf, init)
+    }
+    routes[url] = () => resp(200, JSON.stringify(tileset(tile(null, null, children))))
+    const { fetch, calls } = mockFetch(routes)
+    const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
+    const probed = [...calls.keys()].filter((u) => u.endsWith('.b3dm')).length
+    assert.ok(probed < count * 2)
+    assert.equal(est.estimatedTriangles, 20_000_000)
+    assert.equal(est.mode, 'terrain-only')
+    assert.equal(est.reason, 'too-large')
+    assert.equal(est.capped, true)
+  })
+
+  it('警告閾値超えでも overWarnBudget を立てるだけで buildings のまま', async () => {
+    const url = 'https://x/tileset.json'
+    const routes: Record<string, (init?: RequestInit) => Response> = {
+      [url]: () =>
+        resp(
+          200,
+          JSON.stringify(tileset(tile([rad(139.0), rad(35.0), rad(140.0), rad(36.0)], 'w.b3dm'))),
+        ),
+      'https://x/w.b3dm': () => resp(206, makeB3dm(3000), { 'Content-Range': 'bytes 0-16383/100' }),
+    }
+    const { fetch } = mockFetch(routes)
+    const est = await estimatePreviewLoad({ bounds: B, lod: 'lod2', tilesetUrls: [url], fetch })
+    assert.equal(est.totalBuildings, 3000)
+    assert.equal(est.overWarnBudget, true)
+    assert.equal(est.mode, 'buildings')
+    assert.equal(est.reason, 'ok')
   })
 })
