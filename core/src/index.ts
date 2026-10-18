@@ -44,8 +44,10 @@ export {
   exportMeshesTo3MF,
   importFrom3MF,
   importFromSTL,
+  sectionMesh,
   cleanupManifoldImports,
 } from './manifoldOps.js'
+export type { SectionAxis } from './manifoldOps.js'
 
 export type {
   Bounds,

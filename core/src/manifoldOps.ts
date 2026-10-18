@@ -389,6 +389,47 @@ export async function exportPartsTo3MF(
   }
 }
 
+export type SectionAxis = 'x' | 'z'
+
+/**
+ * メッシュを鉛直平面（x または z 一定）で分割し、指定側の半身を返す。
+ *
+ * 切断面はキャップされ、閉じたマニフォールドとして返る（表示専用の派生
+ * メッシュであり、元のメッシュは変更しない）。対象側が空なら null。
+ *
+ * @param axis   'x' = 東西方向、'z' = 南北方向の平面
+ * @param keep   'min' = 座標が小さい側、'max' = 大きい側
+ * @param offset 平面の座標（メッシュと同じ空間の単位）
+ */
+export async function sectionMesh(
+  mesh: RawMesh,
+  axis: SectionAxis,
+  keep: 'min' | 'max',
+  offset: number,
+): Promise<RawMesh | null> {
+  if (!Number.isFinite(offset)) return null
+  const source = await createManifoldFromMesh(mesh)
+  try {
+    const normal: [number, number, number] = axis === 'x' ? [1, 0, 0] : [0, 0, 1]
+    const [positive, negative] = source.splitByPlane(normal, offset)
+    const kept = keep === 'max' ? positive : negative
+    const other = keep === 'max' ? negative : positive
+    try {
+      if (!(kept.volume() > 0)) return null
+      const raw = kept.getMesh()
+      return {
+        positions: new Float32Array(raw.vertProperties),
+        indices: new Uint32Array(raw.triVerts),
+      }
+    } finally {
+      kept.delete()
+      other.delete()
+    }
+  } finally {
+    source.delete()
+  }
+}
+
 export function mergeRawMeshes(meshes: RawMesh[]): RawMesh {
   let totalVerts = 0
   let totalIndices = 0

@@ -732,6 +732,20 @@ export default function Preview3D({
   const [finalShapeOn, setFinalShapeOn] = useState(false)
   const [finalShapeStale, setFinalShapeStale] = useState(false)
   const [finalShapeWarnings, setFinalShapeWarnings] = useState<string[]>([])
+  // 断面表示用。完成メッシュ自体は上書きせず、毎回この ref から派生生成する。
+  const finalShapeMeshRef = useRef<import('@machimoki/core').RawMesh | null>(null)
+  const finalShapeSectionPrimitiveRef = useRef<Primitive | null>(null)
+  const finalShapeSectionRequestIdRef = useRef(0)
+  const finalShapeSectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 最終形状生成時と同じ変換・色（断面プリミティブ化に使い回す）。
+  const finalShapeRenderRef = useRef<{
+    centerMatrix: Matrix4
+    positionScale: number
+    color: string
+  } | null>(null)
+  const [sectionOn, setSectionOn] = useState(false)
+  const [sectionT, setSectionT] = useState(0.5)
+  const [sectionKeep, setSectionKeep] = useState<'min' | 'max'>('min')
   const gridLayerRef = useRef<any>(null)
   const gsiLayerRef = useRef<any>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
@@ -2674,8 +2688,160 @@ export default function Preview3D({
     viewer.scene.requestRender()
   }
 
+  // 断面プリミティブの破棄（remove & destroy）。
+  const disposeFinalShapeSection = (): void => {
+    const p = finalShapeSectionPrimitiveRef.current
+    finalShapeSectionPrimitiveRef.current = null
+    if (!p) return
+    try {
+      viewerRef.current?.scene.primitives.remove(p)
+    } catch {
+      void 0
+    }
+    try {
+      p.destroy()
+    } catch {
+      void 0
+    }
+  }
+
+  // 断面状態のリセット（最終形状の再生成・解除時に OFF・位置0.5・keep 'min' に戻す）。
+  const resetFinalShapeSection = (): void => {
+    if (finalShapeSectionTimerRef.current !== null) {
+      clearTimeout(finalShapeSectionTimerRef.current)
+      finalShapeSectionTimerRef.current = null
+    }
+    // 進行中の断面生成を無効化する。
+    finalShapeSectionRequestIdRef.current += 1
+    disposeFinalShapeSection()
+    setSectionOn(false)
+    setSectionT(0.5)
+    setSectionKeep('min')
+  }
+
+  // 完成メッシュからの断面派生。元メッシュは上書きしない。
+  const updateFinalShapeSection = async (
+    t: number,
+    keep: 'min' | 'max',
+    requestId: number,
+  ): Promise<void> => {
+    const viewer = viewerRef.current
+    const mesh = finalShapeMeshRef.current
+    const render = finalShapeRenderRef.current
+    if (!viewer || !mesh || !render) return
+    if (!finalShapeActiveRef.current) return
+    const shapeId = finalShapeRequestIdRef.current
+    // 完成メッシュの bbox から切断面 offset を求める（axis: 'x'）。
+    let minX = Infinity
+    let maxX = -Infinity
+    const pos = mesh.positions
+    for (let i = 0; i < pos.length; i += 3) {
+      const x = pos[i]
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || maxX <= minX) return
+    const offset = minX + t * (maxX - minX)
+    const { sectionMesh } = await import('@machimoki/core')
+    if (
+      requestId !== finalShapeSectionRequestIdRef.current ||
+      shapeId !== finalShapeRequestIdRef.current
+    )
+      return
+    const sectioned = await sectionMesh(mesh, 'x', keep, offset)
+    if (
+      requestId !== finalShapeSectionRequestIdRef.current ||
+      shapeId !== finalShapeRequestIdRef.current
+    )
+      return
+    const { buildEngineMeshPrimitive } = await import('../lib/engineMeshPrimitive')
+    if (
+      requestId !== finalShapeSectionRequestIdRef.current ||
+      shapeId !== finalShapeRequestIdRef.current
+    )
+      return
+    if (!sectioned) {
+      // 対象側が空なら断面を出さず、元の最終形状に戻す（空のビューを避ける）。
+      disposeFinalShapeSection()
+      if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
+      viewer.scene.requestRender()
+      return
+    }
+    const primitive = buildEngineMeshPrimitive(sectioned, render)
+    if (!primitive) {
+      disposeFinalShapeSection()
+      if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
+      viewer.scene.requestRender()
+      return
+    }
+    if (
+      requestId !== finalShapeSectionRequestIdRef.current ||
+      shapeId !== finalShapeRequestIdRef.current
+    ) {
+      try {
+        primitive.destroy()
+      } catch {
+        void 0
+      }
+      return
+    }
+    disposeFinalShapeSection()
+    viewer.scene.primitives.add(primitive)
+    finalShapeSectionPrimitiveRef.current = primitive
+    if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
+    viewer.scene.requestRender()
+  }
+
+  // 断面操作は150msほどデバウンスする（切断は重いため）。
+  const scheduleSectionUpdate = (t: number, keep: 'min' | 'max'): void => {
+    if (finalShapeSectionTimerRef.current !== null) {
+      clearTimeout(finalShapeSectionTimerRef.current)
+    }
+    finalShapeSectionTimerRef.current = setTimeout(() => {
+      finalShapeSectionTimerRef.current = null
+      const requestId = finalShapeSectionRequestIdRef.current + 1
+      finalShapeSectionRequestIdRef.current = requestId
+      void updateFinalShapeSection(t, keep, requestId)
+    }, 150)
+  }
+
+  // 断面トグルの切替。OFFでは断面を消して元の最終形状に戻す。
+  const toggleSection = (): void => {
+    if (!finalShapeActiveRef.current || !finalShapeMeshRef.current) return
+    if (sectionOn) {
+      if (finalShapeSectionTimerRef.current !== null) {
+        clearTimeout(finalShapeSectionTimerRef.current)
+        finalShapeSectionTimerRef.current = null
+      }
+      finalShapeSectionRequestIdRef.current += 1
+      disposeFinalShapeSection()
+      setSectionOn(false)
+      if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
+      viewerRef.current?.scene.requestRender()
+      return
+    }
+    setSectionOn(true)
+    scheduleSectionUpdate(sectionT, sectionKeep)
+  }
+
+  const onSectionPositionChange = (t: number): void => {
+    setSectionT(t)
+    if (!sectionOn) return
+    scheduleSectionUpdate(t, sectionKeep)
+  }
+
+  const onSectionFlip = (): void => {
+    const next = sectionKeep === 'min' ? 'max' : 'min'
+    setSectionKeep(next)
+    if (!sectionOn) return
+    scheduleSectionUpdate(sectionT, next)
+  }
+
   const deactivateFinalShape = (): void => {
+    resetFinalShapeSection()
     finalShapeActiveRef.current = false
+    finalShapeMeshRef.current = null
+    finalShapeRenderRef.current = null
     finalShapeParamsRef.current = null
     setFinalShapeOn(false)
     setFinalShapeStale(false)
@@ -2693,6 +2859,8 @@ export default function Preview3D({
     const requestId = finalShapeRequestIdRef.current + 1
     finalShapeRequestIdRef.current = requestId
     const key = finalShapeParamsKey()
+    // 断面表示中なら破棄して初期状態に戻す（派生元が変わるため）。
+    resetFinalShapeSection()
     try {
       onPipelineStateChange?.({
         phase: 'acquiring',
@@ -2776,15 +2944,19 @@ export default function Preview3D({
             0,
           ),
         )
+      const finalColor = whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor
       const primitive = buildEngineMeshPrimitive(mesh, {
         centerMatrix,
         positionScale: 1 / scale,
-        color: whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor,
+        color: finalColor,
       })
       if (!primitive) throw new Error('最終形状メッシュが空でした')
       disposeFinalShapePrimitive()
       viewer.scene.primitives.add(primitive)
       finalShapePrimitiveRef.current = primitive
+      // 断面はこの完成メッシュから毎回派生する（上書きしない）。
+      finalShapeMeshRef.current = mesh
+      finalShapeRenderRef.current = { centerMatrix, positionScale: 1 / scale, color: finalColor }
       finalShapeActiveRef.current = true
       finalShapeParamsRef.current = key
       setFinalShapeOn(true)
@@ -2821,9 +2993,14 @@ export default function Preview3D({
     setFinalShapeStale(finalShapeParamsRef.current !== finalShapeParamsKey())
   })
 
-  // アンマウント時は最終形状プリミティブを破棄する。
+  // アンマウント時は最終形状・断面プリミティブを破棄する。
   useEffect(() => {
     return () => {
+      if (finalShapeSectionTimerRef.current !== null) {
+        clearTimeout(finalShapeSectionTimerRef.current)
+        finalShapeSectionTimerRef.current = null
+      }
+      disposeFinalShapeSection()
       disposeFinalShapePrimitive()
       finalShapeActiveRef.current = false
     }
@@ -3151,6 +3328,71 @@ export default function Preview3D({
           ))}
         </div>
       </div>
+      {finalShapeOn && (
+        <div
+          data-testid="final-shape-section-panel"
+          style={{
+            position: 'absolute',
+            top: '56px',
+            right: '16px',
+            zIndex: 20,
+            display: 'flex',
+            gap: '6px',
+            alignItems: 'center',
+            background: 'var(--surface)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: '6px',
+            padding: '6px 8px',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          <button
+            data-testid="final-shape-section-toggle"
+            onClick={toggleSection}
+            style={{
+              background: sectionOn ? 'var(--accent)' : 'var(--surface)',
+              color: sectionOn ? '#fff' : 'var(--text)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: '6px',
+              padding: '6px 10px',
+              fontSize: '11px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              minWidth: '52px',
+            }}
+          >
+            断面
+          </button>
+          <input
+            data-testid="final-shape-section-position"
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={sectionT}
+            onChange={(e) => onSectionPositionChange(Number(e.target.value))}
+            style={{ width: '120px', accentColor: 'var(--accent)', cursor: 'pointer' }}
+            aria-label="断面位置"
+          />
+          <button
+            data-testid="final-shape-section-flip"
+            onClick={onSectionFlip}
+            style={{
+              background: 'var(--surface)',
+              color: 'var(--text)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: '6px',
+              padding: '6px 10px',
+              fontSize: '11px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            反対側
+          </button>
+        </div>
+      )}
       {isDevMode && debugInfo && (
         <div
           data-testid="terrain-debug-info"
