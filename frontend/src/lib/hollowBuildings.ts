@@ -3,7 +3,7 @@ import wasmUrl from 'manifold-3d/manifold.wasm?url'
 
 setWasmUrl(wasmUrl)
 
-import { Cartesian3, Transforms } from 'cesium'
+import { Cartesian3, ShadowMode, Transforms } from 'cesium'
 import { buildBuildingMeshes, buildHollowBuildingShells } from '@machimoki/core'
 import type { Primitive } from 'cesium'
 import type { Lod } from './catalogApi'
@@ -71,6 +71,13 @@ export async function buildHollowBuildingPrimitive(
   )
   return buildEngineMeshPrimitive(
     { positions, indices },
-    { centerMatrix, positionScale: 1, color: buildingColor },
+    {
+      centerMatrix,
+      positionScale: 1,
+      color: buildingColor,
+      // 薄い中空シェルは自己シャドウ（アクネ）で壁面がまだらに暗くなるため、
+      // 地形へ影を落とす CAST_ONLY にする（受影しない）。
+      shadows: ShadowMode.CAST_ONLY,
+    },
   )
 }

@@ -22,6 +22,8 @@ export interface EngineMeshPrimitiveOptions {
   /** 座標に掛ける係数（スケール戻し等）。 */
   positionScale: number
   color: string
+  /** 影の設定（既定: 描画・受影とも有効）。 */
+  shadows?: ShadowMode
 }
 
 // 三角形法線を頂点に累積して正規化する（solidTerrain と同様の処理）。
@@ -131,7 +133,7 @@ export function buildEngineMeshPrimitive(
       translucent: false,
     }),
     // 外殻と同様に影を描画する。
-    shadows: ShadowMode.ENABLED,
+    shadows: options.shadows ?? ShadowMode.ENABLED,
     asynchronous: false,
   })
 }
