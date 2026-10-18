@@ -221,16 +221,25 @@ export function alignFlatTerrainToBuildings(
   }
 }
 
-export async function buildPrintableModelFromMeshes(
+export interface PrintableGeometryResult {
+  /** 完成メッシュ（Y-up・スケール適用済みのモデル空間） */
+  mesh: RawMesh
+  warnings: string[]
+  hollowing?: HollowingReport
+}
+
+/**
+ * 取得済みメッシュから「完成形状」を生成する（シリアライズは行わない）。
+ *
+ * プレビューとエクスポートで同じ形状を共有するための共通処理。
+ * 入力の `buildingMeshes` / `terrainMesh` は変更しない。
+ */
+export async function buildPrintableGeometryFromMeshes(
   buildingMeshes: RawMesh[],
   terrainMesh: RawMesh | null,
   bounds: Bounds,
   options: ExportOptions,
-): Promise<ExportResult> {
-  const format = options.format
-  const buildingColor = options.buildingColor ?? '#ffffff'
-  const terrainColor = options.terrainColor ?? '#ffffff'
-  const upAxis = options.upAxis ?? 'z-up'
+): Promise<PrintableGeometryResult> {
   const scale = options.scale ?? 1
   const includeSpanning = options.includeSpanningBuildings ?? false
   const pickPoints = options.pickPoints ?? []
@@ -238,12 +247,6 @@ export async function buildPrintableModelFromMeshes(
   const hollowBuildings = options.hollowBuildings ?? true
   const shellThickness = options.shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
   const warnings: string[] = []
-
-  if (format === 'machimoki') {
-    throw new Error(
-      "format 'machimoki' is not supported by buildPrintableModelFromMeshes; use exportMachimokiFromMeshes instead",
-    )
-  }
 
   // Open-bottom hollowing requires terrain: the terrain cavity provides the
   // open underside and the building cavities connect to it.
@@ -426,17 +429,13 @@ export async function buildPrintableModelFromMeshes(
       }
     }
 
-    if (format === 'stl') {
-      return {
-        buffer: exportMeshesToSTL([meshToRaw(final.getMesh())], upAxis),
-        warnings,
-        hollowing: hollowingReport,
-      }
-    }
-
-    const modelColor = terrainMesh ? terrainColor : buildingColor
+    // 完成メッシュを返す（Manifold を破棄する前にコピーする）。
+    const rawMesh = final.getMesh()
     return {
-      buffer: await exportTo3MF(final, modelColor, upAxis),
+      mesh: {
+        positions: new Float32Array(rawMesh.vertProperties),
+        indices: new Uint32Array(rawMesh.triVerts),
+      },
       warnings,
       hollowing: hollowingReport,
     }
@@ -445,6 +444,48 @@ export async function buildPrintableModelFromMeshes(
     union.delete()
     for (const manifold of buildingManifolds) manifold.delete()
     for (const cutter of buildingCutters) cutter.delete()
+  }
+}
+
+/**
+ * 取得済みメッシュから印刷用モデルを生成し、STL/3MF にシリアライズする。
+ *
+ * `buildPrintableGeometryFromMeshes` が返す完成メッシュを、指定の up-axis と
+ * mm 単位（1回だけ変換）で出力する。プレビューと同じ形状になる。
+ */
+export async function buildPrintableModelFromMeshes(
+  buildingMeshes: RawMesh[],
+  terrainMesh: RawMesh | null,
+  bounds: Bounds,
+  options: ExportOptions,
+): Promise<ExportResult> {
+  if (options.format === 'machimoki') {
+    throw new Error(
+      "format 'machimoki' is not supported by buildPrintableModelFromMeshes; use exportMachimokiFromMeshes instead",
+    )
+  }
+
+  const { mesh, warnings, hollowing } = await buildPrintableGeometryFromMeshes(
+    buildingMeshes,
+    terrainMesh,
+    bounds,
+    options,
+  )
+  const upAxis = options.upAxis ?? 'z-up'
+
+  if (options.format === 'stl') {
+    return { buffer: exportMeshesToSTL([mesh], upAxis), warnings, hollowing }
+  }
+
+  // 完成メッシュはもともと Manifold 由来なので、再インポートして 3MF 化する。
+  const manifold = await createManifoldFromMesh(mesh)
+  try {
+    const modelColor = terrainMesh
+      ? (options.terrainColor ?? '#ffffff')
+      : (options.buildingColor ?? '#ffffff')
+    return { buffer: await exportTo3MF(manifold, modelColor, upAxis), warnings, hollowing }
+  } finally {
+    manifold.delete()
   }
 }
 

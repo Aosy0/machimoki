@@ -26,6 +26,7 @@ import {
   ScreenSpaceEventType,
   Cesium3DTileFeature,
   Material,
+  Transforms,
   srgbToLinear,
   UniformType,
 } from 'cesium'
@@ -666,6 +667,8 @@ interface Preview3DProps {
   flattenBottom?: boolean
   openBottom?: boolean
   shellThickness?: number
+  /** 建物内部も中空化する（エクスポートの hollowBuildings と同じ意味）。 */
+  hollowBuildings?: boolean
   reflectActualElevation?: boolean
   terrainGridSize?: number | null
   includeTerrain?: boolean
@@ -696,6 +699,7 @@ export default function Preview3D({
   flattenBottom = true,
   openBottom = false,
   shellThickness = 1.6,
+  hollowBuildings = true,
   reflectActualElevation = false,
   terrainGridSize,
   includeTerrain = true,
@@ -720,6 +724,14 @@ export default function Preview3D({
   const hollowBuildingPrimitiveRef = useRef<Primitive | null>(null)
   // 中空建物プレビュー中はタイルセットを非表示にする（外殻が重なると z-fighting で中空が見えない）。
   const hollowBuildingsActiveRef = useRef(false)
+  // 最終形状プレビュー（エクスポートと同一の完成メッシュ）の表示状態。
+  const finalShapePrimitiveRef = useRef<Primitive | null>(null)
+  const finalShapeActiveRef = useRef(false)
+  const finalShapeRequestIdRef = useRef(0)
+  const finalShapeParamsRef = useRef<string | null>(null)
+  const [finalShapeOn, setFinalShapeOn] = useState(false)
+  const [finalShapeStale, setFinalShapeStale] = useState(false)
+  const [finalShapeWarnings, setFinalShapeWarnings] = useState<string[]>([])
   const gridLayerRef = useRef<any>(null)
   const gsiLayerRef = useRef<any>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
@@ -827,10 +839,11 @@ export default function Preview3D({
   }, [terrainOnlyBySize, onTerrainResolutionBoostChange])
 
   // 建物表示トグル: 表示/非表示をタイルセットへ適用し、非表示→表示に戻したとき未読み込みなら読み込む
-  // 中空プレビュー中はタイルセットを非表示のまま維持する。
+  // 中空プレビュー・最終形状プレビュー中はタイルセットを非表示のまま維持する。
   useEffect(() => {
     for (const ts of tilesetsRef.current) {
-      ts.show = buildingsVisible && !hollowBuildingsActiveRef.current
+      ts.show =
+        buildingsVisible && !hollowBuildingsActiveRef.current && !finalShapeActiveRef.current
     }
     viewerRef.current?.scene.requestRender()
     const wasVisible = prevBuildingsVisibleRef.current
@@ -1888,8 +1901,11 @@ export default function Preview3D({
               viewer!.scene.primitives.add(tileset)
               loadedTilesets.push(tileset)
               // 非表示トグル中でも読み込みは継続し、到着分は非表示のまま保持する
-              // 中空プレビュー中はタイルセットを非表示のまま維持する。
-              tileset.show = buildingsVisibleRef.current && !hollowBuildingsActiveRef.current
+              // 中空プレビュー・最終形状プレビュー中はタイルセットを非表示のまま維持する。
+              tileset.show =
+                buildingsVisibleRef.current &&
+                !hollowBuildingsActiveRef.current &&
+                !finalShapeActiveRef.current
               // 白模型ON時はPLATEAU Viewと同様に拡散色を純白へ置換する
               tileset.customShader = createBuildingCustomShader(
                 whiteModelRef.current ? Color.WHITE : baseBuildingColor(),
@@ -2325,6 +2341,8 @@ export default function Preview3D({
 
           for (const p of solidTerrain.primitives) {
             viewer!.scene.primitives.add(p)
+            // 最終形状プレビュー中は完成メッシュと重なるため隠したままにする。
+            p.show = !finalShapeActiveRef.current
           }
           solidTerrainPrimitiveRef.current = solidTerrain.primitives
           appliedTerrainParamsRef.current = { ...params }
@@ -2345,8 +2363,9 @@ export default function Preview3D({
         } else {
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
-          // 中空建物プレビュー中はグローブを出さない（建物の下面を確認できるようにする）。
-          viewer!.scene.globe.show = !hollowBuildingsActiveRef.current
+          // 中空建物・最終形状プレビュー中はグローブを出さない（建物の下面を確認できるようにする）。
+          viewer!.scene.globe.show =
+            !hollowBuildingsActiveRef.current && !finalShapeActiveRef.current
           viewer!.scene.requestRender()
           console.log('[Preview3D] Globe clipping planes applied')
           setDebugInfo(null)
@@ -2408,8 +2427,9 @@ export default function Preview3D({
           terrainSampleCacheRef.current = null
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
-          // 中空建物プレビュー中はグローブを出さない（建物の下面を確認できるようにする）。
-          viewer!.scene.globe.show = !hollowBuildingsActiveRef.current
+          // 中空建物・最終形状プレビュー中はグローブを出さない（建物の下面を確認できるようにする）。
+          viewer!.scene.globe.show =
+            !hollowBuildingsActiveRef.current && !finalShapeActiveRef.current
           setCoverageWarning('地形データの一部を取得できませんでした。地球儀表示に切り替えています')
           onPipelineStateChange?.({
             phase: 'complete',
@@ -2482,9 +2502,10 @@ export default function Preview3D({
     }
     const restoreHollowView = (): void => {
       for (const ts of tilesetsRef.current) {
-        ts.show = buildingsVisibleRef.current
+        // 最終形状プレビュー中はタイルセットを出したままにしない。
+        ts.show = buildingsVisibleRef.current && !finalShapeActiveRef.current
       }
-      if (!includeTerrain) {
+      if (!includeTerrain && !finalShapeActiveRef.current) {
         viewer.scene.globe.show = true
         viewer.scene.screenSpaceCameraController.enableCollisionDetection = true
       }
@@ -2533,9 +2554,13 @@ export default function Preview3D({
         }
         disposeHollow()
         if (primitive) {
+          // 最終形状プレビュー中は完成メッシュと重なるため、中空シェルを隠したまま保持する。
+          primitive.show = !finalShapeActiveRef.current
           viewer.scene.primitives.add(primitive)
           hollowBuildingPrimitiveRef.current = primitive
-          applyHollowView()
+          if (!finalShapeActiveRef.current) {
+            applyHollowView()
+          }
         } else {
           // 空メッシュ時はタイルセット表示に戻す（フォールバック）。
           hollowBuildingsActiveRef.current = false
@@ -2567,6 +2592,243 @@ export default function Preview3D({
     scale,
     includeTerrain,
   ])
+
+  // 最終形状プレビューの破棄（プリミティブの remove & destroy）。
+  const disposeFinalShapePrimitive = (): void => {
+    const p = finalShapePrimitiveRef.current
+    finalShapePrimitiveRef.current = null
+    if (!p) return
+    try {
+      viewerRef.current?.scene.primitives.remove(p)
+    } catch {
+      void 0
+    }
+    try {
+      p.destroy()
+    } catch {
+      void 0
+    }
+  }
+
+  // 最終形状パラメータのスナップショット。生成後に変わったら「未更新」表示にする。
+  const finalShapeParamsKey = (): string =>
+    JSON.stringify({
+      bounds: selectionBounds,
+      lod,
+      excludedBuildingIds: excludedBuildingIds ?? [],
+      includeSpanningBuildings,
+      buildingColor,
+      terrainColor,
+      whiteModel,
+      terrainThickness,
+      flattenBottom,
+      reflectActualElevation,
+      terrainGridSize: terrainGridSize ?? null,
+      includeTerrain,
+      scale,
+      openBottom,
+      shellThickness,
+      hollowBuildings,
+    })
+
+  // 最終形状表示中のシーン切替（タイルセット・地形プリミティブ・グローブを隠す）。
+  const applyFinalShapeView = (viewer: Viewer): void => {
+    for (const ts of tilesetsRef.current) {
+      ts.show = false
+    }
+    if (solidTerrainPrimitiveRef.current) {
+      for (const p of solidTerrainPrimitiveRef.current) {
+        p.show = false
+      }
+    }
+    // 中空シェルがあれば隠す（完成メッシュと重なるため）。
+    if (hollowBuildingPrimitiveRef.current) {
+      hollowBuildingPrimitiveRef.current.show = false
+    }
+    viewer.scene.globe.show = false
+    // 下から見られるよう衝突判定を外す（地形なしのグローブ状態と同じ扱い）。
+    viewer.scene.screenSpaceCameraController.enableCollisionDetection = false
+    viewer.scene.requestRender()
+  }
+
+  // 最終形状解除時の復帰。中空建物プレビューが有効な場合はそちらを維持する。
+  const restoreFinalShapeView = (viewer: Viewer): void => {
+    for (const ts of tilesetsRef.current) {
+      ts.show = buildingsVisibleRef.current && !hollowBuildingsActiveRef.current
+    }
+    if (solidTerrainPrimitiveRef.current) {
+      for (const p of solidTerrainPrimitiveRef.current) {
+        p.show = true
+      }
+    }
+    if (hollowBuildingPrimitiveRef.current) {
+      hollowBuildingPrimitiveRef.current.show = true
+    }
+    if (!includeTerrain && hollowBuildingsActiveRef.current) {
+      viewer.scene.globe.show = false
+      viewer.scene.screenSpaceCameraController.enableCollisionDetection = false
+    } else {
+      viewer.scene.globe.show = includeTerrain ? false : true
+      viewer.scene.screenSpaceCameraController.enableCollisionDetection = true
+    }
+    viewer.scene.requestRender()
+  }
+
+  const deactivateFinalShape = (): void => {
+    finalShapeActiveRef.current = false
+    finalShapeParamsRef.current = null
+    setFinalShapeOn(false)
+    setFinalShapeStale(false)
+    setFinalShapeWarnings([])
+    disposeFinalShapePrimitive()
+    const viewer = viewerRef.current
+    if (viewer) restoreFinalShapeView(viewer)
+  }
+
+  // 最終形状プレビューの生成（エクスポートと同一の完成メッシュを Worker で作る）。
+  const generateFinalShape = async (): Promise<void> => {
+    const viewer = viewerRef.current
+    const bounds = selectionBounds
+    if (!viewer || !bounds) return
+    const requestId = finalShapeRequestIdRef.current + 1
+    finalShapeRequestIdRef.current = requestId
+    const key = finalShapeParamsKey()
+    try {
+      onPipelineStateChange?.({
+        phase: 'acquiring',
+        progress: 5,
+        message: '最終形状: 建物データ取得中...',
+        error: null,
+      })
+      const core = await import('@machimoki/core')
+      if (requestId !== finalShapeRequestIdRef.current) return
+      const buildingMeshes = await core.buildBuildingMeshes(
+        bounds,
+        lod,
+        excludedBuildingIds ?? undefined,
+      )
+      if (requestId !== finalShapeRequestIdRef.current) return
+      let terrainMesh: import('@machimoki/core').RawMesh | null = null
+      if (includeTerrain) {
+        onPipelineStateChange?.({
+          phase: 'acquiring',
+          progress: 30,
+          message: '最終形状: 地形データ取得中...',
+          error: null,
+        })
+        terrainMesh = await core.buildTerrainMesh(
+          bounds,
+          terrainThickness / (scale * 1000),
+          flattenBottom,
+          terrainGridSize ?? undefined,
+          reflectActualElevation,
+        )
+        if (requestId !== finalShapeRequestIdRef.current) return
+      }
+      const { buildFinalShapeInWorker } = await import('../lib/finalShape')
+      if (requestId !== finalShapeRequestIdRef.current) return
+      onPipelineStateChange?.({
+        phase: 'acquiring',
+        progress: 55,
+        message: '最終形状: 完成メッシュを生成中...',
+        error: null,
+      })
+      const options: import('@machimoki/core').ExportOptions = {
+        terrainThickness,
+        flattenBottom,
+        reflectActualElevation,
+        terrainGridSize: terrainGridSize ?? undefined,
+        format: '3mf',
+        lod,
+        includeTerrain,
+        buildingColor,
+        terrainColor,
+        upAxis: 'z-up',
+        scale,
+        includeSpanningBuildings,
+        pickPoints,
+        excludedGmlIds: excludedBuildingIds,
+        openBottom,
+        shellThickness,
+        hollowBuildings,
+      }
+      const { mesh, warnings } = await buildFinalShapeInWorker(
+        requestId,
+        bounds,
+        options,
+        buildingMeshes,
+        terrainMesh,
+        (message) => {
+          if (requestId !== finalShapeRequestIdRef.current) return
+          onPipelineStateChange?.({ phase: 'acquiring', progress: 55, message, error: null })
+        },
+      )
+      if (requestId !== finalShapeRequestIdRef.current) return
+      const { buildEngineMeshPrimitive } = await import('../lib/engineMeshPrimitive')
+      if (requestId !== finalShapeRequestIdRef.current) return
+      // 完成メッシュはスケール適用済みのため、プレビューでは 1/scale で戻す。
+      const centerMatrix =
+        terrainSampleCacheRef.current?.centerMatrix ??
+        Transforms.eastNorthUpToFixedFrame(
+          Cartesian3.fromDegrees(
+            (bounds.west + bounds.east) / 2,
+            (bounds.south + bounds.north) / 2,
+            0,
+          ),
+        )
+      const primitive = buildEngineMeshPrimitive(mesh, {
+        centerMatrix,
+        positionScale: 1 / scale,
+        color: whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor,
+      })
+      if (!primitive) throw new Error('最終形状メッシュが空でした')
+      disposeFinalShapePrimitive()
+      viewer.scene.primitives.add(primitive)
+      finalShapePrimitiveRef.current = primitive
+      finalShapeActiveRef.current = true
+      finalShapeParamsRef.current = key
+      setFinalShapeOn(true)
+      setFinalShapeStale(false)
+      // 警告は最大3件まで控えめに表示する。
+      setFinalShapeWarnings(warnings.slice(0, 3))
+      applyFinalShapeView(viewer)
+      onPipelineStateChange?.({ phase: 'complete', progress: 100, message: '完了', error: null })
+    } catch (err) {
+      if (requestId !== finalShapeRequestIdRef.current) return
+      const message = err instanceof Error ? err.message : '最終形状の生成に失敗しました'
+      deactivateFinalShape()
+      onPipelineStateChange?.({ phase: 'error', progress: 0, message: '', error: message })
+    }
+  }
+
+  // 最終形状ボタンの切替。未更新のまま再クリックされたら再生成する。
+  const toggleFinalShape = (): void => {
+    if (!viewerRef.current || !selectionBounds) return
+    if (finalShapeOn) {
+      if (finalShapeStale) {
+        void generateFinalShape()
+      } else {
+        deactivateFinalShape()
+      }
+      return
+    }
+    void generateFinalShape()
+  }
+
+  // 最終形状の生成後にパラメータが変わったら「未更新」バッジを出す。
+  useEffect(() => {
+    if (!finalShapeActiveRef.current || !finalShapeParamsRef.current) return
+    setFinalShapeStale(finalShapeParamsRef.current !== finalShapeParamsKey())
+  })
+
+  // アンマウント時は最終形状プリミティブを破棄する。
+  useEffect(() => {
+    return () => {
+      disposeFinalShapePrimitive()
+      finalShapeActiveRef.current = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const linear = whiteModelRef.current
@@ -2735,6 +2997,8 @@ export default function Preview3D({
       const solidTerrain = buildSolidTerrainPrimitive(sample, current)
       for (const p of solidTerrain.primitives) {
         viewer.scene.primitives.add(p)
+        // 最終形状プレビュー中は完成メッシュと重なるため隠したままにする。
+        p.show = !finalShapeActiveRef.current
       }
       solidTerrainPrimitiveRef.current = solidTerrain.primitives
       appliedTerrainParamsRef.current = current
@@ -2745,7 +3009,15 @@ export default function Preview3D({
     }
     viewer.scene.requestRender()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terrainThickness, flattenBottom, openBottom, shellThickness, terrainColor, scale, reflectActualElevation])
+  }, [
+    terrainThickness,
+    flattenBottom,
+    openBottom,
+    shellThickness,
+    terrainColor,
+    scale,
+    reflectActualElevation,
+  ])
 
   return (
     <div style={wrapperStyle}>
@@ -2805,6 +3077,37 @@ export default function Preview3D({
         >
           {isOrthographic ? '透視' : '平行'}
         </button>
+        <button
+          data-testid="final-shape-toggle"
+          onClick={toggleFinalShape}
+          style={{
+            background: finalShapeOn ? 'var(--accent)' : 'var(--surface)',
+            color: finalShapeOn ? '#fff' : 'var(--text)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: '6px',
+            padding: '6px 10px',
+            fontSize: '11px',
+            cursor: 'pointer',
+            backdropFilter: 'blur(4px)',
+            fontWeight: 600,
+            minWidth: '52px',
+          }}
+        >
+          最終形状
+        </button>
+        {finalShapeOn && finalShapeStale && (
+          <span
+            data-testid="final-shape-stale"
+            style={{
+              fontSize: '10px',
+              color: 'var(--accent)',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            未更新
+          </span>
+        )}
         <div
           style={{
             display: 'flex',
@@ -3030,6 +3333,30 @@ export default function Preview3D({
       >
         {GSI_ATTRIBUTION} / © PLATEAU / © Cesium
       </div>
+      {finalShapeOn && finalShapeWarnings.length > 0 && (
+        <div
+          data-testid="final-shape-warnings"
+          style={{
+            position: 'absolute',
+            bottom: '16px',
+            left: '16px',
+            zIndex: 20,
+            background: 'var(--surface)',
+            color: 'var(--text-dim)',
+            fontSize: '10px',
+            padding: '6px 10px',
+            borderRadius: '4px',
+            backdropFilter: 'blur(4px)',
+            border: '1px solid var(--border-strong)',
+            pointerEvents: 'none',
+            maxWidth: '360px',
+          }}
+        >
+          {finalShapeWarnings.map((w, i) => (
+            <div key={i}>{w}</div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
