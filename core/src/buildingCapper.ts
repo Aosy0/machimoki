@@ -270,6 +270,123 @@ export function buildingBottomFootprint(
   return { hull, minY }
 }
 
+/**
+ * 底面の境界が「単一の凸ループ」かどうかを判定する。
+ *
+ * 凸包キャップ（`capBuildingBottom`）は底面が凸の単一ループのときだけ正確な
+ * 修復になる。凹形状・中庭・複数ループ・境界が汚い場合は修復対象外として
+ * 扱い、呼び出し側は建物をスキップする判断に使う。
+ */
+export function bottomBoundaryIsConvex(mesh: RawMesh, tolerance = 0): boolean {
+  const positions = mesh.positions
+  const indices = mesh.indices
+  if (positions.length === 0 || indices.length === 0) return false
+
+  let minY = Infinity
+  let maxY = -Infinity
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i]
+    const y = positions[i + 1]
+    const z = positions[i + 2]
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+  if (!Number.isFinite(minY) || !Number.isFinite(maxY)) return false
+
+  const yTolerance = Math.max(tolerance, (maxY - minY) * 0.02)
+  const footprintDiagonal = Math.hypot(maxX - minX, maxZ - minZ)
+  if (!(footprintDiagonal > 0)) return false
+
+  const isBottomVertex = (vertexIndex: number): boolean =>
+    positions[vertexIndex * 3 + 1] <= minY + yTolerance
+
+  const edgeCounts = new Map<string, number>()
+  for (let t = 0; t < indices.length; t += 3) {
+    const a = indices[t]
+    const b = indices[t + 1]
+    const c = indices[t + 2]
+    for (const [u, v] of [
+      [a, b],
+      [b, c],
+      [c, a],
+    ] as const) {
+      const key = u < v ? `${u},${v}` : `${v},${u}`
+      edgeCounts.set(key, (edgeCounts.get(key) ?? 0) + 1)
+    }
+  }
+
+  // 底面近傍の境界エッジ（1枚の三角形しか接していない辺）を集める
+  const adjacency = new Map<number, number[]>()
+  let bottomEdgeCount = 0
+  for (const [key, count] of edgeCounts) {
+    if (count !== 1) continue
+    const [u, v] = key.split(',').map(Number)
+    if (!isBottomVertex(u) || !isBottomVertex(v)) continue
+    bottomEdgeCount++
+    const uList = adjacency.get(u)
+    if (uList) uList.push(v)
+    else adjacency.set(u, [v])
+    const vList = adjacency.get(v)
+    if (vList) vList.push(u)
+    else adjacency.set(v, [u])
+  }
+  if (bottomEdgeCount < 3 || adjacency.size < 3) return false
+
+  // 全頂点の次数2 ＝ 単一の閉ループ（分岐・複数ループなし）
+  for (const neighbors of adjacency.values()) {
+    if (neighbors.length !== 2) return false
+  }
+
+  // 全頂点が凸包の頂点と一致すること（＝凹みなし）
+  const points: Point2D[] = []
+  for (const vertexIndex of adjacency.keys()) {
+    points.push({ x: positions[vertexIndex * 3], z: positions[vertexIndex * 3 + 2] })
+  }
+  const hull = convexHull2D(points)
+  if (hull.length < 3) return false
+  const margin = Math.max(tolerance, footprintDiagonal * 0.01)
+  for (const point of points) {
+    let onHull = false
+    for (const hullPoint of hull) {
+      if (Math.abs(hullPoint.x - point.x) <= margin && Math.abs(hullPoint.z - point.z) <= margin) {
+        onHull = true
+        break
+      }
+    }
+    if (!onHull) return false
+  }
+  return true
+}
+
+/**
+ * メッシュの符号付き体積（発散定理）。開いたシェルでも、巻き順が外向きか
+ * 内向きかの判定に使える。
+ */
+function signedVolume(mesh: RawMesh): number {
+  const positions = mesh.positions
+  const indices = mesh.indices
+  let volume = 0
+  for (let t = 0; t < indices.length; t += 3) {
+    const a = indices[t] * 3
+    const b = indices[t + 1] * 3
+    const c = indices[t + 2] * 3
+    volume +=
+      (positions[a] * (positions[b + 1] * positions[c + 2] - positions[b + 2] * positions[c + 1]) -
+        positions[a + 1] * (positions[b] * positions[c + 2] - positions[b + 2] * positions[c]) +
+        positions[a + 2] * (positions[b] * positions[c + 1] - positions[b + 1] * positions[c])) /
+      6
+  }
+  return volume
+}
+
 export function capBuildingBottom(mesh: RawMesh, tolerance = 1e-6): RawMesh {
   const footprint = buildingBottomFootprint(mesh, tolerance)
   if (!footprint) return mesh
@@ -289,13 +406,20 @@ export function capBuildingBottom(mesh: RawMesh, tolerance = 1e-6): RawMesh {
 
   const centroidIndex = findOrAddVertex(positions, centroidX, minY, centroidZ, tolerance)
 
+  // シェルの巻き順（外向き/内向き）に合わせてキャップの向きを決める。
+  // 外向きのシェルには下向き（-Y）のキャップが必要で、内向きではその逆になる。
+  const outward = signedVolume(mesh) > 0
+
   for (let i = 0; i < hull.length; i++) {
     const a = hull[i]
     const b = hull[(i + 1) % hull.length]
     const aIndex = findOrAddVertex(positions, a.x, minY, a.z, tolerance)
     const bIndex = findOrAddVertex(positions, b.x, minY, b.z, tolerance)
-    // Winding order points inward so the cap is consistent with an outward-facing shell.
-    indices.push(centroidIndex, bIndex, aIndex)
+    if (outward) {
+      indices.push(centroidIndex, aIndex, bIndex)
+    } else {
+      indices.push(centroidIndex, bIndex, aIndex)
+    }
   }
 
   return {

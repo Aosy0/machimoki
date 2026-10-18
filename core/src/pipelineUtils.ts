@@ -8,15 +8,15 @@
 import type { Manifold } from 'manifold-3d'
 import { Bounds, ExportOptions, ExportResult, RawMesh } from './types.js'
 import {
-  buildingBottomFootprint,
+  bottomBoundaryIsConvex,
   capBuildingBottom,
   splitConnectedComponents,
   weldVertices,
 } from './buildingCapper.js'
 import {
   createBox,
-  createFootprintExtrusion,
   createManifoldFromMesh,
+  createSlicePrism,
   exportMeshesToSTL,
   exportTo3MF,
   unionManifolds,
@@ -36,43 +36,39 @@ const DEFAULT_SHELL_THICKNESS_MM = 1.6
 /**
  * Build the hollowing cutter for one building.
  *
- * The building solid is extended downward by a prism of its footprint so it
- * reaches below the terrain slab, then eroded by a cube of edge 2·shellThickness.
- * The resulting solid is the building's inner cavity (wall/roof thickness
- * `shellThickness`) plus a shaft through the slab, which connects the cavity to
- * the model's open underside.
+ * The building solid is extended downward by a prism of its *sliced* footprint
+ * (taken just above the bottom, so concave outlines and courtyard holes are
+ * preserved) so it reaches below the terrain slab, then eroded by a cube of
+ * edge 2·shellThickness. The resulting solid is the building's inner cavity
+ * (wall/roof thickness `shellThickness`) plus a shaft through the slab, which
+ * connects the cavity to the model's open underside.
  *
- * Returns null when the building is too small to contain a cavity.
+ * Returns null when the building is too small to contain a cavity, or when a
+ * valid cross-section cannot be obtained (caller keeps the building solid).
  */
 async function buildBuildingCutter(
   building: Manifold,
-  footprint: { hull: Array<{ x: number; z: number }>; minY: number },
+  minY: number,
   maxY: number,
   shellThickness: number,
   modelMinY: number,
 ): Promise<Manifold | null> {
   const t = shellThickness
-  const { hull, minY } = footprint
-  if (hull.length < 3) return null
-  if (!(maxY - minY > 2 * t)) return null
+  const height = maxY - minY
+  if (!(height > 2 * t)) return null
 
-  let minX = Infinity
-  let maxX = -Infinity
-  let minZ = Infinity
-  let maxZ = -Infinity
-  for (const point of hull) {
-    if (point.x < minX) minX = point.x
-    if (point.x > maxX) maxX = point.x
-    if (point.z < minZ) minZ = point.z
-    if (point.z > maxZ) maxZ = point.z
-  }
-  if (!(Math.min(maxX - minX, maxZ - minZ) > 2 * t)) return null
+  const bbox = building.boundingBox()
+  if (!(Math.min(bbox.max[0] - bbox.min[0], bbox.max[2] - bbox.min[2]) > 2 * t)) return null
 
+  // 底面直上でスライスして真の断面を得る。ε はこの空間の単位で、
+  // 建物高さの2%（下限 1e-3）を目安とし、高さの15%を上限に限定する。
+  const sliceOffset = Math.min(Math.max(1e-3, height * 0.02), height * 0.15)
   const yTop = minY + 2 * t
   const yBottom = Math.min(modelMinY, minY) - 2 * t
   if (!(yTop > yBottom)) return null
 
-  const prism = await createFootprintExtrusion(hull, yBottom, yTop)
+  const prism = await createSlicePrism(building, sliceOffset, yBottom, yTop)
+  if (!prism) return null
   try {
     const fused = await unionManifolds([building, prism])
     try {
@@ -283,46 +279,41 @@ export async function buildPrintableModelFromMeshes(
     } else if (!componentIntersectsBounds(comp, bounds, 1e-2, includeSpanning)) {
       continue
     }
-    const capped = capBuildingBottom(comp)
-    const scaled = scaleRawMesh(capped, scale)
-    let manifold: Manifold
+    // 閉じた底面を持つ建物（実データの大半）はそのまま Manifold 化する。
+    // 開いた底面（床なし）は、底面が単一の凸ループと確認できる場合のみ
+    // 凸包キャップで修復し、それ以外は修復対象外として建物ごと除外する。
+    let scaled = scaleRawMesh(comp, scale)
+    let manifold: Manifold | null = null
+    let createError: string | null = null
     try {
       manifold = await createManifoldFromMesh(scaled)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      warnings.push(`Building ${j + 1} skipped (not printable): ${message}`)
+      createError = error instanceof Error ? error.message : String(error)
+    }
+    if (!manifold) {
+      if (bottomBoundaryIsConvex(comp)) {
+        scaled = scaleRawMesh(capBuildingBottom(comp), scale)
+        try {
+          manifold = await createManifoldFromMesh(scaled)
+        } catch (error) {
+          createError = error instanceof Error ? error.message : String(error)
+        }
+      } else {
+        createError = 'open bottom is not a single convex loop'
+      }
+    }
+    if (!manifold) {
+      warnings.push(`Building ${j + 1} skipped (not printable): ${createError ?? 'unknown'}`)
       continue
     }
     buildingManifolds.push(manifold)
 
     if (hollowActive && hollowBuildings) {
-      let minY = Infinity
-      let maxY = -Infinity
-      for (let i = 1; i < scaled.positions.length; i += 3) {
-        const y = scaled.positions[i]
-        if (y < minY) minY = y
-        if (y > maxY) maxY = y
-      }
-      // Real PLATEAU bottoms are noisy, so collect the footprint with a
-      // tolerance relative to the building height instead of the strict 1e-6
-      // used by bottom capping.
-      const footprintTolerance =
-        Number.isFinite(minY) && Number.isFinite(maxY)
-          ? Math.max(1e-6, (maxY - minY) * 0.02)
-          : undefined
-      const footprint = buildingBottomFootprint(scaled, footprintTolerance)
-      if (!footprint) {
-        skippedHollowBuildings++
-        continue
-      }
+      const manifoldBounds = manifold.boundingBox()
+      const minY = manifoldBounds.min[1]
+      const maxY = manifoldBounds.max[1]
       try {
-        const cutter = await buildBuildingCutter(
-          manifold,
-          footprint,
-          maxY,
-          wallThickness,
-          terrainMinY,
-        )
+        const cutter = await buildBuildingCutter(manifold, minY, maxY, wallThickness, terrainMinY)
         if (cutter) {
           buildingCutters.push(cutter)
         } else {
@@ -340,7 +331,9 @@ export async function buildPrintableModelFromMeshes(
     warnings.push('No buildings matched the pick points')
   }
   if (hollowActive && hollowBuildings && skippedHollowBuildings > 0) {
-    warnings.push(`中空化: 壁厚より小さい建物 ${skippedHollowBuildings} 棟は中実のまま残しました`)
+    warnings.push(
+      `中空化: 中空化できず中実のまま残した建物 ${skippedHollowBuildings} 棟（小型または断面取得不可）`,
+    )
   }
 
   // Union terrain + buildings into a single manifold. When an open-bottom
@@ -398,8 +391,9 @@ export async function buildPrintableModelFromMeshes(
  * 建物メッシュ群をエクスポートと同じ侵食処理で中空化し、底面が開いたシェルメッシュを返す。
  *
  * プレビュー表示用。地形との統合（底面シャフトの接続）は行わず、建物単体を
- * 開いた底面のシェルとして返す。壁厚より小さい等で中空化できない建物は、
- * キャップ済みの元メッシュをそのまま返す（中実のまま表示される）。
+ * 開いた底面のシェルとして返す。中空化できない建物は元メッシュ（閉じたソリッド）
+ * をそのまま返し、正常なソリッドにできない建物は結果に含めない
+ * （エクスポート側の除外規則と同じ）。
  *
  * @param wallThickness 入力メッシュと同じ座標空間でのシェル厚み
  */
@@ -423,56 +417,56 @@ export async function buildHollowBuildingShells(
   for (const comp of uniqueComponents) {
     if (!componentIntersectsBounds(comp, bounds, 1e-2, includeSpanningBuildings)) continue
 
-    const capped = capBuildingBottom(comp)
-
-    let minY = Infinity
-    let maxY = -Infinity
-    for (let i = 1; i < capped.positions.length; i += 3) {
-      const y = capped.positions[i]
-      if (y < minY) minY = y
-      if (y > maxY) maxY = y
-    }
-    if (!Number.isFinite(minY) || !Number.isFinite(maxY)) continue
-
-    let shellMesh: RawMesh | null = null
+    // 閉じた底面はそのまま Manifold 化し、開いた底面は底面が単一の凸ループと
+    // 確認できるときだけ凸包キャップで修復する（エクスポート側と同じ規則）。
+    let solidMesh = comp
     let manifold: Manifold | null = null
     try {
-      manifold = await createManifoldFromMesh(capped)
-      const footprintTolerance = Math.max(1e-6, (maxY - minY) * 0.02)
-      const footprint = buildingBottomFootprint(capped, footprintTolerance)
-      if (footprint) {
-        // 地形との統合は不要なため、シャフトは建物底面直下まででよい
-        const cutter = await buildBuildingCutter(
-          manifold,
-          footprint,
-          maxY,
-          wallThickness,
-          footprint.minY,
-        )
-        if (cutter) {
+      manifold = await createManifoldFromMesh(solidMesh)
+    } catch {
+      manifold = null
+    }
+    if (!manifold && bottomBoundaryIsConvex(comp)) {
+      solidMesh = capBuildingBottom(comp)
+      try {
+        manifold = await createManifoldFromMesh(solidMesh)
+      } catch {
+        manifold = null
+      }
+    }
+    if (!manifold) continue
+
+    let shellMesh: RawMesh | null = null
+    try {
+      const manifoldBounds = manifold.boundingBox()
+      const minY = manifoldBounds.min[1]
+      const maxY = manifoldBounds.max[1]
+      // 地形との統合は不要なため、シャフトの下端は建物底面直下でよい
+      const cutter = await buildBuildingCutter(manifold, minY, maxY, wallThickness, minY)
+      if (cutter) {
+        try {
+          const shell = manifold.subtract(cutter)
           try {
-            const shell = manifold.subtract(cutter)
-            try {
-              const mesh = shell.getMesh()
-              shellMesh = {
-                positions: new Float32Array(mesh.vertProperties),
-                indices: new Uint32Array(mesh.triVerts),
-              }
-            } finally {
-              shell.delete()
+            const mesh = shell.getMesh()
+            shellMesh = {
+              positions: new Float32Array(mesh.vertProperties),
+              indices: new Uint32Array(mesh.triVerts),
             }
           } finally {
-            cutter.delete()
+            shell.delete()
           }
+        } finally {
+          cutter.delete()
         }
       }
     } catch {
       shellMesh = null
     } finally {
-      manifold?.delete()
+      manifold.delete()
     }
 
-    shells.push(shellMesh ?? capped)
+    // 中空化できない建物は中実のまま表示する
+    shells.push(shellMesh ?? solidMesh)
   }
 
   return shells
