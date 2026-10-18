@@ -24,6 +24,8 @@ export interface EngineMeshPrimitiveOptions {
   color: string
   /** 影の設定（既定: 描画・受影とも有効）。 */
   shadows?: ShadowMode
+  /** フラットシェーディング（面法線）で描画する。既定はスムーズ。 */
+  flat?: boolean
 }
 
 // 三角形法線を頂点に累積して正規化する（solidTerrain と同様の処理）。
@@ -129,7 +131,7 @@ export function buildEngineMeshPrimitive(
     }),
     appearance: new PerInstanceColorAppearance({
       closed: true,
-      flat: false,
+      flat: options.flat ?? false,
       translucent: false,
     }),
     // 外殻と同様に影を描画する。

@@ -78,6 +78,9 @@ export async function buildHollowBuildingPrimitive(
       // 薄い中空シェルは自己シャドウ（アクネ）で壁面がまだらに暗くなるため、
       // 地形へ影を落とす CAST_ONLY にする（受影しない）。
       shadows: ShadowMode.CAST_ONLY,
+      // 元の3D Tiles（フラットな面法線）と見た目を揃える。
+      // スムーズ法線だと壁面中央に強いハイライトが出て別物に見える。
+      flat: true,
     },
   )
 }
