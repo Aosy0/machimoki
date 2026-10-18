@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { getManifoldModule } from 'manifold-3d/lib/wasm.js'
 
-import { buildPrintableModelFromMeshes } from '../src/pipelineUtils.js'
+import { buildPrintableModelFromMeshes, buildHollowBuildingShells } from '../src/pipelineUtils.js'
 import { buildSlabIndices, buildTerrainCavityMesh } from '../src/pipelineCore.js'
 import { createManifoldFromMesh } from '../src/manifoldOps.js'
 import { validateMesh } from '../src/validate.js'
@@ -184,5 +184,38 @@ describe('open-bottom hollowing', () => {
     const validation = await validateMesh(result.buffer, 'model/3mf')
     expect(validation.status).toBe('pass')
     expect(validation.numShells).toBe(1)
+  })
+})
+
+describe('buildHollowBuildingShells', () => {
+  it('returns an open-bottom shell lighter than the solid building', async () => {
+    const building = await buildBoxBuilding(0, 0, 8, 8, -0.3, 10)
+    const wallThickness = 2
+
+    const shells = await buildHollowBuildingShells([building], bounds, wallThickness)
+    expect(shells).toHaveLength(1)
+    const shell = shells[0]
+
+    // Inner surfaces are added, so the shell has more triangles than the input.
+    expect(shell.indices.length).toBeGreaterThan(building.indices.length)
+
+    const manifold = await createManifoldFromMesh(shell)
+    try {
+      expect(manifold.status()).toBe('NoError')
+      expect(manifold.decompose().length).toBe(1)
+      expect(manifold.volume()).toBeGreaterThan(0)
+      // Hollowing removes the interior (solid box would be 8×8×10.3).
+      expect(manifold.volume()).toBeLessThan(8 * 8 * 10)
+    } finally {
+      manifold.delete()
+    }
+  })
+
+  it('keeps buildings smaller than the wall thickness solid', async () => {
+    const small = await buildBoxBuilding(0, 0, 2, 2, -0.3, 6)
+
+    const shells = await buildHollowBuildingShells([small], bounds, 2)
+    expect(shells).toHaveLength(1)
+    expect(shells[0].indices.length).toBe(small.indices.length)
   })
 })

@@ -107,6 +107,10 @@ const WHITE_MODEL_LIGHT_COLOR = 0.7
 // ズームで地形メッシュの裏へ抜けて見えるのを防ぐ(preRender で地表+この値まで戻す)。
 const CAMERA_GROUND_CLEARANCE = 2
 
+// ソリッド地形の底面より下へ潜るときの余裕(m)。底面開口(中空シェル)の内側を
+// 下から覗けるよう、地表クランプを底面厚み+この値だけ緩める。
+const CAMERA_UNDER_CLEARANCE = 0.5
+
 // 建物の環境光(IBL拡散)に使う球面調和係数。全方位で一定のL0成分のみにする。
 // 指向性成分(L1/L2)を持つ係数セットでは法線の向きにより環境光が負になる領域が
 // 生まれ、真横＋特定方角から見た壁面が黒く沈む(実測: 真横の建物平均輝度 46/255
@@ -660,6 +664,8 @@ interface Preview3DProps {
   showTerrainImagery?: boolean
   terrainThickness?: number
   flattenBottom?: boolean
+  openBottom?: boolean
+  shellThickness?: number
   reflectActualElevation?: boolean
   terrainGridSize?: number | null
   includeTerrain?: boolean
@@ -688,6 +694,8 @@ export default function Preview3D({
   showTerrainImagery = false,
   terrainThickness = 10,
   flattenBottom = true,
+  openBottom = false,
+  shellThickness = 1.6,
   reflectActualElevation = false,
   terrainGridSize,
   includeTerrain = true,
@@ -708,7 +716,10 @@ export default function Preview3D({
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetsRef = useRef<Cesium3DTileset[]>([])
-  const solidTerrainPrimitiveRef = useRef<Primitive | null>(null)
+  const solidTerrainPrimitiveRef = useRef<Primitive[] | null>(null)
+  const hollowBuildingPrimitiveRef = useRef<Primitive | null>(null)
+  // 中空建物プレビュー中はタイルセットを非表示にする（外殻が重なると z-fighting で中空が見えない）。
+  const hollowBuildingsActiveRef = useRef(false)
   const gridLayerRef = useRef<any>(null)
   const gsiLayerRef = useRef<any>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
@@ -716,6 +727,8 @@ export default function Preview3D({
   const appliedTerrainParamsRef = useRef<{
     terrainThickness: number
     flattenBottom: boolean
+    openBottom: boolean
+    shellThickness: number
     reflectActualElevation: boolean
     terrainColor: string
   } | null>(null)
@@ -814,9 +827,10 @@ export default function Preview3D({
   }, [terrainOnlyBySize, onTerrainResolutionBoostChange])
 
   // 建物表示トグル: 表示/非表示をタイルセットへ適用し、非表示→表示に戻したとき未読み込みなら読み込む
+  // 中空プレビュー中はタイルセットを非表示のまま維持する。
   useEffect(() => {
     for (const ts of tilesetsRef.current) {
-      ts.show = buildingsVisible
+      ts.show = buildingsVisible && !hollowBuildingsActiveRef.current
     }
     viewerRef.current?.scene.requestRender()
     const wasVisible = prevBuildingsVisibleRef.current
@@ -1021,15 +1035,20 @@ export default function Preview3D({
   // Preview is in real-scale meters, so the in-scene thickness keeps the same
   // proportion as the printed model (thicknessMm converted via export scale).
   const effectiveTerrainThickness = terrainThickness / (scale * 1000)
+  const effectiveShellThickness = shellThickness / (scale * 1000)
   const latestTerrainParamsRef = useRef({
     terrainThickness: effectiveTerrainThickness,
     flattenBottom,
+    openBottom,
+    shellThickness: effectiveShellThickness,
     reflectActualElevation,
     terrainColor,
   })
   latestTerrainParamsRef.current = {
     terrainThickness: effectiveTerrainThickness,
     flattenBottom,
+    openBottom,
+    shellThickness: effectiveShellThickness,
     reflectActualElevation,
     terrainColor,
   }
@@ -1197,9 +1216,8 @@ export default function Preview3D({
     // 変化量は距離比例で、1ノッチ(Chrome, deltaY=100)あたりの拡大率は zoomFactor に比例する。
     viewer.scene.screenSpaceCameraController.zoomFactor = 2.5
 
-    // 地平線より上(地下側)を向く tilt 操作を禁止する。真横までは許可。
-    // これがないと tilt で天地が反転し、モデルの裏面へ回り込めてしまう。
-    viewer.scene.screenSpaceCameraController.maximumTiltAngle = Math.PI / 2
+    // モデルの下側へ回り込めるようにする。真下からの見上げまで許可。
+    viewer.scene.screenSpaceCameraController.maximumTiltAngle = Math.PI
 
     // includeTerrain=true では globe.show=false + 地形は Primitive のため、Cesium の
     // 地面衝突判定が無効(Scene.getHeight は globe.show か enableCollision=true の3D Tilesしか
@@ -1239,7 +1257,26 @@ export default function Preview3D({
       const h11 = groundHeightAt(sample, x1, y1)
       const ground = (h00 * (1 - tx) + h10 * tx) * (1 - ty) + (h01 * (1 - tx) + h11 * tx) * ty
       if (!Number.isFinite(ground)) return
-      const minHeight = ground + CAMERA_GROUND_CLEARANCE
+      // ソリッド地形表示中はモデルの下側へ回り込めるようにする。
+      // モデル厚み(シェル厚み込み)にモデルサイズ比例の余裕を加えた深さまで潜れる。
+      const appliedParams = appliedTerrainParamsRef.current
+      let minHeight = ground + CAMERA_GROUND_CLEARANCE
+      if (appliedParams != null) {
+        const centerLat = (sample.bounds.south + sample.bounds.north) / 2
+        const widthMeters =
+          CesiumMath.toRadians(sample.bounds.east - sample.bounds.west) *
+          6371000 *
+          Math.cos(CesiumMath.toRadians(centerLat))
+        const heightMeters =
+          CesiumMath.toRadians(sample.bounds.north - sample.bounds.south) * 6371000
+        const modelMaxDim = Math.max(widthMeters, heightMeters)
+        const underDepth =
+          appliedParams.terrainThickness +
+          (appliedParams.openBottom ? appliedParams.shellThickness : 0) +
+          CAMERA_UNDER_CLEARANCE +
+          modelMaxDim * 2
+        minHeight = Math.min(minHeight, ground - underDepth)
+      }
       if (carto.height < minHeight) {
         viewer.camera.position = Cartesian3.fromRadians(carto.longitude, carto.latitude, minHeight)
       }
@@ -1392,7 +1429,9 @@ export default function Preview3D({
       tilesetsRef.current = []
       progressListenersRef.current.clear()
       if (solidTerrainPrimitiveRef.current) {
-        viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
+        for (const p of solidTerrainPrimitiveRef.current) {
+          viewer.scene.primitives.remove(p)
+        }
         solidTerrainPrimitiveRef.current = null
       }
       terrainBoundingSphereRef.current = null
@@ -1532,7 +1571,9 @@ export default function Preview3D({
 
     if (solidTerrainPrimitiveRef.current) {
       try {
-        viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
+        for (const p of solidTerrainPrimitiveRef.current) {
+          viewer.scene.primitives.remove(p)
+        }
       } catch {
         void 0
       }
@@ -1847,7 +1888,8 @@ export default function Preview3D({
               viewer!.scene.primitives.add(tileset)
               loadedTilesets.push(tileset)
               // 非表示トグル中でも読み込みは継続し、到着分は非表示のまま保持する
-              tileset.show = buildingsVisibleRef.current
+              // 中空プレビュー中はタイルセットを非表示のまま維持する。
+              tileset.show = buildingsVisibleRef.current && !hollowBuildingsActiveRef.current
               // 白模型ON時はPLATEAU Viewと同様に拡散色を純白へ置換する
               tileset.customShader = createBuildingCustomShader(
                 whiteModelRef.current ? Color.WHITE : baseBuildingColor(),
@@ -2269,16 +2311,22 @@ export default function Preview3D({
           const solidTerrain = buildSolidTerrainPrimitive(sample!, {
             terrainThickness: params.terrainThickness,
             flattenBottom: params.flattenBottom,
+            openBottom: params.openBottom,
+            shellThickness: params.shellThickness,
             reflectActualElevation: params.reflectActualElevation,
             terrainColor: params.terrainColor,
           })
           if (cancelled) {
-            solidTerrain.primitive.destroy()
+            for (const p of solidTerrain.primitives) {
+              p.destroy()
+            }
             return
           }
 
-          viewer!.scene.primitives.add(solidTerrain.primitive)
-          solidTerrainPrimitiveRef.current = solidTerrain.primitive
+          for (const p of solidTerrain.primitives) {
+            viewer!.scene.primitives.add(p)
+          }
+          solidTerrainPrimitiveRef.current = solidTerrain.primitives
           appliedTerrainParamsRef.current = { ...params }
           terrainBoundingSphere = solidTerrain.boundingSphere
           terrainBoundingSphereRef.current = terrainBoundingSphere
@@ -2297,7 +2345,8 @@ export default function Preview3D({
         } else {
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
-          viewer!.scene.globe.show = true
+          // 中空建物プレビュー中はグローブを出さない（建物の下面を確認できるようにする）。
+          viewer!.scene.globe.show = !hollowBuildingsActiveRef.current
           viewer!.scene.requestRender()
           console.log('[Preview3D] Globe clipping planes applied')
           setDebugInfo(null)
@@ -2359,7 +2408,8 @@ export default function Preview3D({
           terrainSampleCacheRef.current = null
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
-          viewer!.scene.globe.show = true
+          // 中空建物プレビュー中はグローブを出さない（建物の下面を確認できるようにする）。
+          viewer!.scene.globe.show = !hollowBuildingsActiveRef.current
           setCoverageWarning('地形データの一部を取得できませんでした。地球儀表示に切り替えています')
           onPipelineStateChange?.({
             phase: 'complete',
@@ -2396,6 +2446,126 @@ export default function Preview3D({
     includeTerrain,
     forceBuildingsBounds,
     terrainGridSize,
+  ])
+
+  // 底面開口時の中空建物プレビュー（地形とは独立したレイヤー）。
+  // エクスポートと同一の侵食処理で底面を開いたシェルを表示し、タイルセットの外殻は隠す。
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || !selectionBounds) return
+    const disposeHollow = (): void => {
+      const p = hollowBuildingPrimitiveRef.current
+      hollowBuildingPrimitiveRef.current = null
+      if (!p) return
+      try {
+        viewer.scene.primitives.remove(p)
+      } catch {
+        void 0
+      }
+      try {
+        p.destroy()
+      } catch {
+        void 0
+      }
+    }
+    const applyHollowView = (): void => {
+      for (const ts of tilesetsRef.current) {
+        ts.show = false
+      }
+      if (!includeTerrain) {
+        // 地形OFF（グローブ表示）でも建物の下側へ回り込めるようにする。
+        // グローブ衝突判定が有効だとカメラが地表より下へ行けず、建物下面を確認できない。
+        viewer.scene.globe.show = false
+        viewer.scene.screenSpaceCameraController.enableCollisionDetection = false
+      }
+      viewer.scene.requestRender()
+    }
+    const restoreHollowView = (): void => {
+      for (const ts of tilesetsRef.current) {
+        ts.show = buildingsVisibleRef.current
+      }
+      if (!includeTerrain) {
+        viewer.scene.globe.show = true
+        viewer.scene.screenSpaceCameraController.enableCollisionDetection = true
+      }
+      viewer.scene.requestRender()
+    }
+    if (!openBottom) {
+      disposeHollow()
+      if (hollowBuildingsActiveRef.current) {
+        hollowBuildingsActiveRef.current = false
+        restoreHollowView()
+      }
+      return
+    }
+    let cancelled = false
+    hollowBuildingsActiveRef.current = true
+    // タイルセットの外殻を隠す（重なると z-fighting で中空形状が見えなくなる）。
+    applyHollowView()
+    ;(async () => {
+      try {
+        onPipelineStateChange?.({
+          phase: 'acquiring',
+          progress: 55,
+          message: '建物の中空プレビューを生成中...',
+          error: null,
+        })
+        const { buildHollowBuildingPrimitive } = await import('../lib/hollowBuildings')
+        if (cancelled) return
+        const primitive = await buildHollowBuildingPrimitive({
+          bounds: selectionBounds,
+          lod,
+          excludedGmlIds: excludedBuildingIds ?? undefined,
+          includeSpanningBuildings,
+          wallThickness: effectiveShellThickness,
+          buildingColor: whiteModel ? '#ffffff' : buildingColor,
+          onProgress: (message) => {
+            onPipelineStateChange?.({ phase: 'acquiring', progress: 55, message, error: null })
+          },
+        })
+        if (cancelled) {
+          try {
+            primitive?.destroy()
+          } catch {
+            void 0
+          }
+          return
+        }
+        disposeHollow()
+        if (primitive) {
+          viewer.scene.primitives.add(primitive)
+          hollowBuildingPrimitiveRef.current = primitive
+          applyHollowView()
+        } else {
+          // 空メッシュ時はタイルセット表示に戻す（フォールバック）。
+          hollowBuildingsActiveRef.current = false
+          restoreHollowView()
+        }
+        viewer.scene.requestRender()
+        onPipelineStateChange?.({ phase: 'complete', progress: 100, message: '完了', error: null })
+      } catch (err) {
+        if (cancelled) return
+        console.warn('[Preview3D] 建物中空プレビュー生成に失敗:', err)
+        hollowBuildingsActiveRef.current = false
+        restoreHollowView()
+      }
+    })()
+    return () => {
+      cancelled = true
+      disposeHollow()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectionBounds,
+    lod,
+    excludedBuildingIds,
+    includeSpanningBuildings,
+    buildingColor,
+    whiteModel,
+    openBottom,
+    shellThickness,
+    scale,
+    includeTerrain,
   ])
 
   useEffect(() => {
@@ -2533,6 +2703,8 @@ export default function Preview3D({
     const current = {
       terrainThickness: effectiveTerrainThickness,
       flattenBottom,
+      openBottom,
+      shellThickness: effectiveShellThickness,
       reflectActualElevation,
       terrainColor,
     }
@@ -2541,6 +2713,8 @@ export default function Preview3D({
       applied &&
       applied.terrainThickness === current.terrainThickness &&
       applied.flattenBottom === current.flattenBottom &&
+      applied.openBottom === current.openBottom &&
+      applied.shellThickness === current.shellThickness &&
       applied.reflectActualElevation === current.reflectActualElevation &&
       applied.terrainColor === current.terrainColor
     )
@@ -2548,7 +2722,9 @@ export default function Preview3D({
 
     if (solidTerrainPrimitiveRef.current) {
       try {
-        viewer.scene.primitives.remove(solidTerrainPrimitiveRef.current)
+        for (const p of solidTerrainPrimitiveRef.current) {
+          viewer.scene.primitives.remove(p)
+        }
       } catch {
         void 0
       }
@@ -2557,8 +2733,10 @@ export default function Preview3D({
 
     try {
       const solidTerrain = buildSolidTerrainPrimitive(sample, current)
-      viewer.scene.primitives.add(solidTerrain.primitive)
-      solidTerrainPrimitiveRef.current = solidTerrain.primitive
+      for (const p of solidTerrain.primitives) {
+        viewer.scene.primitives.add(p)
+      }
+      solidTerrainPrimitiveRef.current = solidTerrain.primitives
       appliedTerrainParamsRef.current = current
       clearGlobeClippingPlanes(viewer.scene.globe)
       viewer.scene.globe.show = false
@@ -2567,7 +2745,7 @@ export default function Preview3D({
     }
     viewer.scene.requestRender()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terrainThickness, flattenBottom, terrainColor, scale, reflectActualElevation])
+  }, [terrainThickness, flattenBottom, openBottom, shellThickness, terrainColor, scale, reflectActualElevation])
 
   return (
     <div style={wrapperStyle}>
@@ -2647,6 +2825,7 @@ export default function Preview3D({
               ['east', '東', 90, -45, false],
               ['west', '西', 270, -45, false],
               ['side', '真横', 0, 0, false],
+              ['bottom', '下から', 0, 90, false],
             ] as const
           ).map(([id, label, h, p, top]) => (
             <button

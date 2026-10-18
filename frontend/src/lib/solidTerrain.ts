@@ -34,10 +34,15 @@ export interface SolidTerrainOptions {
   reflectActualElevation?: boolean
   gridSize?: number
   terrainColor?: string
+  /** 底面を開口した中空シェル表示（エクスポートの openBottom と同じ形状）。 */
+  openBottom?: boolean
+  /** シェル厚み（モデル空間のメートル）。openBottom が true のときのみ使用。 */
+  shellThickness?: number
 }
 
 export interface SolidTerrainPrimitiveResult {
-  primitive: Primitive
+  /** [0]=上面(受影あり), [1]=底面+側面スカート(受影なし) */
+  primitives: Primitive[]
   boundingSphere: BoundingSphere
 }
 
@@ -82,9 +87,11 @@ void main()
     // Flat normal from screen-space derivatives — CAD-style per-face shading
     vec3 flatNormal = normalize(cross(dFdx(v_positionEC), dFdy(v_positionEC)));
 
-    // Simple directional light with high contrast
+    // 建物と同じ光源方向で照らす。明るさバランスは建物(フラットな環境光≈0.61 +
+    // 直射光)に合わせ、影側の面でも建物の環境光面と同じ明度(≈156/255)になるようにする。
+    // (旧: mix(0.3, 1.0, light) は影側が暗く沈み、地形だけ常に日陰のように見えていた)
     float light = max(dot(flatNormal, normalize(czm_lightDirectionEC)), 0.0);
-    float lightFactor = mix(0.3, 1.0, light);
+    float lightFactor = clamp(0.61 + 0.95 * light, 0.0, 1.0);
 
     out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * lightFactor, v_color.a));
 }
@@ -395,41 +402,86 @@ export function buildSolidTerrainPrimitive(
     values: normalValues,
   })
 
-  const geometry = new Geometry({
+  // 上面(グリッド)とそれ以外(底面+側面スカート)でインデックスを分割する。
+  // 上面のみ建物の影を受け、断面(側面)には境界建物の影が乗らないようにするため。
+  // 底面開口(中空シェル)時はソリッド底面のキャップを外し、開口部から
+  // キャビティ(別プリミティブ)が見えるようにする。
+  const shellThickness = options.shellThickness ?? 0
+  const openBottomShell = options.openBottom === true && shellThickness > 0
+  const faceIndexCount = (gridSize - 1) * (gridSize - 1) * 6
+  const topIndexCount = faceIndexCount
+  const skirtStartIndex = openBottomShell ? topIndexCount + faceIndexCount : topIndexCount
+  const geometryTop = new Geometry({
     attributes,
-    indices,
+    indices: indices.subarray(0, topIndexCount),
+    primitiveType: PrimitiveType.TRIANGLES,
+    boundingSphere,
+  })
+  const geometrySkirt = new Geometry({
+    attributes,
+    indices: indices.subarray(skirtStartIndex),
     primitiveType: PrimitiveType.TRIANGLES,
     boundingSphere,
   })
 
   const terrainColor = Color.fromCssColorString(options.terrainColor ?? '#ffffff')
-  const instance = new GeometryInstance({
-    geometry,
-    attributes: {
-      color: ColorGeometryInstanceAttribute.fromColor(terrainColor),
-    },
-  })
-
-  const primitive = new Primitive({
-    geometryInstances: instance,
-    appearance: new PerInstanceColorAppearance({
+  const makeAppearance = () =>
+    new PerInstanceColorAppearance({
       closed: true,
       flat: false,
       translucent: false,
       vertexShaderSource: RELIEF_VERTEX_SHADER,
       fragmentShaderSource: RELIEF_FRAGMENT_SHADER,
+    })
+  const topPrimitive = new Primitive({
+    geometryInstances: new GeometryInstance({
+      geometry: geometryTop,
+      attributes: {
+        color: ColorGeometryInstanceAttribute.fromColor(terrainColor),
+      },
     }),
-    // 建物(tileset)の影を地形に落とすため受影のみ有効化する。
-    // DISABLED(既定)のままだと地形の上に影が一切乗らない。
+    appearance: makeAppearance(),
+    // 建物(tileset)の影は上面だけが受ける。
     shadows: ShadowMode.RECEIVE_ONLY,
     asynchronous: false,
   }) as SolidTerrainPrimitive
-  primitive._machimokiSolidTerrain = true
-  primitive._machimokiSolidTerrainVertexCount = vertexCount
-  primitive._machimokiSolidTerrainHasNormals = true
+  const skirtPrimitive = new Primitive({
+    geometryInstances: new GeometryInstance({
+      geometry: geometrySkirt,
+      attributes: {
+        color: ColorGeometryInstanceAttribute.fromColor(terrainColor),
+      },
+    }),
+    appearance: makeAppearance(),
+    // 断面(側面)・底面には影を描画しない。
+    shadows: ShadowMode.DISABLED,
+    asynchronous: false,
+  }) as SolidTerrainPrimitive
+  for (const p of [topPrimitive, skirtPrimitive]) {
+    p._machimokiSolidTerrain = true
+    p._machimokiSolidTerrainVertexCount = vertexCount
+    p._machimokiSolidTerrainHasNormals = true
+  }
+
+  // 底面開口（中空シェル）時は、開口部から見えるキャビティ内面とリムを追加する。
+  const primitives: SolidTerrainPrimitive[] = [topPrimitive, skirtPrimitive]
+  if (openBottomShell) {
+    const cavityPrimitive = buildCavityPrimitive(sample, {
+      thickness,
+      flatBottomHeight,
+      shellThickness,
+      useFlatBottom: options.flattenBottom || !!options.reflectActualElevation,
+      terrainColor,
+      outerBottomEcef: positionValues,
+      outerBottomOffset: topVertexCount,
+    })
+    if (cavityPrimitive) {
+      primitives.push(cavityPrimitive)
+    }
+  }
 
   return {
-    primitive,
+    primitives,
     boundingSphere,
   }
 }
@@ -441,4 +493,190 @@ export async function createSolidTerrainPrimitive(
 ): Promise<SolidTerrainPrimitiveResult> {
   const sample = await sampleTerrainData(bounds, terrainProvider, options.gridSize)
   return buildSolidTerrainPrimitive(sample, options)
+}
+
+/**
+ * Grid indices of the outer boundary of an n×n grid, in a continuous
+ * counter-clockwise loop (south edge → east edge → north edge → west edge).
+ */
+function boundaryRingIndices(gridSize: number): number[] {
+  const ring: number[] = []
+  for (let x = 0; x < gridSize; x++) ring.push(gridIndex(x, 0, gridSize))
+  for (let y = 1; y < gridSize; y++) ring.push(gridIndex(gridSize - 1, y, gridSize))
+  for (let x = gridSize - 2; x >= 0; x--) ring.push(gridIndex(x, gridSize - 1, gridSize))
+  for (let y = gridSize - 2; y >= 1; y--) ring.push(gridIndex(0, y, gridSize))
+  return ring
+}
+
+interface CavityContext {
+  thickness: number
+  flatBottomHeight: number
+  shellThickness: number
+  useFlatBottom: boolean
+  terrainColor: Color
+  outerBottomEcef: Float64Array
+  outerBottomOffset: number
+}
+
+/**
+ * Build the cavity primitive for the open-bottom hollow preview: the inner
+ * ceiling, inner walls and the bottom rim, matching the exported shell shape
+ * (terrain surface inset by the shell thickness, opening downward).
+ *
+ * Rendered with `closed: false` so the cavity stays visible from any angle
+ * regardless of winding; the fragment shader derives lighting normals from
+ * screen-space derivatives.
+ */
+function buildCavityPrimitive(
+  sample: TerrainSampleData,
+  ctx: CavityContext,
+): SolidTerrainPrimitive | null {
+  const gridSize = sample.gridSize
+  const topCount = gridSize * gridSize
+  const t = ctx.shellThickness
+
+  let minX = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  for (const p of sample.topLocalPositions) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+  }
+  const width = maxX - minX
+  const depth = maxY - minY
+  if (!(width > 2 * t) || !(depth > 2 * t)) return null
+
+  const scaleX = (width - 2 * t) / width
+  const scaleY = (depth - 2 * t) / depth
+  const centerX = (minX + maxX) / 2
+  const centerY = (minY + maxY) / 2
+
+  const ring = boundaryRingIndices(gridSize)
+  const ringLength = ring.length
+  const vertexCount = topCount * 2 + ringLength
+  const positions = new Float64Array(vertexCount * 3)
+
+  const localScratch = new Cartesian3()
+  const ecefScratch = new Cartesian3()
+  const writeLocal = (index: number, x: number, y: number, z: number): void => {
+    localScratch.x = x
+    localScratch.y = y
+    localScratch.z = z
+    const ecef = Matrix4.multiplyByPoint(sample.centerMatrix, localScratch, ecefScratch)
+    positions[index * 3] = ecef.x
+    positions[index * 3 + 1] = ecef.y
+    positions[index * 3 + 2] = ecef.z
+  }
+
+  // Cavity ceiling: terrain surface inset by t, lowered by t.
+  for (let i = 0; i < topCount; i++) {
+    const p = sample.topLocalPositions[i]
+    writeLocal(i, centerX + (p.x - centerX) * scaleX, centerY + (p.y - centerY) * scaleY, p.z - t)
+  }
+  // Cavity floor ring vertices (below the slab so nothing caps the opening).
+  for (let i = 0; i < topCount; i++) {
+    const p = sample.topLocalPositions[i]
+    const x = centerX + (p.x - centerX) * scaleX
+    const y = centerY + (p.y - centerY) * scaleY
+    const bottomZ = (ctx.useFlatBottom ? ctx.flatBottomHeight : p.z - ctx.thickness) - 2 * t
+    writeLocal(topCount + i, x, y, bottomZ)
+  }
+  // Outer bottom ring (copied from the solid slab's bottom grid boundary).
+  for (let k = 0; k < ringLength; k++) {
+    const source = (ctx.outerBottomOffset + ring[k]) * 3
+    positions[(topCount * 2 + k) * 3] = ctx.outerBottomEcef[source]
+    positions[(topCount * 2 + k) * 3 + 1] = ctx.outerBottomEcef[source + 1]
+    positions[(topCount * 2 + k) * 3 + 2] = ctx.outerBottomEcef[source + 2]
+  }
+
+  const indices: number[] = []
+
+  // Ceiling faces (visible from below through the opening).
+  for (let y = 0; y < gridSize - 1; y++) {
+    for (let x = 0; x < gridSize - 1; x++) {
+      const a = gridIndex(x, y, gridSize)
+      const b = gridIndex(x + 1, y, gridSize)
+      const c = gridIndex(x, y + 1, gridSize)
+      const d = gridIndex(x + 1, y + 1, gridSize)
+      indices.push(a, c, b)
+      indices.push(b, c, d)
+    }
+  }
+
+  // Inner walls: cavity ceiling boundary down to the cavity floor ring.
+  for (let k = 0; k < ringLength; k++) {
+    const k2 = (k + 1) % ringLength
+    const t1 = ring[k]
+    const t2 = ring[k2]
+    const b1 = topCount + t1
+    const b2 = topCount + t2
+    indices.push(t1, t2, b1)
+    indices.push(t2, b2, b1)
+  }
+
+  // Bottom rim: annulus between the slab's outer bottom ring and the cavity.
+  for (let k = 0; k < ringLength; k++) {
+    const k2 = (k + 1) % ringLength
+    const o1 = topCount * 2 + k
+    const o2 = topCount * 2 + k2
+    const i1 = topCount + ring[k]
+    const i2 = topCount + ring[k2]
+    indices.push(o1, i1, o2)
+    indices.push(o2, i1, i2)
+  }
+
+  const indexArray = new Uint32Array(indices)
+  const normalValues = buildTerrainNormals(positions, indexArray)
+  const boundingSphere = BoundingSphere.fromVertices(positions)
+  const attributes = new GeometryAttributes()
+  attributes.position = new GeometryAttribute({
+    componentDatatype: ComponentDatatype.DOUBLE,
+    componentsPerAttribute: 3,
+    values: positions,
+  })
+  attributes.normal = new GeometryAttribute({
+    componentDatatype: ComponentDatatype.FLOAT,
+    componentsPerAttribute: 3,
+    values: normalValues,
+  })
+
+  const primitive = new Primitive({
+    geometryInstances: new GeometryInstance({
+      geometry: new Geometry({
+        attributes,
+        indices: indexArray,
+        primitiveType: PrimitiveType.TRIANGLES,
+        boundingSphere,
+      }),
+      attributes: {
+        // 中空内面は外側と同じ色相のまま一段暗くし、下から見たときに
+        // 開口部として一目で分かるようにする（白モデル・地形色変更にも追従）。
+        color: ColorGeometryInstanceAttribute.fromColor(
+          new Color(
+            ctx.terrainColor.red * 0.72,
+            ctx.terrainColor.green * 0.72,
+            ctx.terrainColor.blue * 0.72,
+            ctx.terrainColor.alpha,
+          ),
+        ),
+      },
+    }),
+    appearance: new PerInstanceColorAppearance({
+      closed: false,
+      flat: false,
+      translucent: false,
+      vertexShaderSource: RELIEF_VERTEX_SHADER,
+      fragmentShaderSource: RELIEF_FRAGMENT_SHADER,
+    }),
+    // 開口部から覗く内面には影を描画しない。
+    shadows: ShadowMode.DISABLED,
+    asynchronous: false,
+  }) as SolidTerrainPrimitive
+  primitive._machimokiSolidTerrain = true
+  primitive._machimokiSolidTerrainVertexCount = vertexCount
+  primitive._machimokiSolidTerrainHasNormals = true
+  return primitive
 }

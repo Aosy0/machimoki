@@ -8,7 +8,7 @@ export {
   scaleRawMesh,
 } from './pipelineCore.js'
 
-export { buildPrintableModelFromMeshes } from './pipelineUtils.js'
+export { buildPrintableModelFromMeshes, buildHollowBuildingShells } from './pipelineUtils.js'
 
 export { exportMachimoki, exportMachimokiFromMeshes } from './pipeline.js'
 export type { MachimokiExportResult } from './pipeline.js'

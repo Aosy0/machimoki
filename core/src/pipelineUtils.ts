@@ -393,3 +393,87 @@ export async function buildPrintableModelFromMeshes(
     for (const cutter of buildingCutters) cutter.delete()
   }
 }
+
+/**
+ * 建物メッシュ群をエクスポートと同じ侵食処理で中空化し、底面が開いたシェルメッシュを返す。
+ *
+ * プレビュー表示用。地形との統合（底面シャフトの接続）は行わず、建物単体を
+ * 開いた底面のシェルとして返す。壁厚より小さい等で中空化できない建物は、
+ * キャップ済みの元メッシュをそのまま返す（中実のまま表示される）。
+ *
+ * @param wallThickness 入力メッシュと同じ座標空間でのシェル厚み
+ */
+export async function buildHollowBuildingShells(
+  buildingMeshes: RawMesh[],
+  bounds: Bounds,
+  wallThickness: number,
+  includeSpanningBuildings = false,
+): Promise<RawMesh[]> {
+  if (!(wallThickness > 0) || !Number.isFinite(wallThickness)) {
+    throw new Error(`Invalid wallThickness: ${wallThickness}`)
+  }
+
+  const components: RawMesh[] = []
+  for (const mesh of buildingMeshes) {
+    components.push(...splitConnectedComponents(weldVertices(mesh)))
+  }
+  const uniqueComponents = dedupeComponents(components)
+
+  const shells: RawMesh[] = []
+  for (const comp of uniqueComponents) {
+    if (!componentIntersectsBounds(comp, bounds, 1e-2, includeSpanningBuildings)) continue
+
+    const capped = capBuildingBottom(comp)
+
+    let minY = Infinity
+    let maxY = -Infinity
+    for (let i = 1; i < capped.positions.length; i += 3) {
+      const y = capped.positions[i]
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+    if (!Number.isFinite(minY) || !Number.isFinite(maxY)) continue
+
+    let shellMesh: RawMesh | null = null
+    let manifold: Manifold | null = null
+    try {
+      manifold = await createManifoldFromMesh(capped)
+      const footprintTolerance = Math.max(1e-6, (maxY - minY) * 0.02)
+      const footprint = buildingBottomFootprint(capped, footprintTolerance)
+      if (footprint) {
+        // 地形との統合は不要なため、シャフトは建物底面直下まででよい
+        const cutter = await buildBuildingCutter(
+          manifold,
+          footprint,
+          maxY,
+          wallThickness,
+          footprint.minY,
+        )
+        if (cutter) {
+          try {
+            const shell = manifold.subtract(cutter)
+            try {
+              const mesh = shell.getMesh()
+              shellMesh = {
+                positions: new Float32Array(mesh.vertProperties),
+                indices: new Uint32Array(mesh.triVerts),
+              }
+            } finally {
+              shell.delete()
+            }
+          } finally {
+            cutter.delete()
+          }
+        }
+      }
+    } catch {
+      shellMesh = null
+    } finally {
+      manifold?.delete()
+    }
+
+    shells.push(shellMesh ?? capped)
+  }
+
+  return shells
+}
