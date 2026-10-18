@@ -9,6 +9,7 @@ import {
   transformForUpAxis,
   importFrom3MF,
   importFromSTL,
+  sectionMesh,
   cleanupManifoldImports,
 } from '../src/manifoldOps.js';
 import { parseSTL } from '../src/stlParser.js';
@@ -143,5 +144,34 @@ describe('manifoldOps', () => {
     expect(maxY).toBeCloseTo(1000, 6);
     expect(minZ).toBeCloseTo(0, 6);
     expect(maxZ).toBeCloseTo(1000, 6);
+  });
+});
+
+describe('sectionMesh', () => {
+  it('splits a cube into two capped halves', async () => {
+    const cube = createCubeMesh(); // 0..1
+    const minSide = await sectionMesh(cube, 'x', 'min', 0.5);
+    const maxSide = await sectionMesh(cube, 'x', 'max', 0.5);
+    expect(minSide).not.toBeNull();
+    expect(maxSide).not.toBeNull();
+
+    const a = await createManifoldFromMesh(minSide!);
+    const b = await createManifoldFromMesh(maxSide!);
+    try {
+      // 切断面がキャップされ、どちらも閉じたマニフォールドになっている
+      expect(a.status()).toBe('NoError');
+      expect(b.status()).toBe('NoError');
+      expect(a.volume()).toBeCloseTo(0.5, 6);
+      expect(b.volume()).toBeCloseTo(0.5, 6);
+    } finally {
+      a.delete();
+      b.delete();
+    }
+  });
+
+  it('returns null when the kept side is empty', async () => {
+    const cube = createCubeMesh();
+    expect(await sectionMesh(cube, 'x', 'max', 2)).toBeNull();
+    expect(await sectionMesh(cube, 'x', 'min', -1)).toBeNull();
   });
 });

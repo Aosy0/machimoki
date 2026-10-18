@@ -8,7 +8,12 @@ export {
   scaleRawMesh,
 } from './pipelineCore.js'
 
-export { buildPrintableModelFromMeshes, buildHollowBuildingShells } from './pipelineUtils.js'
+export {
+  buildHollowBuildingShells,
+  buildPrintableGeometryFromMeshes,
+  buildPrintableModelFromMeshes,
+} from './pipelineUtils.js'
+export type { PrintableGeometryResult } from './pipelineUtils.js'
 
 export { exportMachimoki, exportMachimokiFromMeshes } from './pipeline.js'
 export type { MachimokiExportResult } from './pipeline.js'
@@ -39,8 +44,10 @@ export {
   exportMeshesTo3MF,
   importFrom3MF,
   importFromSTL,
+  sectionMesh,
   cleanupManifoldImports,
 } from './manifoldOps.js'
+export type { SectionAxis } from './manifoldOps.js'
 
 export type {
   Bounds,

@@ -1047,6 +1047,7 @@ function App() {
               reflectActualElevation={parameters.reflectActualElevation}
               openBottom={parameters.openBottom}
               shellThickness={parameters.shellThickness}
+              hollowBuildings={parameters.hollowBuildings}
               terrainGridSize={parameters.terrainGridSize}
               includeTerrain={parameters.includeTerrain}
               buildingColor={parameters.buildingColor}

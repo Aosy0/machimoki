@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { getManifoldModule } from 'manifold-3d/lib/wasm.js'
 import type { Manifold } from 'manifold-3d'
 
-import { buildPrintableModelFromMeshes, buildHollowBuildingShells } from '../src/pipelineUtils.js'
+import {
+  buildHollowBuildingShells,
+  buildPrintableGeometryFromMeshes,
+  buildPrintableModelFromMeshes,
+} from '../src/pipelineUtils.js'
 import {
   buildSlabIndices,
   buildTerrainCavityMesh,
@@ -602,5 +606,62 @@ describe('P2: 斜面でのキャビティ天井の再サンプル', () => {
     // 双線形補間なら 3.75 になる（三角形分割との差が今回の問題だった）
     expect(t1).not.toBeCloseTo(3.75, 6)
     expect(t2).not.toBeCloseTo(3.75, 6)
+  })
+})
+
+describe('P4: 完成メッシュ共通化', () => {
+  it('同じ入力から生成した形状とエクスポート結果が一致する', async () => {
+    const slab = buildTerrainSlab(8, 20, 0, -10)
+    const building = await buildBoxBuilding(0, 0, 8, 8, -0.3, 10)
+    const options = baseOptions({ upAxis: 'y-up' })
+
+    const geometry = await buildPrintableGeometryFromMeshes([building], slab, bounds, options)
+    const exported = await buildPrintableModelFromMeshes([building], slab, bounds, options)
+
+    const fromGeometry = await createManifoldFromMesh(geometry.mesh)
+    const fromExport = await importFrom3MF(exported.buffer)
+    const wasm: any = await getManifoldModule()
+    try {
+      expect(fromGeometry.status()).toBe('NoError')
+      expect(fromExport.status()).toBe('NoError')
+
+      const boxA = fromGeometry.boundingBox()
+      const boxB = fromExport.boundingBox()
+      for (let axis = 0; axis < 3; axis++) {
+        expect(boxA.min[axis]).toBeCloseTo(boxB.min[axis], 7)
+        expect(boxA.max[axis]).toBeCloseTo(boxB.max[axis], 7)
+      }
+      expect(
+        Math.abs(fromGeometry.volume() - fromExport.volume()) / fromGeometry.volume(),
+      ).toBeLessThan(1e-3)
+      expect(fromGeometry.genus()).toBe(fromExport.genus())
+
+      // 対称差体積 ≈ 0（形状が一致していること）
+      const onlyGeometry = fromGeometry.subtract(fromExport)
+      const onlyExport = fromExport.subtract(fromGeometry)
+      const symmetric = wasm.Manifold.union([onlyGeometry, onlyExport])
+      try {
+        expect(symmetric.volume()).toBeLessThan(fromGeometry.volume() * 1e-4)
+      } finally {
+        symmetric.delete()
+        onlyGeometry.delete()
+        onlyExport.delete()
+      }
+    } finally {
+      fromGeometry.delete()
+      fromExport.delete()
+    }
+  })
+
+  it('入力メッシュを変更しない', async () => {
+    const slab = buildTerrainSlab(8, 20, 0, -10)
+    const building = await buildBoxBuilding(0, 0, 8, 8, -0.3, 10)
+    const buildingPositions = Array.from(building.positions)
+    const slabPositions = Array.from(slab.positions)
+
+    await buildPrintableGeometryFromMeshes([building], slab, bounds, baseOptions({}))
+
+    expect(Array.from(building.positions)).toEqual(buildingPositions)
+    expect(Array.from(slab.positions)).toEqual(slabPositions)
   })
 })

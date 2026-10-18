@@ -71,7 +71,10 @@ describe('buildPrintableModel', () => {
 
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh]);
-    vi.mocked(createManifoldFromMesh).mockResolvedValue(buildingFake);
+    // 1回目: 建物のソリッド化、2回目: シリアライズ前の完成メッシュ再インポート
+    vi.mocked(createManifoldFromMesh)
+      .mockResolvedValueOnce(buildingFake)
+      .mockResolvedValue(unionFake);
     vi.mocked(unionMeshes).mockResolvedValue(unionFake);
     vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);
 
@@ -87,6 +90,8 @@ describe('buildPrintableModel', () => {
     expect(buildTerrainMesh).toHaveBeenCalledWith(bounds, 0.01, true, undefined, false);
     expect(buildBuildingMeshes).toHaveBeenCalledWith(bounds, 'lod1', undefined);
     expect(createManifoldFromMesh).toHaveBeenCalledWith(buildingMesh);
+    // 建物1回 + 完成メッシュの再インポート1回
+    expect(createManifoldFromMesh).toHaveBeenCalledTimes(2);
     expect(unionMeshes).toHaveBeenCalledTimes(1);
     const unionMeshesArg = vi.mocked(unionMeshes).mock.calls[0][0];
     expect(unionMeshesArg).toHaveLength(2);
@@ -272,7 +277,8 @@ describe('buildPrintableModel', () => {
 
     let capturedMesh: RawMesh | null = null;
     vi.mocked(createManifoldFromMesh).mockImplementation(async (mesh: RawMesh) => {
-      capturedMesh = mesh;
+      // 最初の呼び出し（建物）だけを記録する（2回目は完成メッシュの再インポート）
+      if (!capturedMesh) capturedMesh = mesh;
       return createFakeManifold();
     });
     vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
@@ -308,7 +314,8 @@ describe('buildPrintableModel', () => {
 
     let capturedBuildingMesh: RawMesh | null = null;
     vi.mocked(createManifoldFromMesh).mockImplementation(async (mesh: RawMesh) => {
-      capturedBuildingMesh = mesh;
+      // 最初の呼び出し（建物）だけを記録する（2回目は完成メッシュの再インポート）
+      if (!capturedBuildingMesh) capturedBuildingMesh = mesh;
       return createFakeManifold();
     });
     vi.mocked(unionMeshes).mockResolvedValue(createFakeManifold());
@@ -356,8 +363,10 @@ describe('buildPrintableModel', () => {
       { west: -1, south: -1, east: 1, north: 1 },
       { terrainThickness: 5, flattenBottom: true, format: '3mf' },
     );
-    // No building survives filtering, so createManifoldFromMesh is never called.
-    expect(createManifoldFromMesh).toHaveBeenCalledTimes(0);
+    // No building survives filtering; the only manifold created is the finished
+    // mesh re-import in the serializer.
+    expect(createManifoldFromMesh).toHaveBeenCalledTimes(1);
+    expect(createManifoldFromMesh).not.toHaveBeenCalledWith(straddlingMesh);
     expect(unionMeshes).toHaveBeenCalledTimes(1);
     expect(vi.mocked(unionMeshes).mock.calls[0][0]).toHaveLength(1);
     expect(vi.mocked(unionMeshes).mock.calls[0][0][0]).toBe(terrainMesh);
@@ -374,8 +383,9 @@ describe('buildPrintableModel', () => {
       { west: -1, south: -1, east: 1, north: 1 },
       { terrainThickness: 5, flattenBottom: true, format: '3mf', includeSpanningBuildings: true },
     );
-    // createManifoldFromMesh called once for the building; union gets terrain + building.
-    expect(createManifoldFromMesh).toHaveBeenCalledTimes(1);
+    // createManifoldFromMesh: 建物1回 + 完成メッシュの再インポート1回
+    expect(createManifoldFromMesh).toHaveBeenCalledTimes(2);
+    expect(createManifoldFromMesh).toHaveBeenCalledWith(straddlingMesh);
     expect(unionMeshes).toHaveBeenCalledTimes(1);
     expect(vi.mocked(unionMeshes).mock.calls[0][0]).toHaveLength(2);
   });
