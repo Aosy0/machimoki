@@ -41,6 +41,15 @@ export interface ExportOptions {
   excludedGmlIds?: string[]
   // 地形メッシュの分割数（NxN）。未指定時は 128。
   terrainGridSize?: number
+  // 底面を開口した中空シェルとして出力する。地形スライスの内側を空洞にし、
+  // 底面は外周のリム（シェル厚み分）だけを残す。デフォルト false。
+  openBottom?: boolean
+  // シェル（壁・天井）の厚み。ユーザー向けの印刷 mm。デフォルト 1.6。
+  // openBottom が true のときのみ使用される。
+  shellThickness?: number
+  // 建物内部も中空化し、底面開口から建物内へ通じる空洞を作る。デフォルト true。
+  // openBottom が true のときのみ使用される。
+  hollowBuildings?: boolean
 }
 
 export interface ExportRequest {

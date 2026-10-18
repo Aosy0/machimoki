@@ -82,6 +82,9 @@ function App() {
     whiteModel: false,
     upAxis: 'z-up',
     includeSpanningBuildings: false,
+    openBottom: false,
+    shellThickness: 1.6,
+    hollowBuildings: true,
   })
 
   const coverageAvailableRef = useRef(false)
@@ -316,6 +319,9 @@ function App() {
       upAxis: parameters.upAxis as 'z-up' | 'y-up',
       scale,
       includeSpanningBuildings: parameters.includeSpanningBuildings,
+      openBottom: parameters.openBottom,
+      shellThickness: parameters.shellThickness,
+      hollowBuildings: parameters.hollowBuildings,
       pickPoints,
       excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
     }
@@ -407,6 +413,9 @@ function App() {
         upAxis: parameters.upAxis,
         scale,
         includeSpanningBuildings: parameters.includeSpanningBuildings,
+        openBottom: parameters.openBottom,
+        shellThickness: parameters.shellThickness,
+        hollowBuildings: parameters.hollowBuildings,
         pickPoints,
         excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
       })

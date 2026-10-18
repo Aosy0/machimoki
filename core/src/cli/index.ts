@@ -6,6 +6,8 @@
  *            [--flatten-bottom|--no-flatten-bottom] [--format <3mf|stl>]
  *            --output <file> [--lod <lod1|lod2>] [--no-terrain]
  *            [--terrain-grid <integer 4-512>]
+ *            [--open-bottom] [--shell-thickness <number>]
+ *            [--hollow-buildings|--no-hollow-buildings]
  *
  *   validate --file <path> [--json|--no-json]
  */
@@ -152,7 +154,27 @@ program
     },
     1,
   )
+  .option('--open-bottom', 'export an open-bottomed hollow shell', false)
+  .option('--shell-thickness <number>', 'shell wall/ceiling thickness in mm (>0)', (value) => {
+    const num = Number(value)
+    if (Number.isNaN(num) || num <= 0) {
+      throw new Error(`Invalid shell thickness: ${value}. Must be > 0`)
+    }
+    return num
+  })
+  .option('--hollow-buildings', 'hollow building interiors (requires --open-bottom)', true)
+  .option('--no-hollow-buildings', 'keep building interiors solid')
   .action(async (options) => {
+    if (
+      options.openBottom &&
+      options.shellThickness !== undefined &&
+      options.shellThickness >= options.terrainThickness
+    ) {
+      throw new Error(
+        `Invalid shell thickness: ${options.shellThickness}. Must be smaller than terrain thickness (${options.terrainThickness})`,
+      )
+    }
+
     const exportOptions: ExportOptions = {
       terrainThickness: options.terrainThickness,
       flattenBottom: options.flattenBottom,
@@ -163,6 +185,9 @@ program
       upAxis: options.upAxis,
       scale: options.scale,
       includeSpanningBuildings: options.includeSpanningBuildings,
+      openBottom: options.openBottom,
+      shellThickness: options.shellThickness,
+      hollowBuildings: options.hollowBuildings,
       pickPoints: options.pickPoint.length > 0 ? options.pickPoint : undefined,
       excludedGmlIds: options.excludeGmlid.length > 0 ? options.excludeGmlid : undefined,
     }

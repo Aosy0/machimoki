@@ -100,6 +100,80 @@ export async function unionMeshes(meshes: RawMesh[]): Promise<Manifold> {
 }
 
 /**
+ * Union a list of existing Manifold solids in one batch.
+ */
+export async function unionManifolds(manifolds: Manifold[]): Promise<Manifold> {
+  if (manifolds.length === 0) {
+    throw new Error('Cannot union empty manifold list')
+  }
+  const wasm = await getWasm()
+  return wasm.Manifold.union(manifolds)
+}
+
+/**
+ * Create a cube of the given edge length centered at the origin.
+ * Used as the structuring element for morphological erosion when hollowing
+ * buildings (shell thickness = size / 2).
+ */
+export async function createBox(size: number): Promise<Manifold> {
+  if (!Number.isFinite(size) || size <= 0) {
+    throw new Error(`Invalid box size: ${size}`)
+  }
+  const wasm = await getWasm()
+  return wasm.Manifold.cube([size, size, size], true)
+}
+
+/** A point in the model's horizontal XZ plane. */
+export interface FootprintPoint {
+  x: number
+  z: number
+}
+
+/**
+ * Extrude a convex footprint in the XZ plane into a closed solid spanning
+ * yBottom..yTop.
+ *
+ * Used to extend a building downward through the terrain slab so the hollow
+ * building interior connects to the model's open underside.
+ */
+export async function createFootprintExtrusion(
+  hull: ReadonlyArray<FootprintPoint>,
+  yBottom: number,
+  yTop: number,
+): Promise<Manifold> {
+  const height = yTop - yBottom
+  if (hull.length < 3 || !Number.isFinite(height) || height <= 0) {
+    throw new Error('Invalid footprint extrusion')
+  }
+  const wasm = await getWasm()
+
+  // CrossSection uses the positive fill rule, which expects counter-clockwise
+  // outer contours. Reverse the hull if its signed area is negative.
+  let area2 = 0
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i]
+    const b = hull[(i + 1) % hull.length]
+    area2 += a.x * b.z - b.x * a.z
+  }
+  const points = hull.map((point) => [point.x, point.z] as [number, number])
+  if (area2 < 0) points.reverse()
+
+  const crossSection = new wasm.CrossSection([points] as any)
+  try {
+    const prism = crossSection.extrude(height)
+    // extrude grows along +Z; rotate into the model's Y-up frame (the prism
+    // then spans y = -height..0) and move its top to yTop.
+    const rotated = prism.rotate([90, 0, 0])
+    prism.delete()
+    const placed = rotated.translate([0, yTop, 0])
+    rotated.delete()
+    return placed
+  } finally {
+    crossSection.delete()
+  }
+}
+
+/**
  * Export a Manifold to a 3MF buffer.
  *
  * @param manifold The manifold to export.

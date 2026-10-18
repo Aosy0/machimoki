@@ -231,14 +231,29 @@ export function splitConnectedComponents(mesh: RawMesh): RawMesh[] {
   return components
 }
 
-export function capBuildingBottom(mesh: RawMesh, tolerance = 1e-6): RawMesh {
-  const positions = Array.from(mesh.positions)
-  const indices = Array.from(mesh.indices)
+export interface BuildingBottomFootprint {
+  /** Convex hull of the bottom vertices in the XZ plane. */
+  hull: Point2D[]
+  /** Lowest Y coordinate of the building mesh. */
+  minY: number
+}
 
+/**
+ * Extract the convex hull of a building's bottom vertices (its footprint).
+ *
+ * Used by bottom capping and by open-bottom hollowing, which needs the
+ * footprint to extend a shaft below the building.
+ */
+export function buildingBottomFootprint(
+  mesh: RawMesh,
+  tolerance = 1e-6,
+): BuildingBottomFootprint | null {
+  const positions = mesh.positions
   let minY = Infinity
   for (let i = 1; i < positions.length; i += 3) {
     if (positions[i] < minY) minY = positions[i]
   }
+  if (!Number.isFinite(minY)) return null
 
   const bottomVertices = new Map<string, Point2D>()
   for (let i = 0; i < positions.length; i += 3) {
@@ -250,15 +265,18 @@ export function capBuildingBottom(mesh: RawMesh, tolerance = 1e-6): RawMesh {
     }
   }
 
-  const uniquePoints = Array.from(bottomVertices.values())
-  if (uniquePoints.length < 3) {
-    return mesh
-  }
+  const hull = convexHull2D(Array.from(bottomVertices.values()))
+  if (hull.length < 3) return null
+  return { hull, minY }
+}
 
-  const hull = convexHull2D(uniquePoints)
-  if (hull.length < 3) {
-    return mesh
-  }
+export function capBuildingBottom(mesh: RawMesh, tolerance = 1e-6): RawMesh {
+  const footprint = buildingBottomFootprint(mesh, tolerance)
+  if (!footprint) return mesh
+
+  const positions = Array.from(mesh.positions)
+  const indices = Array.from(mesh.indices)
+  const { hull, minY } = footprint
 
   let centroidX = 0
   let centroidZ = 0

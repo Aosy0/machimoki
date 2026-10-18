@@ -194,6 +194,9 @@ curl -s -X POST http://localhost:3000/api/validate \
 | `--lod` | No | `lod1` \| `lod2` | `lod1` | Level of detail for buildings |
 | `--terrain` / `--no-terrain` | No | flag | `true` | Include terrain mesh generation |
 | `--pick-point` | No | `lon,lat` (repeatable) | -- | Keep only buildings whose footprint contains the point. Bounds is then used only for tile fetch and terrain |
+| `--open-bottom` / `--no-open-bottom` | No | flag | `false` | Output an open-bottom hollow shell: hollows the terrain slab and buildings, leaving only a rim of `--shell-thickness` on the underside. Requires terrain |
+| `--shell-thickness` | No | number (printed mm) | `1.6` | Shell (wall/roof) thickness used by `--open-bottom`. Must be smaller than `--terrain-thickness` |
+| `--hollow-buildings` / `--no-hollow-buildings` | No | flag | `true` | With `--open-bottom`, also hollow building interiors so they connect through to the open underside |
 | `--output` | Yes | path | -- | Output file path |
 
 ### Validate Parameters
@@ -232,6 +235,7 @@ curl -s -X POST http://localhost:3000/api/validate \
 ## Notes
 
 - **3MF is recommended over STL**: 3MF preserves manifold topology and produces smaller files. STL is supported for compatibility with older slicers.
+- **Open-bottom hollow shell (`--open-bottom`)**: The terrain slab is hollowed analytically and each building is hollowed by morphological erosion (Minkowski difference with a cube), so the model is a watertight single shell with an open underside and building interiors connected to it (water poured in from below reaches inside the buildings). Buildings whose footprint or height is smaller than twice the shell thickness stay solid (a warning summarizes the count). Printing the open side down requires slicer support material inside the cavity; drain holes are not needed because the underside is open.
 - **Terrain sampling**: Terrain uses a 64x64 grid from Cesium World Terrain. Larger areas take longer to sample.
 - **Building data**: Buildings come from PLATEAU 3D Tiles (municipality-specific). Coverage depends on which cities have published data.
 - **Coordinate system**: All coordinates are in WGS84 degrees. Heights are in meters above ellipsoid.

@@ -12,6 +12,7 @@ import {
 } from 'cesium'
 import type { TerrainProvider } from 'cesium'
 import type { Bounds, RawMesh } from './types'
+import { buildSlabIndices } from './pipelineCore'
 
 const TERRAIN_GRID_SIZE = 128
 const TERRAIN_SAMPLE_BATCH_SIZE = 1024
@@ -123,71 +124,8 @@ export async function buildTerrainMesh(
     allVertices.push(vertices[i * 3], y, vertices[i * 3 + 2])
   }
 
-  const indices: number[] = []
-
-  // Top surface
-  for (let y = 0; y < n - 1; y++) {
-    for (let x = 0; x < n - 1; x++) {
-      const a = y * n + x
-      const b = a + 1
-      const c = (y + 1) * n + x
-      const d = c + 1
-      indices.push(a, b, c)
-      indices.push(b, d, c)
-    }
-  }
-
-  // Bottom surface
-  for (let y = 0; y < n - 1; y++) {
-    for (let x = 0; x < n - 1; x++) {
-      const a = y * n + x + numVertices
-      const b = a + 1
-      const c = (y + 1) * n + x + numVertices
-      const d = c + 1
-      indices.push(a, c, b)
-      indices.push(b, c, d)
-    }
-  }
-
-  // Side walls
-  for (let x = 0; x < n - 1; x++) {
-    const t1 = x
-    const t2 = x + 1
-    const b1 = t1 + numVertices
-    const b2 = t2 + numVertices
-    indices.push(t1, b1, t2)
-    indices.push(t2, b1, b2)
-  }
-
-  for (let x = 0; x < n - 1; x++) {
-    const t1 = (n - 1) * n + x
-    const t2 = t1 + 1
-    const b1 = t1 + numVertices
-    const b2 = t2 + numVertices
-    indices.push(t1, t2, b1)
-    indices.push(t2, b2, b1)
-  }
-
-  for (let y = 0; y < n - 1; y++) {
-    const t1 = y * n
-    const t2 = (y + 1) * n
-    const b1 = t1 + numVertices
-    const b2 = t2 + numVertices
-    indices.push(t1, t2, b1)
-    indices.push(t2, b2, b1)
-  }
-
-  for (let y = 0; y < n - 1; y++) {
-    const t1 = y * n + (n - 1)
-    const t2 = (y + 1) * n + (n - 1)
-    const b1 = t1 + numVertices
-    const b2 = t2 + numVertices
-    indices.push(t1, b1, t2)
-    indices.push(t2, b1, b2)
-  }
-
   return {
     positions: new Float32Array(allVertices),
-    indices: new Uint32Array(indices),
+    indices: buildSlabIndices(n),
   }
 }

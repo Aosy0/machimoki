@@ -154,6 +154,24 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
   const scale = scaleParsed !== null && scaleParsed > 0 ? scaleParsed : 1
   const includeSpanningBuildings =
     typeof record.includeSpanningBuildings === 'boolean' ? record.includeSpanningBuildings : false
+  const openBottom = typeof record.openBottom === 'boolean' ? record.openBottom : false
+  const hollowBuildings =
+    typeof record.hollowBuildings === 'boolean' ? record.hollowBuildings : true
+
+  let shellThickness: number | undefined
+  if (record.shellThickness !== undefined) {
+    const parsed = parseNumber(record.shellThickness)
+    if (parsed === null || parsed <= 0) {
+      return { ok: false, error: 'Invalid shellThickness' }
+    }
+    if (openBottom && parsed >= terrainThickness) {
+      return {
+        ok: false,
+        error: 'Invalid shellThickness: must be smaller than terrainThickness',
+      }
+    }
+    shellThickness = parsed
+  }
 
   let pickPoints: Array<{ lon: number; lat: number }> | undefined
   if (record.pickPoints !== undefined) {
@@ -195,6 +213,9 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     upAxis,
     scale,
     includeSpanningBuildings,
+    openBottom,
+    shellThickness,
+    hollowBuildings,
     pickPoints,
     excludedGmlIds,
     terrainGridSize,

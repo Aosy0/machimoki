@@ -152,6 +152,9 @@ describe('CLI export command', () => {
         upAxis: 'z-up',
         scale: 1,
         includeSpanningBuildings: false,
+        openBottom: false,
+        shellThickness: undefined,
+        hollowBuildings: true,
         pickPoints: undefined,
       },
     );
@@ -276,6 +279,88 @@ describe('CLI export command', () => {
         ],
       }),
     );
+  });
+
+  // NOTE: program はモジュールシングルトンで commander はオプション状態を
+  // parseAsync 間で保持するため、新規フラグのテストは末尾に置く。
+  it('honors --open-bottom and --shell-thickness', async () => {
+    const outputPath = join(tempDir, 'out.3mf');
+    buildPrintableModel.mockResolvedValue({
+      buffer: new TextEncoder().encode('shell-bytes'),
+      warnings: [],
+    });
+
+    await program.parseAsync([
+      'node',
+      'cli',
+      'export',
+      '--bounds',
+      '0,0,1,1',
+      '--terrain-thickness',
+      '10',
+      '--open-bottom',
+      '--shell-thickness',
+      '1.2',
+      '--output',
+      outputPath,
+    ]);
+
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        openBottom: true,
+        shellThickness: 1.2,
+        hollowBuildings: true,
+      }),
+    );
+  });
+
+  it('honors --no-hollow-buildings', async () => {
+    const outputPath = join(tempDir, 'out.3mf');
+    buildPrintableModel.mockResolvedValue({
+      buffer: new TextEncoder().encode('solid-bytes'),
+      warnings: [],
+    });
+
+    await program.parseAsync([
+      'node',
+      'cli',
+      'export',
+      '--bounds',
+      '0,0,1,1',
+      '--terrain-thickness',
+      '10',
+      '--open-bottom',
+      '--no-hollow-buildings',
+      '--output',
+      outputPath,
+    ]);
+
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ openBottom: true, hollowBuildings: false }),
+    );
+  });
+
+  it('rejects --shell-thickness >= terrain thickness when --open-bottom', async () => {
+    const outputPath = join(tempDir, 'out.3mf');
+
+    await expect(
+      program.parseAsync([
+        'node',
+        'cli',
+        'export',
+        '--bounds',
+        '0,0,1,1',
+        '--terrain-thickness',
+        '10',
+        '--open-bottom',
+        '--shell-thickness',
+        '10',
+        '--output',
+        outputPath,
+      ]),
+    ).rejects.toThrow(/shell thickness/i);
   });
 });
 

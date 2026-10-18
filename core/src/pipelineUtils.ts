@@ -7,20 +7,93 @@
 
 import type { Manifold } from 'manifold-3d'
 import { Bounds, ExportOptions, ExportResult, RawMesh } from './types.js'
-import { capBuildingBottom, splitConnectedComponents, weldVertices } from './buildingCapper.js'
 import {
+  buildingBottomFootprint,
+  capBuildingBottom,
+  splitConnectedComponents,
+  weldVertices,
+} from './buildingCapper.js'
+import {
+  createBox,
+  createFootprintExtrusion,
   createManifoldFromMesh,
   exportMeshesToSTL,
   exportTo3MF,
+  unionManifolds,
   unionMeshes,
 } from './manifoldOps.js'
 import {
+  buildTerrainCavityMesh,
   componentContainsPoint,
   componentIntersectsBounds,
   dedupeComponents,
   meshToRaw,
   scaleRawMesh,
 } from './pipelineCore.js'
+
+const DEFAULT_SHELL_THICKNESS_MM = 1.6
+
+/**
+ * Build the hollowing cutter for one building.
+ *
+ * The building solid is extended downward by a prism of its footprint so it
+ * reaches below the terrain slab, then eroded by a cube of edge 2·shellThickness.
+ * The resulting solid is the building's inner cavity (wall/roof thickness
+ * `shellThickness`) plus a shaft through the slab, which connects the cavity to
+ * the model's open underside.
+ *
+ * Returns null when the building is too small to contain a cavity.
+ */
+async function buildBuildingCutter(
+  building: Manifold,
+  footprint: { hull: Array<{ x: number; z: number }>; minY: number },
+  maxY: number,
+  shellThickness: number,
+  modelMinY: number,
+): Promise<Manifold | null> {
+  const t = shellThickness
+  const { hull, minY } = footprint
+  if (hull.length < 3) return null
+  if (!(maxY - minY > 2 * t)) return null
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+  for (const point of hull) {
+    if (point.x < minX) minX = point.x
+    if (point.x > maxX) maxX = point.x
+    if (point.z < minZ) minZ = point.z
+    if (point.z > maxZ) maxZ = point.z
+  }
+  if (!(Math.min(maxX - minX, maxZ - minZ) > 2 * t)) return null
+
+  const yTop = minY + 2 * t
+  const yBottom = Math.min(modelMinY, minY) - 2 * t
+  if (!(yTop > yBottom)) return null
+
+  const prism = await createFootprintExtrusion(hull, yBottom, yTop)
+  try {
+    const fused = await unionManifolds([building, prism])
+    try {
+      const cube = await createBox(2 * t)
+      try {
+        const eroded = fused.minkowskiDifference(cube)
+        if (eroded.status() !== 'NoError' || !(eroded.volume() > 0)) {
+          eroded.delete()
+          return null
+        }
+        return eroded
+      } finally {
+        cube.delete()
+      }
+    } finally {
+      fused.delete()
+    }
+  } finally {
+    prism.delete()
+  }
+}
 
 /**
  * Build a printable 3D model from already-fetched meshes.
@@ -149,12 +222,29 @@ export async function buildPrintableModelFromMeshes(
   const scale = options.scale ?? 1
   const includeSpanning = options.includeSpanningBuildings ?? false
   const pickPoints = options.pickPoints ?? []
+  const openBottom = options.openBottom ?? false
+  const hollowBuildings = options.hollowBuildings ?? true
+  const shellThickness = options.shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
   const warnings: string[] = []
 
   if (format === 'machimoki') {
     throw new Error(
       "format 'machimoki' is not supported by buildPrintableModelFromMeshes; use exportMachimokiFromMeshes instead",
     )
+  }
+
+  // Open-bottom hollowing requires terrain: the terrain cavity provides the
+  // open underside and the building cavities connect to it.
+  const hollowActive = openBottom && terrainMesh !== null
+  if (openBottom && !terrainMesh) {
+    warnings.push('地形がないため中空シェルを適用できませんでした')
+  }
+  // Wall thickness in the scaled model space. Geometry is scaled by `scale`
+  // before hollowing (printed mm = scaled units × 1000), so the printed shell
+  // thickness maps to shellThickness / 1000 units.
+  const wallThickness = hollowActive ? shellThickness / 1000 : 0
+  if (hollowActive && (!Number.isFinite(wallThickness) || wallThickness <= 0)) {
+    throw new Error(`Invalid shellThickness: ${shellThickness}`)
   }
 
   // Weld & split into connected components so each building is a separate
@@ -167,8 +257,24 @@ export async function buildPrintableModelFromMeshes(
   const uniqueComponents = dedupeComponents(components)
   alignFlatTerrainToBuildings(terrainMesh, uniqueComponents)
 
-  // Build Manifold solids for each surviving building.
+  // Scale the terrain before hollowing so cavity and cutter dimensions match
+  // the final model space.
+  if (terrainMesh && scale !== 1) {
+    terrainMesh = scaleRawMesh(terrainMesh, scale)
+  }
+  let terrainMinY = Infinity
+  if (hollowActive && terrainMesh) {
+    const positions = terrainMesh.positions
+    for (let i = 1; i < positions.length; i += 3) {
+      if (positions[i] < terrainMinY) terrainMinY = positions[i]
+    }
+  }
+
+  // Build Manifold solids for each surviving building. When hollowing, also
+  // build one erosion cutter per building that can contain a cavity.
   const buildingManifolds: Manifold[] = []
+  const buildingCutters: Manifold[] = []
+  let skippedHollowBuildings = 0
   for (let j = 0; j < uniqueComponents.length; j++) {
     const comp = uniqueComponents[j]
     if (pickPoints.length > 0) {
@@ -179,44 +285,67 @@ export async function buildPrintableModelFromMeshes(
     }
     const capped = capBuildingBottom(comp)
     const scaled = scaleRawMesh(capped, scale)
+    let manifold: Manifold
     try {
-      const m = await createManifoldFromMesh(scaled)
-      buildingManifolds.push(m)
+      manifold = await createManifoldFromMesh(scaled)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       warnings.push(`Building ${j + 1} skipped (not printable): ${message}`)
+      continue
+    }
+    buildingManifolds.push(manifold)
+
+    if (hollowActive && hollowBuildings) {
+      let minY = Infinity
+      let maxY = -Infinity
+      for (let i = 1; i < scaled.positions.length; i += 3) {
+        const y = scaled.positions[i]
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+      // Real PLATEAU bottoms are noisy, so collect the footprint with a
+      // tolerance relative to the building height instead of the strict 1e-6
+      // used by bottom capping.
+      const footprintTolerance =
+        Number.isFinite(minY) && Number.isFinite(maxY)
+          ? Math.max(1e-6, (maxY - minY) * 0.02)
+          : undefined
+      const footprint = buildingBottomFootprint(scaled, footprintTolerance)
+      if (!footprint) {
+        skippedHollowBuildings++
+        continue
+      }
+      try {
+        const cutter = await buildBuildingCutter(
+          manifold,
+          footprint,
+          maxY,
+          wallThickness,
+          terrainMinY,
+        )
+        if (cutter) {
+          buildingCutters.push(cutter)
+        } else {
+          skippedHollowBuildings++
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        warnings.push(`Building ${j + 1} hollowing skipped: ${message}`)
+        skippedHollowBuildings++
+      }
     }
   }
 
   if (pickPoints.length > 0 && buildingManifolds.length === 0) {
     warnings.push('No buildings matched the pick points')
   }
-
-  // Scale terrain after building filtering (which used unscaled coords).
-  if (terrainMesh && scale !== 1) {
-    terrainMesh = scaleRawMesh(terrainMesh, scale)
+  if (hollowActive && hollowBuildings && skippedHollowBuildings > 0) {
+    warnings.push(`中空化: 壁厚より小さい建物 ${skippedHollowBuildings} 棟は中実のまま残しました`)
   }
 
-  // STL path: union everything into one solid.
-  if (format === 'stl') {
-    const meshes: RawMesh[] = []
-    if (terrainMesh) meshes.push(terrainMesh)
-    meshes.push(...buildingManifolds.map((m) => meshToRaw(m.getMesh())))
-
-    if (meshes.length === 0) {
-      throw new Error('No printable meshes generated for the requested bounds')
-    }
-
-    const union = await unionMeshes(meshes)
-    try {
-      return { buffer: exportMeshesToSTL([meshToRaw(union.getMesh())], upAxis), warnings }
-    } finally {
-      union.delete()
-    }
-  }
-
-  // 3MF path: union terrain + buildings into a single manifold so the 3MF
-  // contains exactly one <object> and one <build> <item>.
+  // Union terrain + buildings into a single manifold. When an open-bottom
+  // shell was requested, subtract the cutters (terrain cavity + building
+  // cavities) so the model has one connected interior and an open underside.
   const meshes: RawMesh[] = []
   if (terrainMesh) meshes.push(terrainMesh)
   meshes.push(...buildingManifolds.map((m) => meshToRaw(m.getMesh())))
@@ -226,11 +355,41 @@ export async function buildPrintableModelFromMeshes(
   }
 
   const union = await unionMeshes(meshes)
+  let final: Manifold = union
   try {
+    if (hollowActive && terrainMesh) {
+      const cavityMesh = buildTerrainCavityMesh(terrainMesh, wallThickness)
+      if (!cavityMesh) {
+        throw new Error(
+          '中空シェルを生成できませんでした: 地形厚みに対してシェル厚みが大きすぎます',
+        )
+      }
+      const cavity = await createManifoldFromMesh(cavityMesh)
+      let cutterUnion: Manifold
+      try {
+        cutterUnion = await unionManifolds([cavity, ...buildingCutters])
+      } catch (error) {
+        cavity.delete()
+        throw error
+      }
+      cavity.delete()
+      try {
+        final = union.subtract(cutterUnion)
+      } finally {
+        cutterUnion.delete()
+      }
+    }
+
+    if (format === 'stl') {
+      return { buffer: exportMeshesToSTL([meshToRaw(final.getMesh())], upAxis), warnings }
+    }
+
     const modelColor = terrainMesh ? terrainColor : buildingColor
-    return { buffer: await exportTo3MF(union, modelColor, upAxis), warnings }
+    return { buffer: await exportTo3MF(final, modelColor, upAxis), warnings }
   } finally {
+    if (final !== union) final.delete()
     union.delete()
     for (const manifold of buildingManifolds) manifold.delete()
+    for (const cutter of buildingCutters) cutter.delete()
   }
 }

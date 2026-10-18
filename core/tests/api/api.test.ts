@@ -206,6 +206,49 @@ describe('API server', () => {
     );
   });
 
+  it('POST /api/export forwards openBottom, shellThickness and hollowBuildings', async () => {
+    buildPrintableModel.mockResolvedValue({ buffer: new TextEncoder().encode('shell-model'), warnings: [] });
+
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 0, south: 0, east: 1, north: 1 },
+        terrainThickness: 10,
+        format: '3mf',
+        openBottom: true,
+        shellThickness: 1.6,
+        hollowBuildings: false,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        openBottom: true,
+        shellThickness: 1.6,
+        hollowBuildings: false,
+      }),
+    );
+  });
+
+  it('POST /api/export rejects shellThickness >= terrainThickness with openBottom', async () => {
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 0, south: 0, east: 1, north: 1 },
+        terrainThickness: 10,
+        format: '3mf',
+        openBottom: true,
+        shellThickness: 10,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
   it('POST /api/export accepts pickPoints parameter', async () => {
     buildPrintableModel.mockResolvedValue({ buffer: new TextEncoder().encode('model'), warnings: [] });
 

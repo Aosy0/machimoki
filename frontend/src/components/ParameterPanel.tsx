@@ -16,6 +16,9 @@ export interface Parameters {
   whiteModel: boolean
   upAxis: 'z-up' | 'y-up'
   includeSpanningBuildings: boolean
+  openBottom: boolean
+  shellThickness: number
+  hollowBuildings: boolean
 }
 
 interface ParameterPanelProps {
@@ -464,6 +467,81 @@ function ParameterPanel({
           >
             底面を海抜0mまで下ろして実際の標高のまま出力します。谷などの低地は土台が厚くなり、材料と印刷時間が増えます。
           </p>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: !parameters.includeTerrain ? 'default' : 'pointer',
+              marginTop: '12px',
+              marginBottom: '4px',
+              opacity: !parameters.includeTerrain ? 0.5 : 1,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={parameters.openBottom}
+              onChange={(e) => handleChange('openBottom', e.target.checked)}
+              disabled={!parameters.includeTerrain}
+            />
+            <span style={{ fontSize: '14px' }}>底面を開口（中空シェル）</span>
+          </label>
+
+          {parameters.openBottom && (
+            <div style={{ marginTop: '12px', marginLeft: '26px' }}>
+              <div
+                style={{
+                  opacity: !parameters.includeTerrain ? 0.5 : 1,
+                }}
+              >
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '12px',
+                    marginBottom: '6px',
+                    color: 'var(--text-dim)',
+                  }}
+                >
+                  シェル厚み: {parameters.shellThickness.toFixed(1)} mm
+                </label>
+                <input
+                  type="range"
+                  min={0.8}
+                  max={Math.min(5, Math.max(0.8, parameters.terrainThickness - 0.5))}
+                  step={0.1}
+                  value={parameters.shellThickness}
+                  onChange={(e) => handleChange('shellThickness', Number(e.target.value))}
+                  disabled={!parameters.includeTerrain}
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: !parameters.includeTerrain ? 'default' : 'pointer',
+                  marginTop: '12px',
+                  opacity: !parameters.includeTerrain ? 0.5 : 1,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={parameters.hollowBuildings}
+                  onChange={(e) => handleChange('hollowBuildings', e.target.checked)}
+                  disabled={!parameters.includeTerrain}
+                />
+                <span style={{ fontSize: '14px' }}>建物内部も中空化</span>
+              </label>
+
+              <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '6px', marginBottom: 0 }}>
+                内部にLED・タッチセンサーを配置できる空洞を作ります。外観は変わりません。印刷時は内側にサポート材が必要です。内部の高さ目安: 約
+                {Math.max(0, parameters.terrainThickness - parameters.shellThickness).toFixed(1)} mm
+              </p>
+            </div>
+          )}
 
           <div style={{ marginTop: '12px', opacity: parameters.includeTerrain ? 1 : 0.5 }}>
             <label

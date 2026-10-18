@@ -88,9 +88,24 @@ npx tsx core/src/cli/index.ts export \
   --format 3mf \
   --output model.3mf
 
+# 底面を開口した中空シェル（LED・タッチセンサー等を内蔵する用途）
+npx tsx core/src/cli/index.ts export \
+  --bounds 139.6903,35.6997,139.6906,35.7000 \
+  --terrain-thickness 10 \
+  --scale 0.004545 \
+  --open-bottom \
+  --shell-thickness 1.6 \
+  --format 3mf \
+  --output shell.3mf
+
 # メッシュの検証
 npx tsx core/src/cli/index.ts validate --file model.3mf --json
 ```
+
+`--open-bottom` を指定すると、地形スライスと建物の内部をくり抜き、底面が開いた
+中空シェルとして出力します（外形は変わりません）。`--shell-thickness` で壁の厚み
+（印刷mm）を、`--no-hollow-buildings` で建物内部の中空化の無効化を指定できます。
+建物内部の空洞は底面まで貫通するため、逆さにして水を入れると建物内部まで到達します。
 
 ### HTTP API
 

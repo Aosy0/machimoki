@@ -40,6 +40,9 @@ export interface MachimokiManifest {
     upAxis?: string
     scale?: number
     includeSpanningBuildings?: boolean
+    openBottom?: boolean
+    shellThickness?: number
+    hollowBuildings?: boolean
   }
   /** Human-readable warnings collected during export. */
   warnings: string[]
@@ -82,6 +85,9 @@ export function createMachimokiBuffer(
       upAxis: options.upAxis,
       scale: options.scale,
       includeSpanningBuildings: options.includeSpanningBuildings,
+      openBottom: options.openBottom,
+      shellThickness: options.shellThickness,
+      hollowBuildings: options.hollowBuildings,
     },
     warnings,
     createdAt: new Date().toISOString(),

@@ -209,3 +209,147 @@ export function scaleRawMesh(mesh: RawMesh, scale: number): RawMesh {
 export function meshToRaw(mesh: { vertProperties: Float32Array; triVerts: Uint32Array }): RawMesh {
   return { positions: mesh.vertProperties, indices: mesh.triVerts }
 }
+
+/**
+ * Build the standard index buffer for an n×n slab: top surface grid
+ * (vertices 0..n²-1), bottom surface grid (vertices n²..2n²-1, reversed
+ * winding), and four side walls. Shared by the terrain slab generator and the
+ * terrain cavity generator so both have identical topology.
+ */
+export function buildSlabIndices(n: number): Uint32Array {
+  const N = n * n
+  const indices: number[] = []
+
+  // Top surface
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < n - 1; j++) {
+      const a = i * n + j
+      const b = a + 1
+      const c = (i + 1) * n + j
+      const d = c + 1
+      indices.push(a, b, c)
+      indices.push(b, d, c)
+    }
+  }
+
+  // Bottom surface (reversed)
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < n - 1; j++) {
+      const a = i * n + j + N
+      const b = a + 1
+      const c = (i + 1) * n + j + N
+      const d = c + 1
+      indices.push(a, c, b)
+      indices.push(b, c, d)
+    }
+  }
+
+  // Side walls
+  for (let x = 0; x < n - 1; x++) {
+    const t1 = x
+    const t2 = x + 1
+    const b1 = t1 + N
+    const b2 = t2 + N
+    indices.push(t1, b1, t2)
+    indices.push(t2, b1, b2)
+  }
+  for (let x = 0; x < n - 1; x++) {
+    const t1 = (n - 1) * n + x
+    const t2 = t1 + 1
+    const b1 = t1 + N
+    const b2 = t2 + N
+    indices.push(t1, t2, b1)
+    indices.push(t2, b2, b1)
+  }
+  for (let y = 0; y < n - 1; y++) {
+    const t1 = y * n
+    const t2 = (y + 1) * n
+    const b1 = t1 + N
+    const b2 = t2 + N
+    indices.push(t1, t2, b1)
+    indices.push(t2, b2, b1)
+  }
+  for (let y = 0; y < n - 1; y++) {
+    const t1 = y * n + (n - 1)
+    const t2 = (y + 1) * n + (n - 1)
+    const b1 = t1 + N
+    const b2 = t2 + N
+    indices.push(t1, b1, t2)
+    indices.push(t2, b1, b2)
+  }
+
+  return new Uint32Array(indices)
+}
+
+/**
+ * Build the inner cavity solid for an open-bottom terrain shell.
+ *
+ * The input must be the slab mesh produced by `buildTerrainMesh` (2·n²
+ * vertices: top grid followed by bottom grid). The cavity is shrunk in XZ by
+ * linear scaling toward the center so the side walls keep `shellThickness`,
+ * its ceiling follows the terrain relief `shellThickness` below the surface,
+ * and its floor extends below the slab so that subtracting it opens the
+ * model's underside (leaving only a rim of `shellThickness`).
+ *
+ * Returns null when the mesh does not have the expected grid layout or when
+ * the shell is too thick for the footprint.
+ */
+export function buildTerrainCavityMesh(
+  terrainMesh: RawMesh,
+  shellThickness: number,
+): RawMesh | null {
+  const t = shellThickness
+  if (!Number.isFinite(t) || t <= 0) return null
+
+  const positions = terrainMesh.positions
+  const vertexCount = positions.length / 3
+  const n = Math.round(Math.sqrt(vertexCount / 2))
+  if (!(n >= 2) || n * n * 2 !== vertexCount) return null
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+  let minBottomY = Infinity
+  for (let i = 0; i < n * n; i++) {
+    const x = positions[i * 3]
+    const z = positions[i * 3 + 2]
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+  for (let i = n * n; i < vertexCount; i++) {
+    const y = positions[i * 3 + 1]
+    if (y < minBottomY) minBottomY = y
+  }
+
+  const width = maxX - minX
+  const depth = maxZ - minZ
+  if (!(width > 2 * t) || !(depth > 2 * t)) return null
+  if (!Number.isFinite(minBottomY)) return null
+
+  const scaleX = (width - 2 * t) / width
+  const scaleZ = (depth - 2 * t) / depth
+  const centerX = (minX + maxX) / 2
+  const centerZ = (minZ + maxZ) / 2
+  const cavityBottomY = minBottomY - 2 * t
+
+  const cavityPositions = new Float32Array(vertexCount * 3)
+  for (let i = 0; i < n * n; i++) {
+    const x = positions[i * 3]
+    const y = positions[i * 3 + 1]
+    const z = positions[i * 3 + 2]
+    cavityPositions[i * 3] = centerX + (x - centerX) * scaleX
+    cavityPositions[i * 3 + 1] = y - t
+    cavityPositions[i * 3 + 2] = centerZ + (z - centerZ) * scaleZ
+  }
+  for (let i = 0; i < n * n; i++) {
+    const target = n * n + i
+    cavityPositions[target * 3] = cavityPositions[i * 3]
+    cavityPositions[target * 3 + 1] = cavityBottomY
+    cavityPositions[target * 3 + 2] = cavityPositions[i * 3 + 2]
+  }
+
+  return { positions: cavityPositions, indices: buildSlabIndices(n) }
+}
