@@ -3,7 +3,12 @@ import { getManifoldModule } from 'manifold-3d/lib/wasm.js'
 import type { Manifold } from 'manifold-3d'
 
 import { buildPrintableModelFromMeshes, buildHollowBuildingShells } from '../src/pipelineUtils.js'
-import { buildSlabIndices, buildTerrainCavityMesh } from '../src/pipelineCore.js'
+import {
+  buildSlabIndices,
+  buildTerrainCavityMesh,
+  sampleTerrainHeightFromGrid,
+  scaleRawMesh,
+} from '../src/pipelineCore.js'
 import { createBox, createManifoldFromMesh, importFrom3MF } from '../src/manifoldOps.js'
 import { validateMesh } from '../src/validate.js'
 import type { Bounds, ExportOptions, RawMesh } from '../src/types.js'
@@ -17,13 +22,23 @@ const bounds: Bounds = {
 
 /**
  * Terrain slab with the same 2·n² vertex layout as buildTerrainMesh
- * (top grid followed by bottom grid).
+ * (top grid followed by bottom grid). `topYAt` overrides the flat top height.
  */
-function buildTerrainSlab(n: number, size: number, topY: number, bottomY: number): RawMesh {
+function buildTerrainSlab(
+  n: number,
+  size: number,
+  topY: number,
+  bottomY: number,
+  topYAt?: (i: number, j: number) => number,
+): RawMesh {
   const positions: number[] = []
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      positions.push(-size / 2 + (size * j) / (n - 1), topY, size / 2 - (size * i) / (n - 1))
+      positions.push(
+        -size / 2 + (size * j) / (n - 1),
+        topYAt ? topYAt(i, j) : topY,
+        size / 2 - (size * i) / (n - 1),
+      )
     }
   }
   for (let i = 0; i < n; i++) {
@@ -138,6 +153,11 @@ describe('open-bottom hollowing', () => {
     expect(hollowValidation.non_manifold_edges).toBe(0)
     expect(hollowValidation.self_intersections).toBe(0)
     expect(hollow.warnings).toEqual([])
+    expect(hollow.hollowing?.hollowed).toBe(1)
+    expect(hollow.hollowing?.keptSolid).toBe(0)
+    expect(hollow.hollowing?.excluded).toBe(0)
+    expect(hollow.hollowing?.sealedCavities).toBe(0)
+    expect(hollow.hollowing?.reachability).toBe('unverified')
 
     const solid = await buildPrintableModelFromMeshes(
       [building],
@@ -153,6 +173,33 @@ describe('open-bottom hollowing', () => {
     expect(hollowValidation.volume).toBeLessThan(solidValidation.volume * 0.7)
   })
 
+  it('建物のシャフトが底面まで開通している（検査柱で確認）', async () => {
+    const slab = buildTerrainSlab(8, 20, 0, -10)
+    const building = await buildBoxBuilding(0, 0, 8, 8, -0.3, 10)
+    const probe = { x: 0, y: -0.0075, z: 0, sizeX: 0.0005, sizeY: 0.025, sizeZ: 0.0005 }
+
+    // 建物中心を下から貫く細い柱。底面開口から建物内部まで開通していれば
+    // 完成モデルと交差しない（既知形状のシャフトに対する回帰テスト）。
+    const hollow = await buildPrintableModelFromMeshes(
+      [building],
+      slab,
+      bounds,
+      baseOptions({ upAxis: 'y-up' }),
+    )
+    const hollowProbe = await probeIntersectionVolume(hollow.buffer, probe)
+    expect(hollowProbe).toBeLessThan(1e-11)
+
+    // 対照: 中実（openBottom=false）では柱が材料を貫くため交差体積が正
+    const solid = await buildPrintableModelFromMeshes(
+      [building],
+      slab,
+      bounds,
+      baseOptions({ openBottom: false, upAxis: 'y-up' }),
+    )
+    const solidProbe = await probeIntersectionVolume(solid.buffer, probe)
+    expect(solidProbe).toBeGreaterThan(1e-13)
+  })
+
   it('keeps buildings smaller than the wall thickness solid and warns', async () => {
     const slab = buildTerrainSlab(8, 20, 0, -10)
     // Footprint 2 units vs 2·t = 4 units in model space (scale 0.001).
@@ -165,6 +212,8 @@ describe('open-bottom hollowing', () => {
       baseOptions({}),
     )
     expect(result.warnings.some((warning) => warning.includes('中実のまま残した建物'))).toBe(true)
+    expect(result.hollowing?.keptSolid).toBe(1)
+    expect(result.hollowing?.records[0]?.status).toBe('small')
 
     const validation = await validateMesh(result.buffer, 'model/3mf')
     expect(validation.status).toBe('pass')
@@ -302,16 +351,19 @@ function removeBottomFaces(mesh: RawMesh): RawMesh {
   return { positions, indices: new Uint32Array(kept) }
 }
 
-/** 完成モデル（upAxis=y-up で出力）と検査用小立方体の交差体積を返す */
+/** 完成モデル（upAxis=y-up で出力）と検査用直方体の交差体積を返す */
 async function probeIntersectionVolume(
   buffer: Uint8Array,
-  probe: { x: number; y: number; z: number; size: number },
+  probe: { x: number; y: number; z: number; sizeX: number; sizeY: number; sizeZ: number },
 ): Promise<number> {
   const model = await importFrom3MF(buffer)
   let box: Manifold | null = null
   let intersection: Manifold | null = null
   try {
-    box = await createBox(probe.size)
+    box = await createBox(1)
+    const scaledBox = box.scale([probe.sizeX, probe.sizeY, probe.sizeZ])
+    box.delete()
+    box = scaledBox
     const placedBox = box.translate([probe.x, probe.y, probe.z])
     box.delete()
     box = placedBox
@@ -355,7 +407,9 @@ describe('P1: 凹形状・中庭・床なし底面', () => {
       x: 0.002,
       y: -0.001,
       z: -0.002,
-      size: 0.001,
+      sizeX: 0.001,
+      sizeY: 0.001,
+      sizeZ: 0.001,
     })
     expect(volume).toBeGreaterThan(0.5 * 0.001 ** 3)
   })
@@ -401,7 +455,9 @@ describe('P1: 凹形状・中庭・床なし底面', () => {
       x: 0,
       y: -0.001,
       z: 0,
-      size: 0.001,
+      sizeX: 0.001,
+      sizeY: 0.001,
+      sizeZ: 0.001,
     })
     expect(volume).toBeGreaterThan(0.5 * 0.001 ** 3)
   })
@@ -425,6 +481,8 @@ describe('P1: 凹形状・中庭・床なし底面', () => {
     expect(
       result.warnings.some((warning) => warning.includes('open bottom is not a single convex loop')),
     ).toBe(true)
+    expect(result.hollowing?.excluded).toBe(1)
+    expect(result.hollowing?.records[0]?.status).toBe('cap-unsupported')
 
     // 建物は出力から除外され、地形のみで watertight なまま
     const validation = await validateMesh(result.buffer, 'model/3mf')
@@ -470,5 +528,79 @@ describe('P1: 凹形状・中庭・床なし底面', () => {
     const solidValidation = await validateMesh(solid.buffer, 'model/3mf')
     expect(solidValidation.status).toBe('pass')
     expect(validation.volume).toBeLessThan(solidValidation.volume * 0.7)
+  })
+})
+
+describe('P2: 斜面でのキャビティ天井の再サンプル', () => {
+  it('急斜面（45°超）でも天井が移動先の地表 − t に一致する', () => {
+    const n = 8
+    const size = 20
+    const slope = 2 // 45°超（約63°）: +x 方向へ急降下
+    const slab = buildTerrainSlab(n, size, 0, -10, (_i, j) => {
+      const x = -size / 2 + (size * j) / (n - 1)
+      return -slope * x
+    })
+    const scaled = scaleRawMesh(slab, 0.001)
+    const t = 0.002
+    const cavity = buildTerrainCavityMesh(scaled, t)
+    expect(cavity).not.toBeNull()
+
+    const positions = scaled.positions
+    let minX = Infinity
+    let maxX = -Infinity
+    let minZ = Infinity
+    let maxZ = -Infinity
+    for (let i = 0; i < n * n; i++) {
+      minX = Math.min(minX, positions[i * 3])
+      maxX = Math.max(maxX, positions[i * 3])
+      minZ = Math.min(minZ, positions[i * 3 + 2])
+      maxZ = Math.max(maxZ, positions[i * 3 + 2])
+    }
+    const gridBounds = { minX, maxX, minZ, maxZ }
+
+    // 天井は「移動先の地表 − t」に一致し、地表を突き抜けない。
+    // （旧方式: 元頂点の高さ − t では、急斜面で (slope-1)·t だけ地表より上に出る）
+    for (let i = 0; i < n * n; i++) {
+      const x = cavity!.positions[i * 3]
+      const z = cavity!.positions[i * 3 + 2]
+      const surface = sampleTerrainHeightFromGrid(positions, n, gridBounds, x, z)
+      expect(surface).not.toBeNull()
+      // Float32格納の丸め誤差（~1e-9）を許容する
+      expect(Math.abs(cavity!.positions[i * 3 + 1] - (surface! - t))).toBeLessThan(1e-7)
+      expect(cavity!.positions[i * 3 + 1]).toBeLessThanOrEqual(surface! + 1e-9)
+    }
+  })
+
+  it('非平面セルでは実際の三角形分割で高さを評価する（双線形と異なる）', () => {
+    const n = 3
+    const size = 4
+    // チェッカーボード状の高さ: 各セルの4隅が同一平面に乗らない
+    const slab = buildTerrainSlab(n, size, 0, -10, (i, j) => ((i + j) % 2 === 0 ? 0 : 10))
+    const positions = slab.positions
+    const gridBounds = { minX: -2, maxX: 2, minZ: -2, maxZ: 2 }
+    const cell = size / (n - 1) // 2
+
+    // セル (0,0) の角: a=0, b=10, c=10, d=0
+    // u=v=0.25 は (a,b,c) 側 → ha + 0.25(hb-ha) + 0.25(hc-ha) = 5
+    const t1 = sampleTerrainHeightFromGrid(
+      positions,
+      n,
+      gridBounds,
+      -2 + cell * 0.25,
+      2 - cell * 0.25,
+    )
+    expect(t1).toBeCloseTo(5, 9)
+    // u=v=0.75 は (b,d,c) 側 → hd + 0.25(hc-hd) + 0.25(hb-hd) = 5
+    const t2 = sampleTerrainHeightFromGrid(
+      positions,
+      n,
+      gridBounds,
+      -2 + cell * 0.75,
+      2 - cell * 0.75,
+    )
+    expect(t2).toBeCloseTo(5, 9)
+    // 双線形補間なら 3.75 になる（三角形分割との差が今回の問題だった）
+    expect(t1).not.toBeCloseTo(3.75, 6)
+    expect(t2).not.toBeCloseTo(3.75, 6)
   })
 })

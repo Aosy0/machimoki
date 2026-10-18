@@ -60,6 +60,40 @@ export interface ExportRequest {
 export interface ExportResult {
   buffer: Uint8Array
   warnings: string[]
+  /** openBottom 時の建物ごとの中空化結果（未指定 = 中空化なし） */
+  hollowing?: HollowingReport
+}
+
+/** 建物1棟ごとの中空化ステータス */
+export type HollowingStatus =
+  | 'hollowed' // カッター生成済み（底面開通の一般判定は未検証）
+  | 'small' // 壁厚より小さく中空化不可（中実のまま）
+  | 'no-section' // 断面取得不可（中実のまま）
+  | 'boolean-failed' // 侵食/ブール演算失敗（中実のまま）
+  | 'cap-unsupported' // 開いた底面が単一の凸ループでない（出力から除外）
+  | 'invalid-geometry' // 閉じたソリッドにできない（出力から除外）
+
+export interface HollowingRecord {
+  /** 建物インデックス（1始まり。警告の Building N と一致） */
+  index: number
+  status: HollowingStatus
+  reason?: string
+}
+
+export interface HollowingReport {
+  records: HollowingRecord[]
+  /** カッター生成済みの建物数 */
+  hollowed: number
+  /** 中空化できず中実のまま残した建物数（small / no-section / boolean-failed） */
+  keptSolid: number
+  /** 出力から除外した建物数（cap-unsupported / invalid-geometry） */
+  excluded: number
+  /** 完成モデル内の密閉空洞の個数（0 なら健全） */
+  sealedCavities: number
+  /** 密閉空洞の体積合計 */
+  sealedCavityVolume: number
+  /** 底面開通の一般到達性判定は未実施（現状は常に 'unverified'） */
+  reachability: 'unverified'
 }
 
 export interface ValidationResult {

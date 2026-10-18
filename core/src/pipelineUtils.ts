@@ -6,13 +6,21 @@
  */
 
 import type { Manifold } from 'manifold-3d'
-import { Bounds, ExportOptions, ExportResult, RawMesh } from './types.js'
+import {
+  Bounds,
+  ExportOptions,
+  ExportResult,
+  HollowingRecord,
+  HollowingReport,
+  RawMesh,
+} from './types.js'
 import {
   bottomBoundaryIsConvex,
   capBuildingBottom,
   splitConnectedComponents,
   weldVertices,
 } from './buildingCapper.js'
+import { detectSealedCavities } from './hollowCheck.js'
 import {
   createBox,
   createManifoldFromMesh,
@@ -43,32 +51,40 @@ const DEFAULT_SHELL_THICKNESS_MM = 1.6
  * (wall/roof thickness `shellThickness`) plus a shaft through the slab, which
  * connects the cavity to the model's open underside.
  *
- * Returns null when the building is too small to contain a cavity, or when a
- * valid cross-section cannot be obtained (caller keeps the building solid).
+ * Returns the per-building status so callers can record why a building was
+ * kept solid ('small' / 'no-section' / 'boolean-failed').
  */
+type CutterResult =
+  | { status: 'hollowed'; cutter: Manifold }
+  | { status: 'small' }
+  | { status: 'no-section' }
+  | { status: 'boolean-failed' }
+
 async function buildBuildingCutter(
   building: Manifold,
   minY: number,
   maxY: number,
   shellThickness: number,
   modelMinY: number,
-): Promise<Manifold | null> {
+): Promise<CutterResult> {
   const t = shellThickness
   const height = maxY - minY
-  if (!(height > 2 * t)) return null
+  if (!(height > 2 * t)) return { status: 'small' }
 
   const bbox = building.boundingBox()
-  if (!(Math.min(bbox.max[0] - bbox.min[0], bbox.max[2] - bbox.min[2]) > 2 * t)) return null
+  if (!(Math.min(bbox.max[0] - bbox.min[0], bbox.max[2] - bbox.min[2]) > 2 * t)) {
+    return { status: 'small' }
+  }
 
   // 底面直上でスライスして真の断面を得る。ε はこの空間の単位で、
   // 建物高さの2%（下限 1e-3）を目安とし、高さの15%を上限に限定する。
   const sliceOffset = Math.min(Math.max(1e-3, height * 0.02), height * 0.15)
   const yTop = minY + 2 * t
   const yBottom = Math.min(modelMinY, minY) - 2 * t
-  if (!(yTop > yBottom)) return null
+  if (!(yTop > yBottom)) return { status: 'no-section' }
 
   const prism = await createSlicePrism(building, sliceOffset, yBottom, yTop)
-  if (!prism) return null
+  if (!prism) return { status: 'no-section' }
   try {
     const fused = await unionManifolds([building, prism])
     try {
@@ -77,9 +93,9 @@ async function buildBuildingCutter(
         const eroded = fused.minkowskiDifference(cube)
         if (eroded.status() !== 'NoError' || !(eroded.volume() > 0)) {
           eroded.delete()
-          return null
+          return { status: 'boolean-failed' }
         }
-        return eroded
+        return { status: 'hollowed', cutter: eroded }
       } finally {
         cube.delete()
       }
@@ -270,7 +286,7 @@ export async function buildPrintableModelFromMeshes(
   // build one erosion cutter per building that can contain a cavity.
   const buildingManifolds: Manifold[] = []
   const buildingCutters: Manifold[] = []
-  let skippedHollowBuildings = 0
+  const hollowingRecords: HollowingRecord[] = []
   for (let j = 0; j < uniqueComponents.length; j++) {
     const comp = uniqueComponents[j]
     if (pickPoints.length > 0) {
@@ -285,6 +301,7 @@ export async function buildPrintableModelFromMeshes(
     let scaled = scaleRawMesh(comp, scale)
     let manifold: Manifold | null = null
     let createError: string | null = null
+    let exclusionStatus: 'cap-unsupported' | 'invalid-geometry' = 'invalid-geometry'
     try {
       manifold = await createManifoldFromMesh(scaled)
     } catch (error) {
@@ -300,10 +317,16 @@ export async function buildPrintableModelFromMeshes(
         }
       } else {
         createError = 'open bottom is not a single convex loop'
+        exclusionStatus = 'cap-unsupported'
       }
     }
     if (!manifold) {
       warnings.push(`Building ${j + 1} skipped (not printable): ${createError ?? 'unknown'}`)
+      hollowingRecords.push({
+        index: j + 1,
+        status: exclusionStatus,
+        reason: createError ?? undefined,
+      })
       continue
     }
     buildingManifolds.push(manifold)
@@ -313,16 +336,17 @@ export async function buildPrintableModelFromMeshes(
       const minY = manifoldBounds.min[1]
       const maxY = manifoldBounds.max[1]
       try {
-        const cutter = await buildBuildingCutter(manifold, minY, maxY, wallThickness, terrainMinY)
-        if (cutter) {
-          buildingCutters.push(cutter)
+        const result = await buildBuildingCutter(manifold, minY, maxY, wallThickness, terrainMinY)
+        if (result.status === 'hollowed') {
+          buildingCutters.push(result.cutter)
+          hollowingRecords.push({ index: j + 1, status: 'hollowed' })
         } else {
-          skippedHollowBuildings++
+          hollowingRecords.push({ index: j + 1, status: result.status })
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         warnings.push(`Building ${j + 1} hollowing skipped: ${message}`)
-        skippedHollowBuildings++
+        hollowingRecords.push({ index: j + 1, status: 'boolean-failed', reason: message })
       }
     }
   }
@@ -330,9 +354,15 @@ export async function buildPrintableModelFromMeshes(
   if (pickPoints.length > 0 && buildingManifolds.length === 0) {
     warnings.push('No buildings matched the pick points')
   }
-  if (hollowActive && hollowBuildings && skippedHollowBuildings > 0) {
+  const keptSolidCount = hollowingRecords.filter(
+    (record) =>
+      record.status === 'small' ||
+      record.status === 'no-section' ||
+      record.status === 'boolean-failed',
+  ).length
+  if (hollowActive && hollowBuildings && keptSolidCount > 0) {
     warnings.push(
-      `中空化: 中空化できず中実のまま残した建物 ${skippedHollowBuildings} 棟（小型または断面取得不可）`,
+      `中空化: 中空化できず中実のまま残した建物 ${keptSolidCount} 棟（小型または断面取得不可）`,
     )
   }
 
@@ -373,12 +403,43 @@ export async function buildPrintableModelFromMeshes(
       }
     }
 
+    // 完成モデルの密閉空洞を検出する（検証済み方式: 非制限ボイドの分解）。
+    // 底面開通の一般到達性判定は未実施のため、レポートでは unverified とする。
+    let hollowingReport: HollowingReport | undefined
+    if (hollowActive) {
+      const sealed = await detectSealedCavities(final)
+      if (sealed.count > 0) {
+        warnings.push(
+          `中空化: 密閉空洞が ${sealed.count} 個検出されました（体積 ${sealed.volume.toPrecision(3)}）`,
+        )
+      }
+      hollowingReport = {
+        records: hollowingRecords,
+        hollowed: hollowingRecords.filter((record) => record.status === 'hollowed').length,
+        keptSolid: keptSolidCount,
+        excluded: hollowingRecords.filter(
+          (record) => record.status === 'cap-unsupported' || record.status === 'invalid-geometry',
+        ).length,
+        sealedCavities: sealed.count,
+        sealedCavityVolume: sealed.volume,
+        reachability: 'unverified',
+      }
+    }
+
     if (format === 'stl') {
-      return { buffer: exportMeshesToSTL([meshToRaw(final.getMesh())], upAxis), warnings }
+      return {
+        buffer: exportMeshesToSTL([meshToRaw(final.getMesh())], upAxis),
+        warnings,
+        hollowing: hollowingReport,
+      }
     }
 
     const modelColor = terrainMesh ? terrainColor : buildingColor
-    return { buffer: await exportTo3MF(final, modelColor, upAxis), warnings }
+    return {
+      buffer: await exportTo3MF(final, modelColor, upAxis),
+      warnings,
+      hollowing: hollowingReport,
+    }
   } finally {
     if (final !== union) final.delete()
     union.delete()
@@ -442,8 +503,9 @@ export async function buildHollowBuildingShells(
       const minY = manifoldBounds.min[1]
       const maxY = manifoldBounds.max[1]
       // 地形との統合は不要なため、シャフトの下端は建物底面直下でよい
-      const cutter = await buildBuildingCutter(manifold, minY, maxY, wallThickness, minY)
-      if (cutter) {
+      const result = await buildBuildingCutter(manifold, minY, maxY, wallThickness, minY)
+      if (result.status === 'hollowed') {
+        const cutter = result.cutter
         try {
           const shell = manifold.subtract(cutter)
           try {
