@@ -282,14 +282,60 @@ export function buildSlabIndices(n: number): Uint32Array {
 }
 
 /**
+ * 地形スラブメッシュ（`buildTerrainMesh` の格子レイアウト）の地表高を、
+ * 実際の三角形分割（`buildSlabIndices` と同じ (a,b,c)+(b,d,c) 分割）に
+ * 合わせた重心座標補間で求める。
+ *
+ * グリッドは (x, z) の正規格子で、行 i は z の減少方向、列 j は x の増加方向。
+ * 範囲外の座標は最寄りのセルにクランプして評価する。
+ */
+export function sampleTerrainHeightFromGrid(
+  positions: Float32Array,
+  gridSize: number,
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number },
+  x: number,
+  z: number,
+): number | null {
+  const n = gridSize
+  if (!(n >= 2)) return null
+  const spanX = bounds.maxX - bounds.minX
+  const spanZ = bounds.maxZ - bounds.minZ
+  if (!(spanX > 0) || !(spanZ > 0)) return null
+
+  const cellX = spanX / (n - 1)
+  const cellZ = spanZ / (n - 1)
+  const u = (x - bounds.minX) / cellX
+  const v = (bounds.maxZ - z) / cellZ
+  const j0 = Math.min(Math.max(Math.floor(u), 0), n - 2)
+  const i0 = Math.min(Math.max(Math.floor(v), 0), n - 2)
+  const f = Math.min(Math.max(u - j0, 0), 1)
+  const g = Math.min(Math.max(v - i0, 0), 1)
+
+  const height = (i: number, j: number): number => positions[(i * n + j) * 3 + 1]
+  const ha = height(i0, j0)
+  const hb = height(i0, j0 + 1)
+  const hc = height(i0 + 1, j0)
+  const hd = height(i0 + 1, j0 + 1)
+
+  // buildSlabIndices と同じ分割: (a,b,c) が f+g<=1、(b,d,c) が f+g>=1
+  if (f + g <= 1) {
+    return ha + f * (hb - ha) + g * (hc - ha)
+  }
+  return hd + (1 - f) * (hc - hd) + (1 - g) * (hb - hd)
+}
+
+/**
  * Build the inner cavity solid for an open-bottom terrain shell.
  *
  * The input must be the slab mesh produced by `buildTerrainMesh` (2·n²
  * vertices: top grid followed by bottom grid). The cavity is shrunk in XZ by
  * linear scaling toward the center so the side walls keep `shellThickness`,
- * its ceiling follows the terrain relief `shellThickness` below the surface,
- * and its floor extends below the slab so that subtracting it opens the
- * model's underside (leaving only a rim of `shellThickness`).
+ * its ceiling follows the terrain relief `shellThickness` below the surface
+ * (the surface height is re-sampled at the inset position with the actual
+ * triangle interpolation, so steep slopes cannot make the ceiling poke
+ * through the terrain), and its floor extends below the slab so that
+ * subtracting it opens the model's underside (leaving only a rim of
+ * `shellThickness`).
  *
  * Returns null when the mesh does not have the expected grid layout or when
  * the shell is too thick for the footprint.
@@ -335,14 +381,20 @@ export function buildTerrainCavityMesh(
   const centerZ = (minZ + maxZ) / 2
   const cavityBottomY = minBottomY - 2 * t
 
+  const gridBounds = { minX, maxX, minZ, maxZ }
   const cavityPositions = new Float32Array(vertexCount * 3)
   for (let i = 0; i < n * n; i++) {
     const x = positions[i * 3]
     const y = positions[i * 3 + 1]
     const z = positions[i * 3 + 2]
-    cavityPositions[i * 3] = centerX + (x - centerX) * scaleX
-    cavityPositions[i * 3 + 1] = y - t
-    cavityPositions[i * 3 + 2] = centerZ + (z - centerZ) * scaleZ
+    const insetX = centerX + (x - centerX) * scaleX
+    const insetZ = centerZ + (z - centerZ) * scaleZ
+    // 天井の高さは移動後の座標の地表を再サンプルする。元頂点の高さを
+    // 使い回すと、急斜面（45°超）で天井が地表を突き抜けて穴になる。
+    const terrainY = sampleTerrainHeightFromGrid(positions, n, gridBounds, insetX, insetZ)
+    cavityPositions[i * 3] = insetX
+    cavityPositions[i * 3 + 1] = (terrainY ?? y) - t
+    cavityPositions[i * 3 + 2] = insetZ
   }
   for (let i = 0; i < n * n; i++) {
     const target = n * n + i

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Manifold } from 'manifold-3d';
 import { buildPrintableModel, componentContainsPoint, dedupeComponents } from '../src/pipeline.js';
 import type { RawMesh } from '../src/types';
 
@@ -20,6 +21,7 @@ vi.mock('../src/manifoldOps.js', () => ({
 }));
 
 vi.mock('../src/buildingCapper.js', () => ({
+  bottomBoundaryIsConvex: vi.fn(() => true),
   capBuildingBottom: vi.fn((mesh: RawMesh) => mesh),
   splitConnectedComponents: vi.fn((mesh: RawMesh) => [mesh]),
   weldVertices: vi.fn((mesh: RawMesh) => mesh),
@@ -218,8 +220,10 @@ describe('buildPrintableModel', () => {
 
     vi.mocked(buildTerrainMesh).mockResolvedValue(terrainMesh);
     vi.mocked(buildBuildingMeshes).mockResolvedValue([buildingMesh, secondBuilding]);
+    // 2棟目は凸包キャップによる再試行でも失敗する（= 修復不能として除外される）
     vi.mocked(createManifoldFromMesh)
       .mockResolvedValueOnce(buildingFake)
+      .mockRejectedValueOnce(new Error('Not manifold'))
       .mockRejectedValueOnce(new Error('Not manifold'));
     vi.mocked(unionMeshes).mockResolvedValue(unionFake);
     vi.mocked(exportTo3MF).mockResolvedValue(fakeBuffer);

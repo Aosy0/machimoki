@@ -123,53 +123,49 @@ export async function createBox(size: number): Promise<Manifold> {
   return wasm.Manifold.cube([size, size, size], true)
 }
 
-/** A point in the model's horizontal XZ plane. */
-export interface FootprintPoint {
-  x: number
-  z: number
-}
-
 /**
- * Extrude a convex footprint in the XZ plane into a closed solid spanning
- * yBottom..yTop.
+ * 建物ソリッドを底面直上でスライスし、その断面を押し出して下方シャフト用の
+ * プリズムを作る。
  *
- * Used to extend a building downward through the terrain slab so the hollow
- * building interior connects to the model's open underside.
+ * 凸包ベースの旧 `createFootprintExtrusion` を置き換えたもので、断面は凹形状や
+ * 中庭の穴をそのまま保持する。モデルは y-up のため、[90,0,0] 回転で z-up に
+ * 直してから z 高さでスライスし、押し出し後に元の向きへ戻して配置する。
+ *
+ * @param building    対象の閉じた建物ソリッド（y-up・入力メッシュと同じ空間）
+ * @param sliceOffset 底面から断面を取る高さ（同じ空間の単位）
+ * @param yBottom     プリズム下端
+ * @param yTop        プリズム上端
+ * @returns 押し出しプリズム。有効な断面が得られない場合は null
  */
-export async function createFootprintExtrusion(
-  hull: ReadonlyArray<FootprintPoint>,
+export async function createSlicePrism(
+  building: Manifold,
+  sliceOffset: number,
   yBottom: number,
   yTop: number,
-): Promise<Manifold> {
+): Promise<Manifold | null> {
   const height = yTop - yBottom
-  if (hull.length < 3 || !Number.isFinite(height) || height <= 0) {
-    throw new Error('Invalid footprint extrusion')
-  }
-  const wasm = await getWasm()
+  if (!(sliceOffset > 0) || !(height > 0)) return null
 
-  // CrossSection uses the positive fill rule, which expects counter-clockwise
-  // outer contours. Reverse the hull if its signed area is negative.
-  let area2 = 0
-  for (let i = 0; i < hull.length; i++) {
-    const a = hull[i]
-    const b = hull[(i + 1) % hull.length]
-    area2 += a.x * b.z - b.x * a.z
-  }
-  const points = hull.map((point) => [point.x, point.z] as [number, number])
-  if (area2 < 0) points.reverse()
-
-  const crossSection = new wasm.CrossSection([points] as any)
+  const rotated = building.rotate([90, 0, 0])
   try {
-    const prism = crossSection.extrude(height)
-    // extrude grows along +Z; rotate into the model's Y-up frame (the prism
-    // then spans y = -height..0) and move its top to yTop.
-    const rotated = prism.rotate([90, 0, 0])
-    prism.delete()
-    const placed = rotated.translate([0, yTop, 0])
-    rotated.delete()
-    return placed
+    const bounds = rotated.boundingBox()
+    const sliceZ = bounds.min[2] + sliceOffset
+    if (!(sliceZ < bounds.max[2])) return null
+
+    const crossSection = rotated.slice(sliceZ)
+    try {
+      if (!(crossSection.area() > 0)) return null
+      const prism = crossSection.extrude(height)
+      const rotatedBack = prism.rotate([-90, 0, 0])
+      prism.delete()
+      const placed = rotatedBack.translate([0, yBottom, 0])
+      rotatedBack.delete()
+      return placed
+    } finally {
+      crossSection.delete()
+    }
   } finally {
-    crossSection.delete()
+    rotated.delete()
   }
 }
 
