@@ -2571,7 +2571,7 @@ export default function Preview3D({
 
   return (
     <div style={wrapperStyle}>
-      <div ref={containerRef} style={containerStyle} />
+      <div ref={containerRef} data-testid="preview-canvas" style={containerStyle} />
       <div
         data-testid="preview-view-controls"
         style={{

@@ -536,9 +536,17 @@ function ParameterPanel({
                 <span style={{ fontSize: '14px' }}>建物内部も中空化</span>
               </label>
 
-              <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '6px', marginBottom: 0 }}>
-                内部にLED・タッチセンサーを配置できる空洞を作ります。外観は変わりません。印刷時は内側にサポート材が必要です。内部の高さ目安: 約
-                {Math.max(0, parameters.terrainThickness - parameters.shellThickness).toFixed(1)} mm
+              <p
+                style={{
+                  fontSize: '11px',
+                  color: 'var(--text-dim)',
+                  marginTop: '6px',
+                  marginBottom: 0,
+                }}
+              >
+                内部にLED・タッチセンサーを配置できる空洞を作ります。外観は変わりません。印刷時は内側にサポート材が必要です。内部の高さ目安:
+                約{Math.max(0, parameters.terrainThickness - parameters.shellThickness).toFixed(1)}{' '}
+                mm
               </p>
             </div>
           )}
@@ -654,6 +662,7 @@ function ParameterPanel({
         }}
       >
         <button
+          data-testid="export-button"
           onClick={onExport}
           style={{
             width: '100%',

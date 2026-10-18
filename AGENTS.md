@@ -6,12 +6,10 @@ HMRのため、毎回サーバーを再起動する必要はありません。�
 テストは全ワークスペースで Vitest を使用する（`npm test`）。新しいテストの書き方・
 実行コマンド・絞り込み・フォーマット/lint の使い分けは `machimoki-testing` SKILL を参照。
 
-実装後の動作確認では、まずcurlコマンドやPlaywrightのヘッドレスモードを使用して、
-サーバーが正しく起動されていること、想定通りの結果が返ってきていることを確認してください。
-その後実際にブラウザを起動し、動作を確認してください。
-
-動作確認時に使用したスクリーンショットは、正しく動いていることを確認できるものだけを残し、
-バグやその他問題を確認したものは修正後に削除してください。
+## 動作確認について
+実装後はまず `npm run verify:ui` の結果JSONで確認し、画像が必要なときだけ `--shot` を使う。
+実ブラウザでの確認は最終段階のみ。手順と結果の読み方は `machimoki-verification` SKILL を参照。
+スクリーンショットは動作を確認できたものだけ残し、問題を確認したものは修正後に削除する。
 
 ## 実装について
 データの取得や描画が冗長的にならないようにしてください。
@@ -29,41 +27,11 @@ npm run dev
 
 `core/` ワークスペースにブラウザ非依存のヘッドレスパイプラインがある。
 PLATEAU 3D Tiles + Cesium地形から 3MF/STL を生成し、メッシュ検査も行う。
+APIサーバーは `npm run dev:api`（port 3000）。コマンド・APIエンドポイント・
+合否ルールの詳細は `machimoki-pipeline` SKILL を参照。
 
-### コマンド
-
-```bash
-# APIサーバー起動（port 3000）
-npm run dev:api
-
-# CLI: エクスポート（stdoutはログ、--json はないが結果はファイルに出力）
-npx tsx core/src/cli/index.ts export \
-  --bounds 139.6903,35.6997,139.6906,35.7000 \
-  --terrain-thickness 10 --flatten-bottom --format 3mf \
-  --output model.3mf
-
-# CLI: 検証（JSONはstdout、ログはstderr）
-npx tsx core/src/cli/index.ts validate --file model.3mf --json
-```
-
-### APIエンドポイント
-
-| Method | Path | 説明 |
-|--------|------|------|
-| POST | `/api/export` | JSON body → 3MF/STLバイナリを返す |
-| POST | `/api/validate` | multipart file → 検査結果JSONを返す |
-
-### 検査の合否ルール
-
-- **pass**: open_edges=0, non_manifold_edges=0, self_intersections=0, numShells=1
-- **warning**: 同上だが numShells>1（複数シェル）
-- **fail**: open_edges>0 または non_manifold_edges>0 または self_intersections>0
-
-### テスト
-
-```bash
-npm run test -w core   # 47 tests
-```
+合否の要約: **pass** は open_edges / non_manifold_edges / self_intersections が
+すべて0かつ numShells=1。numShells>1 は **warning**、いずれかが0より大きいと **fail**。
 
 ## AIエージェント用 SKILL
 
@@ -74,6 +42,7 @@ npm run test -w core   # 47 tests
 |-------|------|
 | `machimoki-pipeline` | normalize → export → validate → judge のワークフロー。CLI/API の呼び出し手順と合否ルール |
 | `machimoki-testing` | テストの書き方・実行コマンド・絞り込み・フォーマット/lint の使い分け |
+| `machimoki-verification` | ヘッドレスでの範囲選択・3Dプレビュー・エクスポート確認。結果JSONの読み方と失敗時の切り分け |
 
 ## 既知の問題
 

@@ -100,6 +100,11 @@ function App() {
     error: null,
   })
 
+  // ヘッドレス動作確認（frontend/scripts/verify-ui.mjs）から完了状態を参照するための公開。
+  useEffect(() => {
+    ;(window as unknown as { __pipelineState?: PipelineState }).__pipelineState = pipelineState
+  }, [pipelineState])
+
   const [scale, setScale] = useState(1)
   const [availableLods, setAvailableLods] = useState<Lod[]>(['lod1', 'lod2'])
   // Preview3D側で建物が表示できない範囲（サイズ・データ量起因）になったとき true。
@@ -692,7 +697,7 @@ function App() {
       )}
 
       {/* Content area: マウント維持＋display切替。アンマウントするとViewer破棄で再読込になるため */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <div data-testid="app-content" style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <div
           style={{
             width: '100%',

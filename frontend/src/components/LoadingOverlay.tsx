@@ -11,6 +11,7 @@ function LoadingOverlay({ message, visible, progress }: LoadingOverlayProps) {
 
   return (
     <div
+      data-testid="loading-overlay"
       style={{
         position: 'absolute',
         top: 0,

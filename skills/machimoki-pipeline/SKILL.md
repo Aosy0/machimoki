@@ -47,8 +47,8 @@ npx tsx core/src/cli/index.ts export \
 #### API Usage
 
 ```bash
-# Start the server
-npx tsx core/src/api/server.ts
+# Start the server (port 3000)
+npm run dev:api
 
 # Export a model
 curl -X POST http://localhost:3000/api/export \
