@@ -15,6 +15,7 @@ import {
   ShadowMode,
 } from 'cesium'
 import type { RawMesh } from '@machimoki/core'
+import { CAD_FRAGMENT_SHADER, CAD_VERTEX_SHADER } from './cadShader'
 
 export interface EngineMeshPrimitiveOptions {
   /** bounds 中心の ENU フレーム。 */
@@ -26,6 +27,8 @@ export interface EngineMeshPrimitiveOptions {
   shadows?: ShadowMode
   /** フラットシェーディング（面法線）で描画する。既定はスムーズ。 */
   flat?: boolean
+  /** CAD調（面法線＋環境光ベース）で描画する。地形プレビューと同じ質感。 */
+  cadShaded?: boolean
 }
 
 // 三角形法線を頂点に累積して正規化する（solidTerrain と同様の処理）。
@@ -133,6 +136,8 @@ export function buildEngineMeshPrimitive(
       closed: true,
       flat: options.flat ?? false,
       translucent: false,
+      vertexShaderSource: options.cadShaded ? CAD_VERTEX_SHADER : undefined,
+      fragmentShaderSource: options.cadShaded ? CAD_FRAGMENT_SHADER : undefined,
     }),
     // 外殻と同様に影を描画する。
     shadows: options.shadows ?? ShadowMode.ENABLED,

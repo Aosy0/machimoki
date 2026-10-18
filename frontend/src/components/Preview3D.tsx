@@ -8,6 +8,7 @@ import {
   Cartographic,
   Math as CesiumMath,
   SceneMode,
+  ShadowMode,
   CesiumTerrainProvider,
   ClippingPlaneCollection,
   CustomShader,
@@ -742,6 +743,9 @@ export default function Preview3D({
     centerMatrix: Matrix4
     positionScale: number
     color: string
+    flat: boolean
+    cadShaded: boolean
+    shadows: ShadowMode
   } | null>(null)
   const [sectionOn, setSectionOn] = useState(false)
   const [sectionT, setSectionT] = useState(0.5)
@@ -2949,6 +2953,11 @@ export default function Preview3D({
         centerMatrix,
         positionScale: 1 / scale,
         color: finalColor,
+        // 地形プレビューと同じCAD調シェーダーで描く。既定のPBRライティングでは
+        // 白模型の上面が白飛びし、スムーズ法線では壁面に不要なハイライトが出る。
+        // 最終形状表示中は影を受ける他オブジェクトがないため影は切る。
+        cadShaded: true,
+        shadows: ShadowMode.DISABLED,
       })
       if (!primitive) throw new Error('最終形状メッシュが空でした')
       disposeFinalShapePrimitive()
@@ -2956,7 +2965,14 @@ export default function Preview3D({
       finalShapePrimitiveRef.current = primitive
       // 断面はこの完成メッシュから毎回派生する（上書きしない）。
       finalShapeMeshRef.current = mesh
-      finalShapeRenderRef.current = { centerMatrix, positionScale: 1 / scale, color: finalColor }
+      finalShapeRenderRef.current = {
+        centerMatrix,
+        positionScale: 1 / scale,
+        color: finalColor,
+        flat: true,
+        cadShaded: true,
+        shadows: ShadowMode.DISABLED,
+      }
       finalShapeActiveRef.current = true
       finalShapeParamsRef.current = key
       setFinalShapeOn(true)

@@ -20,6 +20,7 @@ import {
   sampleTerrainMostDetailed,
 } from 'cesium'
 import type { TerrainProvider } from 'cesium'
+import { CAD_FRAGMENT_SHADER, CAD_VERTEX_SHADER } from './cadShader'
 
 export interface TerrainBounds {
   west: number
@@ -56,46 +57,6 @@ const DEFAULT_GRID_SIZE = 128
 const TERRAIN_SAMPLE_BATCH_SIZE = 1024
 const MIN_TERRAIN_THICKNESS = 0.1
 const TERRAIN_SURFACE_OFFSET = 0.05
-
-const RELIEF_VERTEX_SHADER = `
-in vec3 position3DHigh;
-in vec3 position3DLow;
-in vec3 normal;
-in vec4 color;
-in float batchId;
-
-out vec3 v_positionEC;
-out vec4 v_color;
-
-void main()
-{
-    vec4 p = czm_computePosition();
-
-    v_positionEC = (czm_modelViewRelativeToEye * p).xyz;
-    v_color = color;
-
-    gl_Position = czm_modelViewProjectionRelativeToEye * p;
-}
-`
-
-const RELIEF_FRAGMENT_SHADER = `
-in vec3 v_positionEC;
-in vec4 v_color;
-
-void main()
-{
-    // Flat normal from screen-space derivatives — CAD-style per-face shading
-    vec3 flatNormal = normalize(cross(dFdx(v_positionEC), dFdy(v_positionEC)));
-
-    // 建物と同じ光源方向で照らす。明るさバランスは建物(フラットな環境光≈0.61 +
-    // 直射光)に合わせ、影側の面でも建物の環境光面と同じ明度(≈156/255)になるようにする。
-    // (旧: mix(0.3, 1.0, light) は影側が暗く沈み、地形だけ常に日陰のように見えていた)
-    float light = max(dot(flatNormal, normalize(czm_lightDirectionEC)), 0.0);
-    float lightFactor = clamp(0.61 + 0.95 * light, 0.0, 1.0);
-
-    out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * lightFactor, v_color.a));
-}
-`
 
 function gridIndex(x: number, y: number, gridSize: number): number {
   return y * gridSize + x
@@ -430,8 +391,8 @@ export function buildSolidTerrainPrimitive(
       closed: true,
       flat: false,
       translucent: false,
-      vertexShaderSource: RELIEF_VERTEX_SHADER,
-      fragmentShaderSource: RELIEF_FRAGMENT_SHADER,
+      vertexShaderSource: CAD_VERTEX_SHADER,
+      fragmentShaderSource: CAD_FRAGMENT_SHADER,
     })
   const topPrimitive = new Primitive({
     geometryInstances: new GeometryInstance({
@@ -668,8 +629,8 @@ function buildCavityPrimitive(
       closed: false,
       flat: false,
       translucent: false,
-      vertexShaderSource: RELIEF_VERTEX_SHADER,
-      fragmentShaderSource: RELIEF_FRAGMENT_SHADER,
+      vertexShaderSource: CAD_VERTEX_SHADER,
+      fragmentShaderSource: CAD_FRAGMENT_SHADER,
     }),
     // 開口部から覗く内面には影を描画しない。
     shadows: ShadowMode.DISABLED,
