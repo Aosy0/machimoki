@@ -67,18 +67,67 @@ const PRISM_MATCH_TOLERANCE = 1e-4
 /** 凸判定（面積と凸包面積の相対差）の許容誤差。 */
 const CONVEX_AREA_TOLERANCE = 1e-6
 
-/** 2つの断面が許容誤差内で同一形状か（面積・bbox・対称差面積）を判定する。 */
-function crossSectionsMatch(a: CrossSection, b: CrossSection, tolerance: number): boolean {
-  if (a.isEmpty() || b.isEmpty()) return a.isEmpty() && b.isEmpty()
+/** 2D高速経路の適用失敗理由（実データの内訳計測用）。 */
+export interface Cutter2DDiagnostics {
+  attempts: number
+  applied: number
+  /** 前提条件（高さ・bbox・断面位置など）で対象外。 */
+  precondition: number
+  /** 基準断面が空。 */
+  emptySection: number
+  /** 断面の面積が一致しない。 */
+  notPrismArea: number
+  /** 断面の bbox が一致しない。 */
+  notPrismBounds: number
+  /** 断面の対称差面積が一致しない。 */
+  notPrismShape: number
+  /** 穴あり（複数コンター）。足跡プリズム経路へ回す。 */
+  notConvexContours: number
+  /** 面積が凸包と一致しない（凹形状）。足跡プリズム経路へ回す。 */
+  notConvexArea: number
+  /** 2D侵食が空（中空化できない）。 */
+  erosionEmpty: number
+  /** 足跡プリズムの minkowski でカッターを生成できた数。 */
+  appliedFootprint: number
+  /** 足跡プリズムの侵食が空。 */
+  footprintEmpty: number
+}
+
+export function createCutter2DDiagnostics(): Cutter2DDiagnostics {
+  return {
+    attempts: 0,
+    applied: 0,
+    precondition: 0,
+    emptySection: 0,
+    notPrismArea: 0,
+    notPrismBounds: 0,
+    notPrismShape: 0,
+    notConvexContours: 0,
+    notConvexArea: 0,
+    erosionEmpty: 0,
+    appliedFootprint: 0,
+    footprintEmpty: 0,
+  }
+}
+
+type CrossSectionMismatch = 'area' | 'bounds' | 'shape'
+
+/** 2つの断面が許容誤差内で同一形状か。不一致なら理由を返す。 */
+function matchCrossSections(
+  a: CrossSection,
+  b: CrossSection,
+  tolerance: number,
+): true | CrossSectionMismatch {
+  if (a.isEmpty() || b.isEmpty()) return a.isEmpty() && b.isEmpty() ? true : 'shape'
   const area = a.area()
-  if (!(area > 0)) return false
-  if (Math.abs(area - b.area()) > tolerance * area) return false
+  if (!(area > 0)) return 'area'
+  if (Math.abs(area - b.area()) > tolerance * area) return 'area'
   const scale = Math.sqrt(area)
   const boundsA = a.bounds()
   const boundsB = b.bounds()
   for (let axis = 0; axis < 2; axis++) {
-    if (Math.abs(boundsA.min[axis] - boundsB.min[axis]) > tolerance * scale) return false
-    if (Math.abs(boundsA.max[axis] - boundsB.max[axis]) > tolerance * scale) return false
+    if (Math.abs(boundsA.min[axis] - boundsB.min[axis]) > tolerance * scale) return 'bounds'
+    if (Math.abs(boundsA.max[axis] - boundsB.max[axis]) > tolerance * scale) return 'bounds'
   }
   // 形状差（対称差面積）でも一致を確認する。
   const onlyA = a.subtract(b)
@@ -87,19 +136,93 @@ function crossSectionsMatch(a: CrossSection, b: CrossSection, tolerance: number)
   const onlyB = b.subtract(a)
   difference += onlyB.area()
   onlyB.delete()
-  return difference <= tolerance * area
+  return difference <= tolerance * area ? true : 'shape'
 }
 
-/** 穴がなく、面積が凸包と一致する（= 凸）かどうか。 */
-function isConvexCrossSection(cross: CrossSection): boolean {
-  if (cross.isEmpty() || cross.numContour() !== 1) return false
+/** 凸判定の不一致理由。 */
+function convexityMismatch(cross: CrossSection): 'contours' | 'area' | null {
+  if (cross.isEmpty() || cross.numContour() !== 1) return 'contours'
   const area = cross.area()
-  if (!(area > 0)) return false
+  if (!(area > 0)) return 'area'
   const hull = cross.hull()
   try {
-    return Math.abs(hull.area() - area) <= CONVEX_AREA_TOLERANCE * area
+    return Math.abs(hull.area() - area) <= CONVEX_AREA_TOLERANCE * area ? null : 'area'
   } finally {
     hull.delete()
+  }
+}
+
+/**
+ * 4つの角シフトの交差は真の侵食（全シフトの交差）の上位集合。
+ * これが空なら真の侵食も必ず空なので、重い minkowski を省略できる。
+ */
+function cornerShiftsEmpty(footprint: CrossSection, t: number): boolean {
+  const shifts = [
+    footprint.translate(t, t),
+    footprint.translate(t, -t),
+    footprint.translate(-t, t),
+    footprint.translate(-t, -t),
+  ]
+  try {
+    const first = shifts[0].intersect(shifts[1])
+    try {
+      const second = first.intersect(shifts[2])
+      try {
+        const third = second.intersect(shifts[3])
+        try {
+          return third.isEmpty() || !(third.area() > 0)
+        } finally {
+          third.delete()
+        }
+      } finally {
+        second.delete()
+      }
+    } finally {
+      first.delete()
+    }
+  } finally {
+    for (const shift of shifts) shift.delete()
+  }
+}
+
+/**
+ * 非凸・穴ありの足跡でも、垂直プリズムなら足跡を押し出したプリズムと
+ * 立方体(2t)の minkowskiDifference で厳密な侵食が得られる。
+ * 建物全体ではなく足跡プリズムを使うため大幅に軽い。
+ *
+ * @returns Manifold=成功 / 'empty'=侵食空 / null=minkowski失敗（3Dへフォールバック）
+ */
+async function buildFootprintPrismCutter(
+  footprint: CrossSection,
+  zTop: number,
+  zBottom: number,
+  t: number,
+): Promise<Manifold | 'empty' | null> {
+  const height = zTop - zBottom
+  if (!(height > 2 * t)) return 'empty'
+  const prism = footprint.extrude(height)
+  const placed = prism.translate([0, 0, zBottom])
+  prism.delete()
+  const cube = await createBox(2 * t)
+  let eroded: Manifold
+  try {
+    eroded = placed.minkowskiDifference(cube)
+  } finally {
+    cube.delete()
+    placed.delete()
+  }
+  if (eroded.status() !== 'NoError') {
+    eroded.delete()
+    return null
+  }
+  if (!(eroded.volume() > 0)) {
+    eroded.delete()
+    return 'empty'
+  }
+  try {
+    return eroded.rotate([-90, 0, 0])
+  } finally {
+    eroded.delete()
   }
 }
 
@@ -120,13 +243,19 @@ export async function buildBuildingCutter2D(
   maxY: number,
   shellThickness: number,
   modelMinY: number,
+  diagnostics?: Cutter2DDiagnostics,
 ): Promise<CutterResult | null> {
+  if (diagnostics) diagnostics.attempts++
   const t = shellThickness
   const height = maxY - minY
-  if (!(height > 2 * t)) return null
+  if (!(height > 2 * t)) {
+    if (diagnostics) diagnostics.precondition++
+    return null
+  }
 
   const bbox = building.boundingBox()
   if (!(Math.min(bbox.max[0] - bbox.min[0], bbox.max[2] - bbox.min[2]) > 2 * t)) {
+    if (diagnostics) diagnostics.precondition++
     return null
   }
 
@@ -134,9 +263,15 @@ export async function buildBuildingCutter2D(
   const sliceOffset = Math.min(Math.max(1e-3, height * 0.02), height * 0.15)
   const yTop = minY + 2 * t
   const yBottom = Math.min(modelMinY, minY) - 2 * t
-  if (!(yTop > yBottom)) return null
+  if (!(yTop > yBottom)) {
+    if (diagnostics) diagnostics.precondition++
+    return null
+  }
   const erodedHeight = maxY - t - (yBottom + t)
-  if (!(erodedHeight > 0)) return null
+  if (!(erodedHeight > 0)) {
+    if (diagnostics) diagnostics.precondition++
+    return null
+  }
 
   const rotated = building.rotate([90, 0, 0])
   const samples: CrossSection[] = []
@@ -145,20 +280,58 @@ export async function buildBuildingCutter2D(
     const rotatedBounds = rotated.boundingBox()
     const zMin = rotatedBounds.min[2]
     const zSpan = rotatedBounds.max[2] - zMin
-    if (!(zSpan > 0)) return null
-    if (!(zMin + sliceOffset < rotatedBounds.max[2])) return null
+    if (!(zSpan > 0) || !(zMin + sliceOffset < rotatedBounds.max[2])) {
+      if (diagnostics) diagnostics.precondition++
+      return null
+    }
 
     reference = rotated.slice(zMin + sliceOffset)
-    if (reference.isEmpty()) return null
+    if (reference.isEmpty()) {
+      if (diagnostics) diagnostics.emptySection++
+      return null
+    }
 
     // 対象区間で垂直プリズムか: 複数高さの断面が基準断面と一致することを確認する。
     for (const fraction of PRISM_SAMPLE_FRACTIONS) {
       const sample = rotated.slice(zMin + zSpan * fraction)
       samples.push(sample)
-      if (!crossSectionsMatch(reference, sample, PRISM_MATCH_TOLERANCE)) return null
+      const mismatch = matchCrossSections(reference, sample, PRISM_MATCH_TOLERANCE)
+      if (mismatch !== true) {
+        if (diagnostics) {
+          if (mismatch === 'area') diagnostics.notPrismArea++
+          else if (mismatch === 'bounds') diagnostics.notPrismBounds++
+          else diagnostics.notPrismShape++
+        }
+        return null
+      }
     }
-    // 凸足跡のみ4シフト交差が厳密な侵食になる。
-    if (!isConvexCrossSection(reference)) return null
+    // 凸足跡は4シフト交差が厳密な侵食になる。
+    const convexMismatch = convexityMismatch(reference)
+    if (convexMismatch !== null) {
+      if (diagnostics) {
+        if (convexMismatch === 'contours') diagnostics.notConvexContours++
+        else diagnostics.notConvexArea++
+      }
+      // 非凸・穴ありでも垂直プリズムなら、足跡プリズムの minkowski で厳密に侵食できる。
+      // 先に4シフト交差で空かを判定し、空なら重い minkowski を省略する。
+      if (cornerShiftsEmpty(reference, t)) {
+        if (diagnostics) diagnostics.footprintEmpty++
+        return { status: 'boolean-failed', path: '2d' }
+      }
+      const footprintCutter = await buildFootprintPrismCutter(
+        reference,
+        rotatedBounds.max[2],
+        yBottom,
+        t,
+      )
+      if (footprintCutter === null) return null // minkowski失敗のみ3Dへ
+      if (footprintCutter === 'empty') {
+        if (diagnostics) diagnostics.footprintEmpty++
+        return { status: 'boolean-failed', path: '2d' }
+      }
+      if (diagnostics) diagnostics.appliedFootprint++
+      return { status: 'hollowed', cutter: footprintCutter, path: '2d' }
+    }
 
     const shiftPP = reference.translate(t, t)
     const shiftPN = reference.translate(t, -t)
@@ -171,14 +344,17 @@ export async function buildBuildingCutter2D(
         try {
           const eroded = cornerPN.intersect(shiftNN)
           try {
-            if (eroded.isEmpty()) return null
-            const area = eroded.area()
-            if (!(area > 0)) return null
+            if (eroded.isEmpty() || !(eroded.area() > 0)) {
+              // 垂直プリズム＋凸足跡では3D侵食も空になるため、3Dを走らせず失敗扱いにする。
+              if (diagnostics) diagnostics.erosionEmpty++
+              return { status: 'boolean-failed', path: '2d' }
+            }
             const solid = eroded.extrude(erodedHeight)
             try {
               const rotatedBack = solid.rotate([-90, 0, 0])
               try {
                 const cutter = rotatedBack.translate([0, yBottom + t, 0])
+                if (diagnostics) diagnostics.applied++
                 return { status: 'hollowed', cutter, path: '2d' }
               } finally {
                 rotatedBack.delete()
@@ -266,8 +442,16 @@ export async function buildBuildingCutter(
   maxY: number,
   shellThickness: number,
   modelMinY: number,
+  diagnostics?: Cutter2DDiagnostics,
 ): Promise<CutterResult> {
-  const fast = await buildBuildingCutter2D(building, minY, maxY, shellThickness, modelMinY)
+  const fast = await buildBuildingCutter2D(
+    building,
+    minY,
+    maxY,
+    shellThickness,
+    modelMinY,
+    diagnostics,
+  )
   if (fast) return fast
   return buildBuildingCutter3D(building, minY, maxY, shellThickness, modelMinY)
 }
@@ -510,6 +694,7 @@ async function buildPrintableGeometry(
   let cutter3dMs = 0
   let cutter2dCount = 0
   let cutter3dCount = 0
+  const cutter2dDiagnostics = createCutter2DDiagnostics()
   for (let j = 0; j < uniqueComponents.length; j++) {
     const comp = uniqueComponents[j]
     if (pickPoints.length > 0) {
@@ -562,7 +747,14 @@ async function buildPrintableGeometry(
       const maxY = manifoldBounds.max[1]
       const cutterStart = performance.now()
       try {
-        const result = await buildBuildingCutter(manifold, minY, maxY, wallThickness, terrainMinY)
+        const result = await buildBuildingCutter(
+          manifold,
+          minY,
+          maxY,
+          wallThickness,
+          terrainMinY,
+          cutter2dDiagnostics,
+        )
         // 2D高速経路と3D経路の適用数・時間を分けて記録する。
         if (result.path === '2d') {
           cutter2dMs += performance.now() - cutterStart
@@ -592,6 +784,18 @@ async function buildPrintableGeometry(
   timings.cutter3d = cutter3dMs
   timings.cutter2dCount = cutter2dCount
   timings.cutter3dCount = cutter3dCount
+  // 2D高速経路の適用失敗理由（実データの内訳確認用）。
+  timings.cutter2dApplied = cutter2dDiagnostics.applied
+  timings.cutter2dFailPrecondition = cutter2dDiagnostics.precondition
+  timings.cutter2dFailEmptySection = cutter2dDiagnostics.emptySection
+  timings.cutter2dFailNotPrismArea = cutter2dDiagnostics.notPrismArea
+  timings.cutter2dFailNotPrismBounds = cutter2dDiagnostics.notPrismBounds
+  timings.cutter2dFailNotPrismShape = cutter2dDiagnostics.notPrismShape
+  timings.cutter2dFailNotConvexContours = cutter2dDiagnostics.notConvexContours
+  timings.cutter2dFailNotConvexArea = cutter2dDiagnostics.notConvexArea
+  timings.cutter2dFailErosionEmpty = cutter2dDiagnostics.erosionEmpty
+  timings.cutter2dAppliedFootprint = cutter2dDiagnostics.appliedFootprint
+  timings.cutter2dFailFootprintEmpty = cutter2dDiagnostics.footprintEmpty
 
   if (pickPoints.length > 0 && buildingManifolds.length === 0) {
     warnings.push('No buildings matched the pick points')

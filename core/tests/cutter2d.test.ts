@@ -8,6 +8,7 @@ import {
   buildBuildingCutter2D,
   buildBuildingCutter3D,
   buildPrintableGeometryFromMeshes,
+  createCutter2DDiagnostics,
 } from '../src/pipelineUtils.js'
 import type { Bounds, ExportOptions, RawMesh } from '../src/types.js'
 import { createTerrainSlab } from './fixtures.js'
@@ -34,9 +35,14 @@ const L_SHAPE = [
 ]
 
 /** 断面コンターを押し出した垂直プリズムを RawMesh（y-up, 底面 baseY）で返す。 */
-async function prismMesh(contour: number[][], height: number, baseY: number): Promise<RawMesh> {
+async function prismMesh(
+  contour: number[][] | number[][][],
+  height: number,
+  baseY: number,
+  fillRule?: 'EvenOdd',
+): Promise<RawMesh> {
   const wasm: any = await getManifoldModule()
-  const cross = new wasm.CrossSection(contour)
+  const cross = fillRule ? new wasm.CrossSection(contour, fillRule) : new wasm.CrossSection(contour)
   const zUp = cross.extrude(height)
   cross.delete()
   const yUp = zUp.rotate([-90, 0, 0])
@@ -119,18 +125,122 @@ describe('2D侵食の高速経路', () => {
     }
   })
 
-  it('L字（非凸）: 高速経路は適用されず3D経路になる', async () => {
+  it('L字（非凸）: 足跡プリズム経路でカッターを生成し3Dと一致する', async () => {
     const mesh = await prismMesh(L_SHAPE, 10, 0)
     const building = await createManifoldFromMesh(mesh)
     try {
       const t = 0.5
-      const via2d = await buildBuildingCutter2D(building, 0, 10, t, -1)
-      expect(via2d).toBeNull()
+      const diagnostics = createCutter2DDiagnostics()
+      const via2d = await buildBuildingCutter2D(building, 0, 10, t, -1, diagnostics)
+      const via3d = await buildBuildingCutter3D(building, 0, 10, t, -1)
+
+      expect(diagnostics.notConvexArea).toBe(1)
+      expect(diagnostics.appliedFootprint).toBe(1)
+      expect(via2d?.status).toBe('hollowed')
+      expect(via3d.status).toBe('hollowed')
+      if (via2d?.status !== 'hollowed' || via3d.status !== 'hollowed') return
+      try {
+        // 非凸プリズムでも足跡プリズムの minkowski は3D侵食と厳密に一致する。
+        await expectCuttersEquivalent(via3d.cutter, via2d.cutter)
+      } finally {
+        via2d.cutter.delete()
+        via3d.cutter.delete()
+      }
 
       const auto = await buildBuildingCutter(building, 0, 10, t, -1)
-      expect(auto.path).toBe('3d')
+      expect(auto.path).toBe('2d')
       expect(auto.status).toBe('hollowed')
       if (auto.status === 'hollowed') auto.cutter.delete()
+    } finally {
+      building.delete()
+    }
+  })
+
+  it('中庭（穴あり）プリズムも足跡プリズム経路で3Dと一致する', async () => {
+    const withHole = [
+      [
+        [0, 0],
+        [12, 0],
+        [12, 12],
+        [0, 12],
+      ],
+      [
+        [4, 4],
+        [8, 4],
+        [8, 8],
+        [4, 8],
+      ],
+    ]
+    const mesh = await prismMesh(withHole, 10, 0, 'EvenOdd')
+    const building = await createManifoldFromMesh(mesh)
+    try {
+      const t = 0.5
+      const diagnostics = createCutter2DDiagnostics()
+      const via2d = await buildBuildingCutter2D(building, 0, 10, t, -1, diagnostics)
+      const via3d = await buildBuildingCutter3D(building, 0, 10, t, -1)
+      expect(diagnostics.notConvexContours).toBe(1)
+      expect(diagnostics.appliedFootprint).toBe(1)
+      expect(via2d?.status).toBe('hollowed')
+      if (via2d?.status !== 'hollowed' || via3d.status !== 'hollowed') return
+      try {
+        await expectCuttersEquivalent(via3d.cutter, via2d.cutter)
+      } finally {
+        via2d.cutter.delete()
+        via3d.cutter.delete()
+      }
+    } finally {
+      building.delete()
+    }
+  })
+
+  it('侵食が空になる凸プリズムは3Dを走らせず boolean-failed を返す', async () => {
+    // 鋭角三角形: bbox は 2t より大きいが、正方形(t)が内接できない。
+    const mesh = await prismMesh(
+      [
+        [0, 0],
+        [10, 0],
+        [0, 10],
+      ],
+      10,
+      0,
+    )
+    const building = await createManifoldFromMesh(mesh)
+    try {
+      const t = 3
+      const diagnostics = createCutter2DDiagnostics()
+      const via2d = await buildBuildingCutter2D(building, 0, 10, t, -1, diagnostics)
+      expect(diagnostics.erosionEmpty).toBe(1)
+      expect(via2d?.status).toBe('boolean-failed')
+      expect(via2d?.path).toBe('2d')
+
+      const via3d = await buildBuildingCutter3D(building, 0, 10, t, -1)
+      expect(via3d.status).toBe('boolean-failed')
+    } finally {
+      building.delete()
+    }
+  })
+
+  it('細い非凸プリズムは4シフト判定で侵食空を即断し3Dを走らせない', async () => {
+    const thinL = [
+      [0, 0],
+      [10, 0],
+      [10, 1],
+      [1, 1],
+      [1, 10],
+      [0, 10],
+    ]
+    const mesh = await prismMesh(thinL, 10, 0)
+    const building = await createManifoldFromMesh(mesh)
+    try {
+      const t = 0.75
+      const diagnostics = createCutter2DDiagnostics()
+      const via2d = await buildBuildingCutter2D(building, 0, 10, t, -1, diagnostics)
+      expect(diagnostics.footprintEmpty).toBe(1)
+      expect(via2d?.status).toBe('boolean-failed')
+      expect(via2d?.path).toBe('2d')
+
+      const via3d = await buildBuildingCutter3D(building, 0, 10, t, -1)
+      expect(via3d.status).toBe('boolean-failed')
     } finally {
       building.delete()
     }
@@ -152,7 +262,7 @@ describe('2D侵食の高速経路', () => {
     expect(result.timings?.cutter3dCount).toBe(0)
   })
 
-  it('L字（非凸）はパイプラインで3D経路にフォールバックする（適用数で確認）', async () => {
+  it('L字（非凸）もパイプラインで2D（足跡）経路が選ばれる', async () => {
     const slab = createTerrainSlab(8, 20, 0, -10)
     const building = await prismMesh(L_SHAPE, 10, -0.3)
 
@@ -164,7 +274,8 @@ describe('2D侵食の高速経路', () => {
     )
 
     expect(result.hollowing?.hollowed).toBe(1)
-    expect(result.timings?.cutter2dCount).toBe(0)
-    expect(result.timings?.cutter3dCount).toBe(1)
+    expect(result.timings?.cutter2dCount).toBe(1)
+    expect(result.timings?.cutter3dCount).toBe(0)
+    expect(result.timings?.cutter2dAppliedFootprint).toBe(1)
   })
 })

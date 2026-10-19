@@ -3293,7 +3293,8 @@ export default function Preview3D({
       // 生成中なら開始しない（完了後に最新キーで再スケジュールされる）。
       if (finalShapeGeneratingRef.current) return
       void generateFinalShape()
-    }, 500)
+      // 連続変更は最後の値だけ生成する（中間値はタイマー破棄でスキップ）。
+    }, 175)
   })
 
   // 見た目（色・whiteModel）だけが変わった場合は生成せず、既存メッシュから

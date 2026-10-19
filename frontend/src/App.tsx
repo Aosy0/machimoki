@@ -1267,7 +1267,9 @@ function App() {
                     }
                   `}</style>
                   <span className="machimoki-update-dot" />
-                  <span>更新中…</span>
+                  <span>
+                    更新中… {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
+                  </span>
                 </div>
               )}
             <LoadingOverlay
