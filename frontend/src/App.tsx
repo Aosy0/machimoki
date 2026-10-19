@@ -41,6 +41,82 @@ import {
 
 type Tab = 'map' | 'preview'
 
+// リロードで選択範囲・設定・タブが失われないよう localStorage に保存する。
+const SELECTION_STORAGE_KEY = 'machimoki.selectionBounds'
+const PARAMETERS_STORAGE_KEY = 'machimoki.parameters'
+const TAB_STORAGE_KEY = 'machimoki.activeTab'
+
+const DEFAULT_PARAMETERS: Parameters = {
+  terrainThickness: 10,
+  flattenBottom: true,
+  reflectActualElevation: false,
+  terrainGridSize: null,
+  includeTerrain: true,
+  showTerrainImagery: false,
+  lod: 'lod1',
+  exportFormat: '3mf',
+  buildingColor: DEFAULT_BUILDING_COLOR,
+  terrainColor: '#ffffff',
+  whiteModel: false,
+  upAxis: 'z-up',
+  includeSpanningBuildings: false,
+  openBottom: false,
+  shellThickness: 1.6,
+  hollowBuildings: true,
+}
+
+/** 保存済みの選択範囲を読む（不正値は null）。 */
+function loadStoredSelectionBounds(): SelectionBounds | null {
+  try {
+    const raw = localStorage.getItem(SELECTION_STORAGE_KEY)
+    if (!raw) return null
+    const b = JSON.parse(raw) as Partial<SelectionBounds>
+    if (
+      typeof b.west === 'number' &&
+      typeof b.south === 'number' &&
+      typeof b.east === 'number' &&
+      typeof b.north === 'number' &&
+      Number.isFinite(b.west) &&
+      Number.isFinite(b.south) &&
+      Number.isFinite(b.east) &&
+      Number.isFinite(b.north) &&
+      b.west < b.east &&
+      b.south < b.north
+    ) {
+      return { west: b.west, south: b.south, east: b.east, north: b.north }
+    }
+  } catch {
+    void 0
+  }
+  return null
+}
+
+/** 保存済みのパラメータを既定値にマージして読む。 */
+function loadStoredParameters(): Parameters {
+  try {
+    const raw = localStorage.getItem(PARAMETERS_STORAGE_KEY)
+    if (!raw) return DEFAULT_PARAMETERS
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      return { ...DEFAULT_PARAMETERS, ...(parsed as Partial<Parameters>) }
+    }
+  } catch {
+    void 0
+  }
+  return DEFAULT_PARAMETERS
+}
+
+/** 保存済みのタブを読む。 */
+function loadStoredTab(): Tab {
+  try {
+    const raw = localStorage.getItem(TAB_STORAGE_KEY)
+    if (raw === 'map' || raw === 'preview') return raw
+  } catch {
+    void 0
+  }
+  return 'map'
+}
+
 /** カバレッジ配信のベースURL（coverageMvtLayerと同規則）。 */
 function coverageApiBase(): string {
   const envBase = (import.meta as { env?: { VITE_COVERAGE_API_BASE?: string } }).env
@@ -60,7 +136,7 @@ function coverageApiBase(): string {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('map')
+  const [activeTab, setActiveTab] = useState<Tab>(loadStoredTab)
   const [isExporting, setIsExporting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [coverageVisible, setCoverageVisible] = useState(true)
@@ -68,24 +144,23 @@ function App() {
   const [mapLibreMap, setMapLibreMap] = useState<MapLibreMap | null>(null)
   const [mapFailed, setMapFailed] = useState(false)
 
-  const [parameters, setParameters] = useState<Parameters>({
-    terrainThickness: 10,
-    flattenBottom: true,
-    reflectActualElevation: false,
-    terrainGridSize: null,
-    includeTerrain: true,
-    showTerrainImagery: false,
-    lod: 'lod1',
-    exportFormat: '3mf',
-    buildingColor: DEFAULT_BUILDING_COLOR,
-    terrainColor: '#ffffff',
-    whiteModel: false,
-    upAxis: 'z-up',
-    includeSpanningBuildings: false,
-    openBottom: false,
-    shellThickness: 1.6,
-    hollowBuildings: true,
-  })
+  const [parameters, setParameters] = useState<Parameters>(loadStoredParameters)
+
+  // 設定とタブを保存する（リロードで復元する）。
+  useEffect(() => {
+    try {
+      localStorage.setItem(PARAMETERS_STORAGE_KEY, JSON.stringify(parameters))
+    } catch {
+      void 0
+    }
+  }, [parameters])
+  useEffect(() => {
+    try {
+      localStorage.setItem(TAB_STORAGE_KEY, activeTab)
+    } catch {
+      void 0
+    }
+  }, [activeTab])
 
   const coverageAvailableRef = useRef(false)
   const coverageProbedMapRef = useRef<MapLibreMap | null>(null)
@@ -153,6 +228,7 @@ function App() {
     selectionInfoPreviewRef.current?.(bounds)
   }, [])
 
+  const [storedSelectionBounds] = useState(loadStoredSelectionBounds)
   const {
     selectionBounds,
     setSelectionBounds,
@@ -164,6 +240,30 @@ function App() {
     handleSelectionHover,
     handleSelectionDrawPreview,
   )
+
+  // リロード後も選択範囲を復元する（プレビューが空に見えるのを防ぐ）。
+  const restoredSelectionRef = useRef(false)
+  useEffect(() => {
+    if (restoredSelectionRef.current) return
+    restoredSelectionRef.current = true
+    if (storedSelectionBounds && selectionBounds === null) {
+      setSelectionBounds(storedSelectionBounds)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 選択範囲を保存する（リロードで失われないように）。
+  useEffect(() => {
+    try {
+      if (selectionBounds) {
+        localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(selectionBounds))
+      } else {
+        localStorage.removeItem(SELECTION_STORAGE_KEY)
+      }
+    } catch {
+      void 0
+    }
+  }, [selectionBounds])
 
   useEffect(() => {
     setExcludedBuildingIds([])
