@@ -12,6 +12,7 @@ import { exportModel } from './lib/apiClient'
 import { runWorkerExport, runWorkerSerialize, triggerDownload } from './lib/workerExport'
 import { finalShapeGeometryKey } from './lib/finalShapeKey'
 import { loadFinalShapeCache } from './lib/finalShapeCache'
+import { loadBuildingMeshes, loadTerrainMesh } from './lib/meshDataCache'
 import { useMapLibreRectangleSelection } from './hooks/useMapLibreRectangleSelection'
 import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
@@ -497,12 +498,19 @@ function App() {
           message: '建物データ取得中...',
           error: null,
         })
-        const { buildBuildingMeshes, buildTerrainMesh } = await import('@machimoki/core')
-        const buildingMeshes = await buildBuildingMeshes(
-          selectionBounds,
-          exportOptions.lod,
-          exportOptions.excludedGmlIds,
-        )
+        // 建物/地形はプレビューと共有するインメモリキャッシュから取得する
+        // （同じ条件ならプレビュー側の取得結果を再利用し、二重取得しない）。
+        const meshParams = {
+          bounds: selectionBounds,
+          lod: exportOptions.lod,
+          excludedGmlIds: exportOptions.excludedGmlIds,
+          includeTerrain: exportOptions.includeTerrain,
+          terrainThicknessMeters: parameters.terrainThickness / (scale * 1000),
+          flattenBottom: exportOptions.flattenBottom,
+          terrainGridSize: exportOptions.terrainGridSize,
+          reflectActualElevation: exportOptions.reflectActualElevation,
+        }
+        const buildingMeshes = await loadBuildingMeshes(meshParams)
         let terrainMesh: import('@machimoki/core').RawMesh | null = null
         if (exportOptions.includeTerrain) {
           setPipelineState({
@@ -511,15 +519,7 @@ function App() {
             message: '地形データ取得中...',
             error: null,
           })
-          // terrainThickness is user-facing printed mm; convert to model-space meters (same formula as core).
-          const terrainThicknessMeters = parameters.terrainThickness / (scale * 1000)
-          terrainMesh = await buildTerrainMesh(
-            selectionBounds,
-            terrainThicknessMeters,
-            exportOptions.flattenBottom,
-            exportOptions.terrainGridSize,
-            exportOptions.reflectActualElevation,
-          )
+          terrainMesh = await loadTerrainMesh(meshParams)
         }
         setPipelineState({
           phase: 'composing',

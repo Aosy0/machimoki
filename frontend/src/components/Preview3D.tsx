@@ -89,6 +89,8 @@ import {
   loadFinalShapeCache,
   saveFinalShapeCache,
 } from '../lib/finalShapeCache'
+import { buildFinalShapeInWorker, terminateFinalShapeWorker } from '../lib/finalShape'
+import { loadBuildingMeshes, loadTerrainMesh, meshDatasetKey } from '../lib/meshDataCache'
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 
@@ -734,8 +736,14 @@ export default function Preview3D({
   const finalShapePrimitiveRef = useRef<Primitive | null>(null)
   const finalShapeActiveRef = useRef(false)
   const finalShapeRequestIdRef = useRef(0)
-  // 自動生成の重複防止。要求済みのキーと同じキーでは再生成しない。
+  // 自動生成の重複防止。要求済みの幾何キーと同じキーでは再生成しない
+  // （色など表示だけの変更では生成パイプラインを走らせない）。
   const finalShapeRequestedKeyRef = useRef<string | null>(null)
+  // 現在表示中の最終形状の見た目キー（色・whiteModel）。変化時はプリミティブだけ作り直す。
+  const finalShapeAppearanceKeyRef = useRef<string | null>(null)
+  // 現在表示中の完成メッシュに対応する幾何キー。生成中に古いメッシュで
+  // 見た目更新してしまわないためのガードに使う。
+  const finalShapeBuiltGeometryKeyRef = useRef<string | null>(null)
   const finalShapeAutoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // ベースプレビュー（タイル・地形）の読み込み完了フラグ。完了前は最終形状を生成しない。
   const baseReadyRef = useRef(false)
@@ -751,6 +759,8 @@ export default function Preview3D({
   const [, bumpFinalShapeCacheProbeVersion] = useState(0)
   const [finalShapeOn, setFinalShapeOn] = useState(false)
   const [finalShapeWarnings, setFinalShapeWarnings] = useState<string[]>([])
+  // 見た目更新時に警告表示を維持するための現在値。
+  const finalShapeWarningsRef = useRef<string[]>([])
   // 断面表示用。完成メッシュ自体は上書きせず、毎回この ref から派生生成する。
   const finalShapeMeshRef = useRef<import('@machimoki/core').RawMesh | null>(null)
   // 断面表示用プリミティブ（body とハッチ付き切断面）。完成メッシュ自体は上書きしない。
@@ -2549,25 +2559,26 @@ export default function Preview3D({
       hollowBuildings,
     })
 
-  // 最終形状パラメータのスナップショット。生成後に変わったら「未更新」表示にする。
-  const finalShapeParamsKey = (): string =>
+  // 建物/地形取得の共有キャッシュ用パラメータ（色など表示だけの条件は含めない）。
+  const finalShapeMeshParams = (bounds: SelectionBounds) => ({
+    bounds,
+    lod,
+    excludedGmlIds: excludedBuildingIds,
+    includeTerrain,
+    terrainThicknessMeters: terrainThickness / (scale * 1000),
+    flattenBottom,
+    terrainGridSize,
+    reflectActualElevation,
+  })
+
+  // 表示だけに影響する見た目キー。変化しても生成パイプラインは走らせず、
+  // 既存メッシュからプリミティブを作り直して色を更新する。
+  const finalShapeAppearanceKey = (): string =>
     JSON.stringify({
-      bounds: selectionBounds,
-      lod,
-      excludedBuildingIds: excludedBuildingIds ?? [],
-      includeSpanningBuildings,
       buildingColor,
       terrainColor,
       whiteModel,
-      terrainThickness,
-      flattenBottom,
-      reflectActualElevation,
-      terrainGridSize: terrainGridSize ?? null,
       includeTerrain,
-      scale,
-      openBottom,
-      shellThickness,
-      hollowBuildings,
     })
 
   // 最終形状表示中のシーン切替（タイルセット・地形プリミティブ・グローブを隠す）。
@@ -2791,6 +2802,7 @@ export default function Preview3D({
     finalShapeActiveRef.current = false
     finalShapeMeshRef.current = null
     finalShapeRenderRef.current = null
+    finalShapeBuiltGeometryKeyRef.current = null
     setFinalShapeOn(false)
     setFinalShapeWarnings([])
     disposeFinalShapePrimitive()
@@ -2848,8 +2860,11 @@ export default function Preview3D({
     }
     finalShapeActiveRef.current = true
     setFinalShapeOn(true)
-    // 警告は最大3件まで控えめに表示する。
+    // 警告は最大3件まで控えめに表示する。見た目更新時も維持できるよう ref にも保持する。
+    finalShapeWarningsRef.current = warnings
     setFinalShapeWarnings(warnings.slice(0, 3))
+    // この表示を作ったときの見た目キーを記録し、色だけの変更を検出する。
+    finalShapeAppearanceKeyRef.current = finalShapeAppearanceKey()
     applyFinalShapeView(viewer)
     // ベース読込完了前にキャッシュから最終形状を表示した場合は、まだカメラが
     // モデルを捉えていないため、完成メッシュのバウンディングスフィアへフレーミングする。
@@ -2885,6 +2900,26 @@ export default function Preview3D({
     return true
   }
 
+  // 色・whiteModel だけが変わったときの見た目更新。生成パイプラインは走らせず、
+  // 既存の完成メッシュからプリミティブを作り直す（断面表示中は断面も更新する）。
+  const refreshFinalShapeAppearance = async (): Promise<void> => {
+    const viewer = viewerRef.current
+    const mesh = finalShapeMeshRef.current
+    if (!viewer || !mesh || !finalShapeActiveRef.current) return
+    const updated = await finalizeFinalShapeMesh(
+      mesh,
+      finalShapeWarningsRef.current,
+      finalShapeRequestIdRef.current,
+    )
+    if (!updated) return
+    if (sectionOn) {
+      // 再派生が終わるまではベースを隠し、古い断面との二重表示を避ける。
+      if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
+      viewer.scene.requestRender()
+      scheduleSectionUpdate(sectionT, sectionKeep)
+    }
+  }
+
   // 最終形状プレビューの生成（エクスポートと同一の完成メッシュを Worker で作る）。
   const generateFinalShape = async (): Promise<void> => {
     const viewer = viewerRef.current
@@ -2912,6 +2947,7 @@ export default function Preview3D({
       if (requestId !== finalShapeRequestIdRef.current) return
       if (cached) {
         // 色だけ変えた場合もキャッシュヒットで即時反映される。
+        finalShapeBuiltGeometryKeyRef.current = geometryKey
         await finalizeFinalShapeMesh(cached, cached.warnings, requestId)
         return
       }
@@ -2921,13 +2957,9 @@ export default function Preview3D({
         message: '最終形状: 建物データ取得中...',
         error: null,
       })
-      const core = await import('@machimoki/core')
-      if (requestId !== finalShapeRequestIdRef.current) return
-      const buildingMeshes = await core.buildBuildingMeshes(
-        bounds,
-        lod,
-        excludedBuildingIds ?? undefined,
-      )
+      // 建物/地形は共有キャッシュから取得する（エクスポート経路と二重取得しない）。
+      const meshParams = finalShapeMeshParams(bounds)
+      const buildingMeshes = await loadBuildingMeshes(meshParams)
       if (requestId !== finalShapeRequestIdRef.current) return
       let terrainMesh: import('@machimoki/core').RawMesh | null = null
       if (includeTerrain) {
@@ -2937,17 +2969,9 @@ export default function Preview3D({
           message: '最終形状: 地形データ取得中...',
           error: null,
         })
-        terrainMesh = await core.buildTerrainMesh(
-          bounds,
-          terrainThickness / (scale * 1000),
-          flattenBottom,
-          terrainGridSize ?? undefined,
-          reflectActualElevation,
-        )
+        terrainMesh = await loadTerrainMesh(meshParams)
         if (requestId !== finalShapeRequestIdRef.current) return
       }
-      const { buildFinalShapeInWorker } = await import('../lib/finalShape')
-      if (requestId !== finalShapeRequestIdRef.current) return
       onPipelineStateChange?.({
         phase: 'acquiring',
         progress: 55,
@@ -2975,16 +2999,20 @@ export default function Preview3D({
       }
       const { mesh, warnings } = await buildFinalShapeInWorker(
         requestId,
+        {
+          key: meshDatasetKey(meshParams),
+          buildingMeshes,
+          terrainMesh,
+        },
         bounds,
         options,
-        buildingMeshes,
-        terrainMesh,
         (message) => {
           if (requestId !== finalShapeRequestIdRef.current) return
           onPipelineStateChange?.({ phase: 'acquiring', progress: 55, message, error: null })
         },
       )
       if (requestId !== finalShapeRequestIdRef.current) return
+      finalShapeBuiltGeometryKeyRef.current = geometryKey
       // 成功時は永続キャッシュへ保存する（fire-and-forget）。
       void saveFinalShapeCache({
         key: geometryKey,
@@ -3036,7 +3064,9 @@ export default function Preview3D({
     // 準備完了前（ベースプレビューの読み込み中）は待つ。ただし永続キャッシュに
     // ヒットしている場合はベース読込を待たずに生成を始める。
     if (!baseReadyRef.current && !finalShapeCacheProbeRef.current?.hit) return
-    const key = finalShapeParamsKey()
+    // 幾何キーでのみ再生成を判定する。色・whiteModel だけの変更は
+    // 下の見た目更新 effect が処理し、生成パイプラインを走らせない。
+    const key = finalShapeGeometryKeyFor(selectionBounds)
     if (key === finalShapeRequestedKeyRef.current) return
     finalShapeRequestedKeyRef.current = key
     if (finalShapeAutoTimerRef.current !== null) {
@@ -3046,6 +3076,20 @@ export default function Preview3D({
       finalShapeAutoTimerRef.current = null
       void generateFinalShape()
     }, 500)
+  })
+
+  // 見た目（色・whiteModel）だけが変わった場合は生成せず、既存メッシュから
+  // プリミティブを作り直す。見た目キーの変化時のみ実行する。
+  useEffect(() => {
+    if (!finalShapeActiveRef.current || !finalShapeMeshRef.current) return
+    // 表示中のメッシュが現在の幾何キーと一致するときだけ見た目を更新する
+    // （生成中に古いメッシュで上書きしないためのガード）。
+    const geometryKey = selectionBounds ? finalShapeGeometryKeyFor(selectionBounds) : null
+    if (geometryKey === null || geometryKey !== finalShapeBuiltGeometryKeyRef.current) return
+    const key = finalShapeAppearanceKey()
+    if (key === finalShapeAppearanceKeyRef.current) return
+    finalShapeAppearanceKeyRef.current = key
+    void refreshFinalShapeAppearance()
   })
 
   // アンマウント時は最終形状・断面プリミティブを破棄する。
@@ -3062,6 +3106,10 @@ export default function Preview3D({
       disposeFinalShapeSection()
       disposeFinalShapePrimitive()
       finalShapeActiveRef.current = false
+      // 保留中の生成結果を無効化してから Worker を終了する
+      // （アンマウント後に catch 側の state 更新が走らないようにする）。
+      finalShapeRequestIdRef.current += 1
+      terminateFinalShapeWorker()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
