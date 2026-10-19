@@ -753,6 +753,9 @@ export default function Preview3D({
   const [sectionOn, setSectionOn] = useState(false)
   const [sectionT, setSectionT] = useState(0.5)
   const [sectionKeep, setSectionKeep] = useState<'min' | 'max'>('min')
+  // 断面の陰影切替（false=向きによる陰影、true=フラット固定）。設定はリセットしない。
+  const [sectionFlatShading, setSectionFlatShading] = useState(false)
+  const sectionFlatShadingRef = useRef(false)
   const gridLayerRef = useRef<any>(null)
   const gsiLayerRef = useRef<any>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
@@ -2661,7 +2664,8 @@ export default function Preview3D({
         ? buildSectionHatchPrimitive(cut, {
             centerMatrix: render.centerMatrix,
             positionScale: render.positionScale,
-            color: render.color,
+            modelColor: render.color,
+            flatShading: sectionFlatShadingRef.current,
             axis: 'x',
           })
         : null
@@ -2737,6 +2741,15 @@ export default function Preview3D({
     setSectionKeep(next)
     if (!sectionOn) return
     scheduleSectionUpdate(sectionT, next)
+  }
+
+  // 断面の陰影切替。押したら断面を再生成する。設定はリセットしない。
+  const onSectionShadingToggle = (): void => {
+    const next = !sectionFlatShadingRef.current
+    sectionFlatShadingRef.current = next
+    setSectionFlatShading(next)
+    if (!sectionOn) return
+    scheduleSectionUpdate(sectionT, sectionKeep)
   }
 
   const deactivateFinalShape = (): void => {
@@ -3272,6 +3285,23 @@ export default function Preview3D({
             }}
           >
             反対側
+          </button>
+          <button
+            data-testid="final-shape-section-shading"
+            onClick={onSectionShadingToggle}
+            style={{
+              background: sectionFlatShading ? 'var(--accent)' : 'var(--surface)',
+              color: sectionFlatShading ? '#fff' : 'var(--text)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: '6px',
+              padding: '6px 10px',
+              fontSize: '11px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {sectionFlatShading ? '断面: フラット' : '断面: 影あり'}
           </button>
         </div>
       )}

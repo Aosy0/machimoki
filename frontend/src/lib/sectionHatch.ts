@@ -15,13 +15,16 @@ import {
   ShadowMode,
 } from 'cesium'
 import type { RawMesh } from '@machimoki/core'
+import { pickSectionColor } from './sectionColor'
 
-/** 切断面のハッチ間隔（表示メートル）。CAD図面の目安に合わせた固定値。 */
-const HATCH_SPACING_METERS = 0.8
-/** 切断面ベース色の明度係数（外面より明確に暗くして切断面を判別しやすくする）。 */
-const HATCH_BASE_FACTOR = 0.72
-/** ハッチ線色の明度係数。 */
-const HATCH_LINE_FACTOR = 0.3
+/** 切断面の陰影係数（CAD調の光量に合わせて少し落とす）。 */
+const HATCH_BASE_SHADE = 0.92
+/** ハッチ間隔（表示メートル）。 */
+const HATCH_SPACING_METERS = 30.2
+/** ハッチ線色の明度係数（ベース色を暗くして線にする）。 */
+const HATCH_LINE_FACTOR = 0.4
+/** この明度（sRGB輝度）未満のベース色には明るい線を使う（自動反転）。 */
+const HATCH_LINE_INVERT_LUM = 0.45
 
 export const HATCH_VERTEX_SHADER = `
 in vec3 position3DHigh;
@@ -47,35 +50,48 @@ void main()
 }
 `
 
-export const HATCH_FRAGMENT_SHADER = `
+/**
+ * 切断面用フラグメントシェーダーを作る。flatShading=true は向きによらず
+ * 一定の明るさにし、陰影の有無を比較できるようにする。
+ */
+export function hatchFragmentShader(flatShading: boolean): string {
+  // flatShading=false はCAD調と同じ面法線＋環境光ベースの陰影にする。
+  const lightFactor = flatShading
+    ? '1.0'
+    : 'clamp(0.61 + 0.95 * max(dot(normalize(cross(dFdx(v_positionEC), dFdy(v_positionEC))), normalize(czm_lightDirectionEC)), 0.0), 0.0, 1.0)'
+  return `
 in vec3 v_positionEC;
 in vec4 v_color;
 in vec2 v_hatch;
 
 void main()
 {
-    // CAD調と同じ面法線＋環境光ベースの陰影に合わせる。
-    vec3 flatNormal = normalize(cross(dFdx(v_positionEC), dFdy(v_positionEC)));
-    float light = max(dot(flatNormal, normalize(czm_lightDirectionEC)), 0.0);
-    float lightFactor = clamp(0.61 + 0.95 * light, 0.0, 1.0);
+    float lightFactor = ${lightFactor};
 
-    // 切断面は外面より少し暗く、斜線はさらに暗くして区別する。
-    vec3 baseColor = v_color.rgb * ${HATCH_BASE_FACTOR} * lightFactor;
-    vec3 lineColor = v_color.rgb * ${HATCH_LINE_FACTOR} * lightFactor;
+    // 切断面はモデル色のトーンシフト色（v_color）で、外面と区別する。
+    vec3 baseColor = v_color.rgb * ${HATCH_BASE_SHADE} * lightFactor;
+    // 斜線色はベースの明るさに連動させる（暗いベースでは明るい線に反転）。
+    float lum = dot(v_color.rgb, vec3(0.2126, 0.7152, 0.0722));
+    vec3 hatchLine = v_color.rgb * ${HATCH_LINE_FACTOR};
+    if (lum < ${HATCH_LINE_INVERT_LUM}) {
+        hatchLine = mix(v_color.rgb, vec3(1.0), 0.6);
+    }
+    vec3 lineColor = hatchLine * lightFactor;
 
-    // 45°の斜線ハッチ。間隔は表示メートル単位。
+    // 45°の斜線ハッチ。間隔は表示メートル単位（モデルに張り付き、拡大で間隔も拡大）。
     float c = (v_hatch.x + v_hatch.y) / ${HATCH_SPACING_METERS};
     float fw = fwidth(c);
     // ライン中心からの距離をピクセル単位で求め、画面一定幅（約1px）の線にする。
     float distPx = abs(fract(c + 0.5) - 0.5) / max(fw, 1e-4);
-    float line = 1.0 - smoothstep(0.5, 1.0, distPx);
-    // 遠方でセルが潰れる場合は線を消してモアレを防ぐ。
-    line *= 1.0 - smoothstep(0.2, 0.4, fw);
+    float line = 1.0 - smoothstep(0.5, 1.2, distPx);
+    // 非常に遠くでセルがサブピクセルになった場合のみフェードし、通常距離では変化させない。
+    line *= 1.0 - smoothstep(0.6, 1.0, fw);
 
     vec3 col = mix(baseColor, lineColor, line);
     out_FragColor = czm_gammaCorrect(vec4(col, v_color.a));
 }
 `
+}
 
 // 三角形法線を頂点に累積して正規化する（engineMeshPrimitive と同様の処理）。
 function buildNormals(positions: Float64Array, indices: Uint32Array): Float32Array {
@@ -180,14 +196,17 @@ export interface SectionHatchOptions {
   centerMatrix: Matrix4
   /** 座標に掛ける係数（スケール戻し等）。 */
   positionScale: number
-  color: string
+  /** モデル色（CSS色）。切断面色はここからトーンシフトして作る。 */
+  modelColor: string
+  /** true は向きによらず一定の明るさにする（陰影比較用）。既定は false。 */
+  flatShading?: boolean
   /** 切断軸（'x' = 東西方向、'z' = 南北方向の平面）。 */
   axis: 'x' | 'z'
 }
 
 /**
  * キャップ面（切断面）を斜線ハッチ付きの Primitive に変換する。
- * hatchUV は平面内の2D座標を表示メートル単位で持つ。
+ * ハッチは平面内の2D座標（表示メートル）に張り付き、拡大すると間隔も拡大する。
  * 空メッシュの場合は null を返す。
  */
 export function buildSectionHatchPrimitive(
@@ -252,7 +271,10 @@ export function buildSectionHatchPrimitive(
         boundingSphere,
       }),
       attributes: {
-        color: ColorGeometryInstanceAttribute.fromColor(Color.fromCssColorString(options.color)),
+        // 断面色はモデル色のトーンシフト（外面と区別しつつ色相を保つ）。
+        color: ColorGeometryInstanceAttribute.fromColor(
+          Color.fromCssColorString(pickSectionColor(options.modelColor)),
+        ),
       },
     }),
     appearance: new PerInstanceColorAppearance({
@@ -260,7 +282,7 @@ export function buildSectionHatchPrimitive(
       flat: false,
       translucent: false,
       vertexShaderSource: HATCH_VERTEX_SHADER,
-      fragmentShaderSource: HATCH_FRAGMENT_SHADER,
+      fragmentShaderSource: hatchFragmentShader(options.flatShading ?? false),
     }),
     // 切断面に影は描画しない（最終形状の断面表示と同じ扱い）。
     shadows: ShadowMode.DISABLED,
