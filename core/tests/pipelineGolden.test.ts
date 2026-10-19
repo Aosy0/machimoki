@@ -55,7 +55,9 @@ async function measure(mesh: RawMesh): Promise<GeometryMetrics> {
 const GOLDEN = {
   openBottom: {
     volume: 0.0000024320000735421946,
-    triangles: 378,
+    // 2D高速経路では三角形分割が変わり得るため、三角形数は固定しない
+    // （体積・bbox・シェル数で形状同一性を担保する）。
+    triangles: undefined,
     bbox: [-0.01, -0.01, -0.01, 0.01, 0.01, 0.01] as const,
     shells: 1,
   },
@@ -76,7 +78,11 @@ async function expectGolden(
   const result = await buildPrintableGeometryFromMeshes([building], slab, bounds, options)
   const metrics = await measure(result.mesh)
 
-  expect(metrics.triangles).toBe(golden.triangles)
+  if (golden.triangles !== undefined) {
+    expect(metrics.triangles).toBe(golden.triangles)
+  } else {
+    expect(metrics.triangles).toBeGreaterThan(0)
+  }
   expect(metrics.shells).toBe(golden.shells)
   expect(Math.abs(metrics.volume - golden.volume) / golden.volume).toBeLessThan(1e-6)
   for (let axis = 0; axis < 3; axis++) {

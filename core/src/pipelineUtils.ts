@@ -5,7 +5,7 @@
  * no I/O, no Cesium, and only calls manifold-3d through existing manifoldOps.
  */
 
-import type { Manifold } from 'manifold-3d'
+import type { CrossSection, Manifold } from 'manifold-3d'
 import {
   Bounds,
   ExportOptions,
@@ -52,13 +52,164 @@ const DEFAULT_SHELL_THICKNESS_MM = 1.6
  * Returns the per-building status so callers can record why a building was
  * kept solid ('small' / 'no-section' / 'boolean-failed').
  */
-type CutterResult =
-  | { status: 'hollowed'; cutter: Manifold }
-  | { status: 'small' }
-  | { status: 'no-section' }
-  | { status: 'boolean-failed' }
+type CutterPath = '2d' | '3d'
 
-async function buildBuildingCutter(
+type CutterResult =
+  | { status: 'hollowed'; cutter: Manifold; path: CutterPath }
+  | { status: 'small'; path: CutterPath }
+  | { status: 'no-section'; path: CutterPath }
+  | { status: 'boolean-failed'; path: CutterPath }
+
+/** プリズム判定で断面を比較する高さ（対象高さに対する比率）。 */
+const PRISM_SAMPLE_FRACTIONS = [0.12, 0.3, 0.5, 0.7, 0.88]
+/** プリズム断面比較の許容誤差（面積・位置・対称差の相対値）。 */
+const PRISM_MATCH_TOLERANCE = 1e-4
+/** 凸判定（面積と凸包面積の相対差）の許容誤差。 */
+const CONVEX_AREA_TOLERANCE = 1e-6
+
+/** 2つの断面が許容誤差内で同一形状か（面積・bbox・対称差面積）を判定する。 */
+function crossSectionsMatch(a: CrossSection, b: CrossSection, tolerance: number): boolean {
+  if (a.isEmpty() || b.isEmpty()) return a.isEmpty() && b.isEmpty()
+  const area = a.area()
+  if (!(area > 0)) return false
+  if (Math.abs(area - b.area()) > tolerance * area) return false
+  const scale = Math.sqrt(area)
+  const boundsA = a.bounds()
+  const boundsB = b.bounds()
+  for (let axis = 0; axis < 2; axis++) {
+    if (Math.abs(boundsA.min[axis] - boundsB.min[axis]) > tolerance * scale) return false
+    if (Math.abs(boundsA.max[axis] - boundsB.max[axis]) > tolerance * scale) return false
+  }
+  // 形状差（対称差面積）でも一致を確認する。
+  const onlyA = a.subtract(b)
+  let difference = onlyA.area()
+  onlyA.delete()
+  const onlyB = b.subtract(a)
+  difference += onlyB.area()
+  onlyB.delete()
+  return difference <= tolerance * area
+}
+
+/** 穴がなく、面積が凸包と一致する（= 凸）かどうか。 */
+function isConvexCrossSection(cross: CrossSection): boolean {
+  if (cross.isEmpty() || cross.numContour() !== 1) return false
+  const area = cross.area()
+  if (!(area > 0)) return false
+  const hull = cross.hull()
+  try {
+    return Math.abs(hull.area() - area) <= CONVEX_AREA_TOLERANCE * area
+  } finally {
+    hull.delete()
+  }
+}
+
+/**
+ * 垂直プリズム＋凸足跡の建物向けの2D侵食経路。
+ *
+ * 垂直プリズム F×[yBottom, maxY] に対する立方体(2t)の3D侵食は、
+ * 足跡の正方形(t)による2D侵食と等価: (F ⊖ square(t)) × [yBottom+t, maxY−t]。
+ * 凸多角形では正方形の支持関数の最大が角で達成されるため、
+ * 4つのシフトコピーの交差が厳密な侵食になる。
+ *
+ * 適用条件を満たさない場合（非プリズム・非凸・侵食が空など）は null を返し、
+ * 呼び出し側が既存3D経路へフォールバックする。
+ */
+export async function buildBuildingCutter2D(
+  building: Manifold,
+  minY: number,
+  maxY: number,
+  shellThickness: number,
+  modelMinY: number,
+): Promise<CutterResult | null> {
+  const t = shellThickness
+  const height = maxY - minY
+  if (!(height > 2 * t)) return null
+
+  const bbox = building.boundingBox()
+  if (!(Math.min(bbox.max[0] - bbox.min[0], bbox.max[2] - bbox.min[2]) > 2 * t)) {
+    return null
+  }
+
+  // 足跡は現行の3D経路と同じスライス位置から取得する（穴も保持）。
+  const sliceOffset = Math.min(Math.max(1e-3, height * 0.02), height * 0.15)
+  const yTop = minY + 2 * t
+  const yBottom = Math.min(modelMinY, minY) - 2 * t
+  if (!(yTop > yBottom)) return null
+  const erodedHeight = maxY - t - (yBottom + t)
+  if (!(erodedHeight > 0)) return null
+
+  const rotated = building.rotate([90, 0, 0])
+  const samples: CrossSection[] = []
+  let reference: CrossSection | null = null
+  try {
+    const rotatedBounds = rotated.boundingBox()
+    const zMin = rotatedBounds.min[2]
+    const zSpan = rotatedBounds.max[2] - zMin
+    if (!(zSpan > 0)) return null
+    if (!(zMin + sliceOffset < rotatedBounds.max[2])) return null
+
+    reference = rotated.slice(zMin + sliceOffset)
+    if (reference.isEmpty()) return null
+
+    // 対象区間で垂直プリズムか: 複数高さの断面が基準断面と一致することを確認する。
+    for (const fraction of PRISM_SAMPLE_FRACTIONS) {
+      const sample = rotated.slice(zMin + zSpan * fraction)
+      samples.push(sample)
+      if (!crossSectionsMatch(reference, sample, PRISM_MATCH_TOLERANCE)) return null
+    }
+    // 凸足跡のみ4シフト交差が厳密な侵食になる。
+    if (!isConvexCrossSection(reference)) return null
+
+    const shiftPP = reference.translate(t, t)
+    const shiftPN = reference.translate(t, -t)
+    const shiftNP = reference.translate(-t, t)
+    const shiftNN = reference.translate(-t, -t)
+    try {
+      const cornerPP = shiftPP.intersect(shiftPN)
+      try {
+        const cornerPN = cornerPP.intersect(shiftNP)
+        try {
+          const eroded = cornerPN.intersect(shiftNN)
+          try {
+            if (eroded.isEmpty()) return null
+            const area = eroded.area()
+            if (!(area > 0)) return null
+            const solid = eroded.extrude(erodedHeight)
+            try {
+              const rotatedBack = solid.rotate([-90, 0, 0])
+              try {
+                const cutter = rotatedBack.translate([0, yBottom + t, 0])
+                return { status: 'hollowed', cutter, path: '2d' }
+              } finally {
+                rotatedBack.delete()
+              }
+            } finally {
+              solid.delete()
+            }
+          } finally {
+            eroded.delete()
+          }
+        } finally {
+          cornerPN.delete()
+        }
+      } finally {
+        cornerPP.delete()
+      }
+    } finally {
+      shiftPP.delete()
+      shiftPN.delete()
+      shiftNP.delete()
+      shiftNN.delete()
+    }
+  } finally {
+    for (const sample of samples) sample.delete()
+    reference?.delete()
+    rotated.delete()
+  }
+}
+
+/** 既存の3D経路（立方体(2t)の minkowskiDifference）。 */
+export async function buildBuildingCutter3D(
   building: Manifold,
   minY: number,
   maxY: number,
@@ -67,11 +218,11 @@ async function buildBuildingCutter(
 ): Promise<CutterResult> {
   const t = shellThickness
   const height = maxY - minY
-  if (!(height > 2 * t)) return { status: 'small' }
+  if (!(height > 2 * t)) return { status: 'small', path: '3d' }
 
   const bbox = building.boundingBox()
   if (!(Math.min(bbox.max[0] - bbox.min[0], bbox.max[2] - bbox.min[2]) > 2 * t)) {
-    return { status: 'small' }
+    return { status: 'small', path: '3d' }
   }
 
   // 底面直上でスライスして真の断面を得る。ε はこの空間の単位で、
@@ -79,10 +230,10 @@ async function buildBuildingCutter(
   const sliceOffset = Math.min(Math.max(1e-3, height * 0.02), height * 0.15)
   const yTop = minY + 2 * t
   const yBottom = Math.min(modelMinY, minY) - 2 * t
-  if (!(yTop > yBottom)) return { status: 'no-section' }
+  if (!(yTop > yBottom)) return { status: 'no-section', path: '3d' }
 
   const prism = await createSlicePrism(building, sliceOffset, yBottom, yTop)
-  if (!prism) return { status: 'no-section' }
+  if (!prism) return { status: 'no-section', path: '3d' }
   try {
     const fused = await unionManifolds([building, prism])
     try {
@@ -91,9 +242,9 @@ async function buildBuildingCutter(
         const eroded = fused.minkowskiDifference(cube)
         if (eroded.status() !== 'NoError' || !(eroded.volume() > 0)) {
           eroded.delete()
-          return { status: 'boolean-failed' }
+          return { status: 'boolean-failed', path: '3d' }
         }
-        return { status: 'hollowed', cutter: eroded }
+        return { status: 'hollowed', cutter: eroded, path: '3d' }
       } finally {
         cube.delete()
       }
@@ -103,6 +254,22 @@ async function buildBuildingCutter(
   } finally {
     prism.delete()
   }
+}
+
+/**
+ * 建物のカッターを生成する。垂直プリズム＋凸足跡なら2D侵食の高速経路、
+ * それ以外は既存の3D侵食へフォールバックする（形状は同一）。
+ */
+export async function buildBuildingCutter(
+  building: Manifold,
+  minY: number,
+  maxY: number,
+  shellThickness: number,
+  modelMinY: number,
+): Promise<CutterResult> {
+  const fast = await buildBuildingCutter2D(building, minY, maxY, shellThickness, modelMinY)
+  if (fast) return fast
+  return buildBuildingCutter3D(building, minY, maxY, shellThickness, modelMinY)
 }
 
 /**
@@ -337,9 +504,12 @@ async function buildPrintableGeometry(
   const buildingManifolds: Manifold[] = []
   const buildingCutters: Manifold[] = []
   const hollowingRecords: HollowingRecord[] = []
-  // 建物ごとの Manifold 化とカッター生成（minkowskiDifference）を合算で計測する。
+  // 建物ごとの Manifold 化とカッター生成（2D高速経路/3D経路別）を計測する。
   let buildingManifoldMs = 0
-  let cutterMs = 0
+  let cutter2dMs = 0
+  let cutter3dMs = 0
+  let cutter2dCount = 0
+  let cutter3dCount = 0
   for (let j = 0; j < uniqueComponents.length; j++) {
     const comp = uniqueComponents[j]
     if (pickPoints.length > 0) {
@@ -393,6 +563,14 @@ async function buildPrintableGeometry(
       const cutterStart = performance.now()
       try {
         const result = await buildBuildingCutter(manifold, minY, maxY, wallThickness, terrainMinY)
+        // 2D高速経路と3D経路の適用数・時間を分けて記録する。
+        if (result.path === '2d') {
+          cutter2dMs += performance.now() - cutterStart
+          cutter2dCount++
+        } else {
+          cutter3dMs += performance.now() - cutterStart
+          cutter3dCount++
+        }
         if (result.status === 'hollowed') {
           buildingCutters.push(result.cutter)
           hollowingRecords.push({ index: j + 1, status: 'hollowed' })
@@ -400,16 +578,20 @@ async function buildPrintableGeometry(
           hollowingRecords.push({ index: j + 1, status: result.status })
         }
       } catch (error) {
+        cutter3dMs += performance.now() - cutterStart
+        cutter3dCount++
         const message = error instanceof Error ? error.message : String(error)
         warnings.push(`Building ${j + 1} hollowing skipped: ${message}`)
         hollowingRecords.push({ index: j + 1, status: 'boolean-failed', reason: message })
-      } finally {
-        cutterMs += performance.now() - cutterStart
       }
     }
   }
   timings.buildingManifold = buildingManifoldMs
-  timings.cutter = cutterMs
+  timings.cutter = cutter2dMs + cutter3dMs
+  timings.cutter2d = cutter2dMs
+  timings.cutter3d = cutter3dMs
+  timings.cutter2dCount = cutter2dCount
+  timings.cutter3dCount = cutter3dCount
 
   if (pickPoints.length > 0 && buildingManifolds.length === 0) {
     warnings.push('No buildings matched the pick points')

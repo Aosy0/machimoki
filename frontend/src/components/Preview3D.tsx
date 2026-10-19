@@ -736,6 +736,10 @@ export default function Preview3D({
   const finalShapePrimitiveRef = useRef<Primitive | null>(null)
   const finalShapeActiveRef = useRef(false)
   const finalShapeRequestIdRef = useRef(0)
+  // 最終形状を生成中か（生成完了までの間、ベース再構築を後回しにする判定に使う）。
+  const finalShapeGeneratingRef = useRef(false)
+  // 生成中の幾何キー。同じキーの二重起動（データ取得の重複）を防ぐ。
+  const finalShapeInFlightKeyRef = useRef<string | null>(null)
   // 自動生成の重複防止。要求済みの幾何キーと同じキーでは再生成しない
   // （色など表示だけの変更では生成パイプラインを走らせない）。
   const finalShapeRequestedKeyRef = useRef<string | null>(null)
@@ -794,6 +798,12 @@ export default function Preview3D({
     reflectActualElevation: boolean
     terrainColor: string
   } | null>(null)
+  // 最終形状の表示中・生成予定/生成中は、隠れて見えないベースプレビューの
+  // 再構築を後回しにする。後回しにした再構築は最終形状が解除された時点で走らせる。
+  const deferredBaseRebuildRef = useRef(false)
+  const [baseRebuildNonce, setBaseRebuildNonce] = useState(0)
+  // 進行中のベースプレビュー読み込みを中断するためのハンドラ（生成開始時に呼ぶ）。
+  const baseLoadCancelRef = useRef<(() => void) | null>(null)
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [isOrthographic, setIsOrthographic] = useState(false)
   const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
@@ -1113,6 +1123,39 @@ export default function Preview3D({
     shellThickness: effectiveShellThickness,
     reflectActualElevation,
     terrainColor,
+  }
+
+  // 最終形状が表示中/生成予定/生成中なら、隠れて見えないベースプレビューの
+  // 再構築は不要なため後回しにする。
+  const isBaseRebuildDeferred = (): boolean =>
+    finalShapeActiveRef.current ||
+    finalShapeGeneratingRef.current ||
+    finalShapeAutoTimerRef.current !== null
+
+  // 最終形状の生成開始時に呼ぶ。進行中のベース読み込みを中断し、既にシーンへ
+  // 追加済みのタイルセットを破棄して読み込み・パースを止める（メインスレッドを
+  // 生成へ譲る）。解除時は nonce でベースを再構築する。
+  const pauseBasePreview = (): void => {
+    const cancel = baseLoadCancelRef.current
+    baseLoadCancelRef.current = null
+    if (cancel) {
+      deferredBaseRebuildRef.current = true
+      cancel()
+    }
+    // ベース読み込みを中断/破棄したため、以降の生成が準備完了待ちで
+    // 止まらないよう準備完了扱いにする（解除時は nonce で再構築する）。
+    baseReadyRef.current = true
+    const viewer = viewerRef.current
+    if (!viewer) return
+    for (const ts of tilesetsRef.current) {
+      try {
+        viewer.scene.primitives.remove(ts)
+        ts.destroy()
+      } catch {
+        void 0
+      }
+    }
+    tilesetsRef.current = []
   }
 
   const toggleProjection = useCallback(() => {
@@ -1584,6 +1627,26 @@ export default function Preview3D({
       return
     }
 
+    // 最終形状が表示中/生成中はベースプレビューの再構築を後回しにする。
+    // 初回ロード（ベース未構築）や選択範囲の変更（新しいデータセット）は
+    // 従来どおり構築し、生成中のつなぎ表示や解除時の復帰を破綻させない。
+    const sampleBounds = terrainSampleCacheRef.current?.bounds
+    const sameSelection =
+      sampleBounds != null && selectionBounds != null && sameBounds(sampleBounds, selectionBounds)
+    const hadBasePreview =
+      tilesetsRef.current.length > 0 ||
+      solidTerrainPrimitiveRef.current !== null ||
+      terrainSampleCacheRef.current !== null
+    if (hadBasePreview && sameSelection && isBaseRebuildDeferred()) {
+      deferredBaseRebuildRef.current = true
+      // ベースは非表示のまま最終形状を表示し続ける。生成ウォッチャーが
+      // 準備完了待ちで止まらないよう、準備完了扱いを維持する。
+      baseReadyRef.current = true
+      return
+    }
+    // 実際にベースを再構築するので、後回しフラグを解除する。
+    deferredBaseRebuildRef.current = false
+
     for (const ts of tilesetsRef.current) {
       if (tileLoadHandlerRef.current) {
         try {
@@ -1713,6 +1776,14 @@ export default function Preview3D({
       }, 300)
       cancelScheduled = () => window.clearTimeout(timer)
     }
+
+    // 最終形状の生成開始時に、進行中のベース読み込みを止めるためのハンドラ。
+    const cancelBaseLoad = (): void => {
+      cancelled = true
+      cancelScheduled?.()
+      estimateAbort.abort()
+    }
+    baseLoadCancelRef.current = cancelBaseLoad
 
     async function load() {
       try {
@@ -2505,6 +2576,7 @@ export default function Preview3D({
       cancelled = true
       cancelScheduled?.()
       estimateAbort.abort()
+      if (baseLoadCancelRef.current === cancelBaseLoad) baseLoadCancelRef.current = null
       // ベース再読み込み中は最終形状を自動生成しない。待機中の要求があれば破棄する。
       baseReadyRef.current = false
       if (finalShapeAutoTimerRef.current !== null) {
@@ -2522,6 +2594,7 @@ export default function Preview3D({
     includeTerrain,
     forceBuildingsBounds,
     terrainGridSize,
+    baseRebuildNonce,
   ])
 
   // 最終形状プレビューの破棄（プリミティブの remove & destroy）。
@@ -2808,6 +2881,11 @@ export default function Preview3D({
     disposeFinalShapePrimitive()
     const viewer = viewerRef.current
     if (viewer) restoreFinalShapeView(viewer)
+    // 表示中に後回しにしたベース再構築があれば、ここで最新化する。
+    if (deferredBaseRebuildRef.current) {
+      deferredBaseRebuildRef.current = false
+      setBaseRebuildNonce((n) => n + 1)
+    }
   }
 
   // 完成メッシュのプリミティブ化と表示反映（キャッシュヒット時と生成時の共通後処理）。
@@ -2866,13 +2944,14 @@ export default function Preview3D({
     // この表示を作ったときの見た目キーを記録し、色だけの変更を検出する。
     finalShapeAppearanceKeyRef.current = finalShapeAppearanceKey()
     applyFinalShapeView(viewer)
-    // ベース読込完了前にキャッシュから最終形状を表示した場合は、まだカメラが
-    // モデルを捉えていないため、完成メッシュのバウンディングスフィアへフレーミングする。
-    // ベース読込前は地形スフィアが無く、既定の setView ではモデルが画面外になる
-    // ことがあるため、モデル自身の球を使って確実に収める。
-    // ベース読込完了後の通常経路や、ユーザーが既に視点を決めている場合は何もしない
-    // （ベース側のフレーミングと衝突してカメラが飛ぶのを避ける）。
-    if (!baseReadyRef.current) {
+    // まだカメラがこの範囲を捉えていない場合のみ、完成メッシュのバウンディング
+    // スフィアへフレーミングする。ベース読込前は地形スフィアが無く、既定の
+    // setView ではモデルが画面外になることがあるため、モデル自身の球を使って
+    // 確実に収める。ベース側で既にフレーミング済み、またはユーザーが視点を
+    // 決めている場合は何もしない（ベースのフレーミングと衝突してカメラが飛ぶのを避ける）。
+    // 生成開始時にベースを止めると baseReady が先に true になり得るため、
+    // baseReady ではなく「フレーム済みか」で判定する。
+    {
       const framed = cameraFramedForRef.current
       if (!framed || !sameBounds(framed, bounds)) {
         const instances = primitive.geometryInstances
@@ -2925,12 +3004,19 @@ export default function Preview3D({
     const viewer = viewerRef.current
     const bounds = selectionBounds
     if (!viewer || !bounds) return
-    const requestId = finalShapeRequestIdRef.current + 1
-    finalShapeRequestIdRef.current = requestId
-    // 断面表示中なら破棄して初期状態に戻す（派生元が変わるため）。
-    resetFinalShapeSection()
     // ジオメトリに影響するパラメータのみで永続キャッシュのキーにする（色は含めない）。
     const geometryKey = finalShapeGeometryKeyFor(bounds)
+    // 同じ幾何キーの生成が進行中なら二重起動しない（建物/地形取得の重複を防ぐ）。
+    if (finalShapeInFlightKeyRef.current === geometryKey) return
+    finalShapeInFlightKeyRef.current = geometryKey
+    const requestId = finalShapeRequestIdRef.current + 1
+    finalShapeRequestIdRef.current = requestId
+    // 生成完了まではベース再構築を後回しにする。
+    finalShapeGeneratingRef.current = true
+    // 進行中のベース読み込みを止め、メインスレッドを生成へ譲る。
+    pauseBasePreview()
+    // 断面表示中なら破棄して初期状態に戻す（派生元が変わるため）。
+    resetFinalShapeSection()
     try {
       // ネットワーク取得の前にキャッシュを照会する。ヒットしたらWorkerを起動しない。
       // 先読み済みのエントリがあれば IndexedDB を読み直さない。
@@ -3026,6 +3112,12 @@ export default function Preview3D({
       const message = err instanceof Error ? err.message : '最終形状の生成に失敗しました'
       deactivateFinalShape()
       onPipelineStateChange?.({ phase: 'error', progress: 0, message: '', error: message })
+    } finally {
+      finalShapeGeneratingRef.current = false
+      // このキーの生成が終わったので、同じキーの再要求を許可する。
+      if (finalShapeInFlightKeyRef.current === geometryKey) {
+        finalShapeInFlightKeyRef.current = null
+      }
     }
   }
 
@@ -3265,6 +3357,13 @@ export default function Preview3D({
       applied.terrainColor === current.terrainColor
     )
       return
+
+    // 最終形状表示中/生成中は、隠れて見えないベース地形の再構築を後回しにする
+    // （サンプルのキャッシュはそのまま維持し、解除時に最新化する）。
+    if (isBaseRebuildDeferred()) {
+      deferredBaseRebuildRef.current = true
+      return
+    }
 
     if (solidTerrainPrimitiveRef.current) {
       try {

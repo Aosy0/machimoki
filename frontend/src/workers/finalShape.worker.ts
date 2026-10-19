@@ -23,7 +23,13 @@ export type FinalShapeWorkerRequest = {
 
 export type FinalShapeWorkerResponse =
   | { type: 'progress'; requestId: number; message: string }
-  | { type: 'done'; requestId: number; mesh: RawMesh; warnings: string[] }
+  | {
+      type: 'done'
+      requestId: number
+      mesh: RawMesh
+      warnings: string[]
+      timings?: Record<string, number>
+    }
   | { type: 'error'; requestId: number; message: string }
 
 // Worker 内に保持する入力データセット。datasetKey が変わったときだけ差し替える。
@@ -60,6 +66,7 @@ self.onmessage = async (e: MessageEvent<FinalShapeWorkerRequest>) => {
       requestId,
       mesh: result.mesh,
       warnings: result.warnings,
+      timings: result.timings,
     })
   } catch (err) {
     post({

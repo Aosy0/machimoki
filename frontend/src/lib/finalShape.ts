@@ -56,6 +56,8 @@ function handleMessage(event: MessageEvent<FinalShapeWorkerResponse>): void {
   }
   pendingBuilds.delete(msg.requestId)
   if (msg.type === 'done') {
+    // 工程別タイミング（開発時の性能確認用）。
+    if (msg.timings) console.debug('[finalShape] timings', msg.timings)
     pending.resolve({ mesh: msg.mesh, warnings: msg.warnings })
     return
   }
