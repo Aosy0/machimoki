@@ -1223,9 +1223,53 @@ function App() {
             />
             <LoadingOverlay
               message={pipelineState.message}
-              visible={pipelineState.phase !== 'idle' && pipelineState.phase !== 'complete'}
+              visible={
+                !pipelineState.background &&
+                pipelineState.phase !== 'idle' &&
+                pipelineState.phase !== 'complete'
+              }
               progress={pipelineState.progress}
             />
+            {pipelineState.background &&
+              pipelineState.phase !== 'idle' &&
+              pipelineState.phase !== 'complete' && (
+                // パラメータ変更による再生成中は、画面を覆わず隅に小さく表示する。
+                <div
+                  data-testid="background-update-indicator"
+                  style={{
+                    position: 'absolute',
+                    left: '16px',
+                    bottom: '16px',
+                    zIndex: 30,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 12px',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: '999px',
+                    color: 'var(--text-dim)',
+                    fontSize: '12px',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <style>{`
+                    .machimoki-update-dot {
+                      width: 8px;
+                      height: 8px;
+                      border-radius: 50%;
+                      background: var(--accent);
+                      animation: machimoki-update-pulse 1s ease-in-out infinite;
+                    }
+                    @keyframes machimoki-update-pulse {
+                      0%, 100% { opacity: 0.35; }
+                      50% { opacity: 1; }
+                    }
+                  `}</style>
+                  <span className="machimoki-update-dot" />
+                  <span>更新中…</span>
+                </div>
+              )}
             <LoadingOverlay
               message="エクスポート中..."
               visible={isExporting && pipelineState.phase === 'idle'}

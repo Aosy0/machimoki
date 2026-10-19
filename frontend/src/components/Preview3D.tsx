@@ -3,6 +3,7 @@ import {
   Viewer,
   Cesium3DTileset,
   Color,
+  ColorGeometryInstanceAttribute,
   Cartesian2,
   Cartesian3,
   Cartographic,
@@ -771,6 +772,13 @@ export default function Preview3D({
   const finalShapeSectionPrimitiveRef = useRef<Primitive[]>([])
   const finalShapeSectionRequestIdRef = useRef(0)
   const finalShapeSectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 断面の元メッシュ（同じ t/keep の再配色では sectionMesh を再計算しない）。
+  const finalShapeSectionSourceRef = useRef<{
+    shapeId: number
+    t: number
+    keep: 'min' | 'max'
+    sectioned: import('@machimoki/core').RawMesh | null
+  } | null>(null)
   // 最終形状生成時と同じ変換・色（断面プリミティブ化に使い回す）。
   const finalShapeRenderRef = useRef<{
     centerMatrix: Matrix4
@@ -804,6 +812,9 @@ export default function Preview3D({
   const [baseRebuildNonce, setBaseRebuildNonce] = useState(0)
   // 進行中のベースプレビュー読み込みを中断するためのハンドラ（生成開始時に呼ぶ）。
   const baseLoadCancelRef = useRef<(() => void) | null>(null)
+  // シーンから外したタイルセット。破棄は重いため生成完了後に1件ずつ遅延処理する。
+  const retiredTilesetsRef = useRef<Cesium3DTileset[]>([])
+  const retiredTilesetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [isOrthographic, setIsOrthographic] = useState(false)
   const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
@@ -1132,9 +1143,32 @@ export default function Preview3D({
     finalShapeGeneratingRef.current ||
     finalShapeAutoTimerRef.current !== null
 
+  // シーンから外したタイルセットを、生成中を避けて1件ずつ破棄する。
+  // destroy はタイルキャッシュの解放で重く、まとめて同期実行すると
+  // パラメータ変更直後のメインスレッドを数秒ブロックするため遅延させる。
+  const scheduleRetiredTilesetDispose = (): void => {
+    if (retiredTilesetTimerRef.current !== null) return
+    retiredTilesetTimerRef.current = setTimeout(() => {
+      retiredTilesetTimerRef.current = null
+      if (finalShapeGeneratingRef.current) {
+        // 生成中は破棄しない（生成完了後に再開する）。
+        scheduleRetiredTilesetDispose()
+        return
+      }
+      const tileset = retiredTilesetsRef.current.shift()
+      if (!tileset) return
+      try {
+        tileset.destroy()
+      } catch {
+        void 0
+      }
+      if (retiredTilesetsRef.current.length > 0) scheduleRetiredTilesetDispose()
+    }, 200)
+  }
+
   // 最終形状の生成開始時に呼ぶ。進行中のベース読み込みを中断し、既にシーンへ
-  // 追加済みのタイルセットを破棄して読み込み・パースを止める（メインスレッドを
-  // 生成へ譲る）。解除時は nonce でベースを再構築する。
+  // 追加済みのタイルセットをシーンから外して読み込み・パースを止める
+  // （破棄は生成完了後に遅延）。解除時は nonce でベースを再構築する。
   const pauseBasePreview = (): void => {
     const cancel = baseLoadCancelRef.current
     baseLoadCancelRef.current = null
@@ -1150,12 +1184,13 @@ export default function Preview3D({
     for (const ts of tilesetsRef.current) {
       try {
         viewer.scene.primitives.remove(ts)
-        ts.destroy()
       } catch {
         void 0
       }
+      retiredTilesetsRef.current.push(ts)
     }
     tilesetsRef.current = []
+    if (retiredTilesetsRef.current.length > 0) scheduleRetiredTilesetDispose()
   }
 
   const toggleProjection = useCallback(() => {
@@ -2645,7 +2680,7 @@ export default function Preview3D({
   })
 
   // 表示だけに影響する見た目キー。変化しても生成パイプラインは走らせず、
-  // 既存メッシュからプリミティブを作り直して色を更新する。
+  // 既存メッシュの色だけを更新する。
   const finalShapeAppearanceKey = (): string =>
     JSON.stringify({
       buildingColor,
@@ -2653,6 +2688,10 @@ export default function Preview3D({
       whiteModel,
       includeTerrain,
     })
+
+  // 最終形状の表示色（白模型 → 地形あり/なしで terrainColor / buildingColor）。
+  const finalShapeColor = (): string =>
+    whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor
 
   // 最終形状表示中のシーン切替（タイルセット・地形プリミティブ・グローブを隠す）。
   const applyFinalShapeView = (viewer: Viewer): void => {
@@ -2711,6 +2750,8 @@ export default function Preview3D({
     }
     // 進行中の断面生成を無効化する。
     finalShapeSectionRequestIdRef.current += 1
+    // 元メッシュのキャッシュも破棄する（形状が変わるため）。
+    finalShapeSectionSourceRef.current = null
     disposeFinalShapeSection()
     setSectionOn(false)
     setSectionT(0.5)
@@ -2740,18 +2781,32 @@ export default function Preview3D({
     }
     if (!Number.isFinite(minX) || !Number.isFinite(maxX) || maxX <= minX) return
     const offset = minX + t * (maxX - minX)
-    const { sectionMesh } = await import('@machimoki/core')
+    // 同じ断面位置・側・形状なら、前回の sectionMesh 結果を再利用する。
+    // （色替え時は再切断せずプリミティブの色だけ更新する）
+    let sectioned: import('@machimoki/core').RawMesh | null
+    const cachedSection = finalShapeSectionSourceRef.current
     if (
-      requestId !== finalShapeSectionRequestIdRef.current ||
-      shapeId !== finalShapeRequestIdRef.current
-    )
-      return
-    const sectioned = await sectionMesh(mesh, 'x', keep, offset)
-    if (
-      requestId !== finalShapeSectionRequestIdRef.current ||
-      shapeId !== finalShapeRequestIdRef.current
-    )
-      return
+      cachedSection &&
+      cachedSection.shapeId === shapeId &&
+      cachedSection.t === t &&
+      cachedSection.keep === keep
+    ) {
+      sectioned = cachedSection.sectioned
+    } else {
+      const { sectionMesh } = await import('@machimoki/core')
+      if (
+        requestId !== finalShapeSectionRequestIdRef.current ||
+        shapeId !== finalShapeRequestIdRef.current
+      )
+        return
+      sectioned = await sectionMesh(mesh, 'x', keep, offset)
+      if (
+        requestId !== finalShapeSectionRequestIdRef.current ||
+        shapeId !== finalShapeRequestIdRef.current
+      )
+        return
+      finalShapeSectionSourceRef.current = { shapeId, t, keep, sectioned }
+    }
     const { buildEngineMeshPrimitive } = await import('../lib/engineMeshPrimitive')
     if (
       requestId !== finalShapeSectionRequestIdRef.current ||
@@ -2911,7 +2966,7 @@ export default function Preview3D({
           0,
         ),
       )
-    const finalColor = whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor
+    const finalColor = finalShapeColor()
     const primitive = buildEngineMeshPrimitive(mesh, {
       centerMatrix,
       positionScale: 1 / scale,
@@ -2975,27 +3030,62 @@ export default function Preview3D({
         }
       }
     }
-    onPipelineStateChange?.({ phase: 'complete', progress: 100, message: '完了', error: null })
+    onPipelineStateChange?.({
+      phase: 'complete',
+      progress: 100,
+      message: '完了',
+      error: null,
+      background: true,
+    })
     return true
   }
 
   // 色・whiteModel だけが変わったときの見た目更新。生成パイプラインは走らせず、
-  // 既存の完成メッシュからプリミティブを作り直す（断面表示中は断面も更新する）。
+  // 既存プリミティブの per-instance 色を差し替える（断面表示中は断面の色も更新）。
   const refreshFinalShapeAppearance = async (): Promise<void> => {
     const viewer = viewerRef.current
-    const mesh = finalShapeMeshRef.current
-    if (!viewer || !mesh || !finalShapeActiveRef.current) return
-    const updated = await finalizeFinalShapeMesh(
-      mesh,
-      finalShapeWarningsRef.current,
-      finalShapeRequestIdRef.current,
-    )
-    if (!updated) return
-    if (sectionOn) {
-      // 再派生が終わるまではベースを隠し、古い断面との二重表示を避ける。
+    const render = finalShapeRenderRef.current
+    const primitive = finalShapePrimitiveRef.current
+    if (!viewer || !render || !primitive || !finalShapeActiveRef.current) return
+    const color = finalShapeColor()
+    let colorChanged = false
+    if (color !== render.color) {
+      colorChanged = true
+      // ジオメトリは作り直さず、色属性だけ更新する（色替えを即時反映）。
+      let attributes: { color?: Uint8Array } | undefined
+      try {
+        attributes = primitive.getGeometryInstanceAttributes(undefined)
+      } catch {
+        attributes = undefined
+      }
+      if (attributes) {
+        attributes.color = ColorGeometryInstanceAttribute.toValue(Color.fromCssColorString(color))
+        finalShapeRenderRef.current = { ...render, color }
+        viewer.scene.requestRender()
+      } else {
+        // 属性が取れない場合は従来どおりプリミティブを作り直す。
+        const mesh = finalShapeMeshRef.current
+        if (!mesh) return
+        const updated = await finalizeFinalShapeMesh(
+          mesh,
+          finalShapeWarningsRef.current,
+          finalShapeRequestIdRef.current,
+        )
+        if (!updated) return
+      }
+    }
+    if (colorChanged && sectionOn) {
+      // 色替えはデバウンスせず即時反映する。再派生が終わるまではベースを隠し、
+      // 古い断面との二重表示を避ける。
+      if (finalShapeSectionTimerRef.current !== null) {
+        clearTimeout(finalShapeSectionTimerRef.current)
+        finalShapeSectionTimerRef.current = null
+      }
       if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
+      const sectionRequestId = finalShapeSectionRequestIdRef.current + 1
+      finalShapeSectionRequestIdRef.current = sectionRequestId
       viewer.scene.requestRender()
-      scheduleSectionUpdate(sectionT, sectionKeep)
+      void updateFinalShapeSection(sectionT, sectionKeep, sectionRequestId)
     }
   }
 
@@ -3042,6 +3132,7 @@ export default function Preview3D({
         progress: 5,
         message: '最終形状: 建物データ取得中...',
         error: null,
+        background: true,
       })
       // 建物/地形は共有キャッシュから取得する（エクスポート経路と二重取得しない）。
       const meshParams = finalShapeMeshParams(bounds)
@@ -3054,6 +3145,7 @@ export default function Preview3D({
           progress: 30,
           message: '最終形状: 地形データ取得中...',
           error: null,
+          background: true,
         })
         terrainMesh = await loadTerrainMesh(meshParams)
         if (requestId !== finalShapeRequestIdRef.current) return
@@ -3063,6 +3155,7 @@ export default function Preview3D({
         progress: 55,
         message: '最終形状: 完成メッシュを生成中...',
         error: null,
+        background: true,
       })
       const options: import('@machimoki/core').ExportOptions = {
         terrainThickness,
@@ -3094,7 +3187,13 @@ export default function Preview3D({
         options,
         (message) => {
           if (requestId !== finalShapeRequestIdRef.current) return
-          onPipelineStateChange?.({ phase: 'acquiring', progress: 55, message, error: null })
+          onPipelineStateChange?.({
+            phase: 'acquiring',
+            progress: 55,
+            message,
+            error: null,
+            background: true,
+          })
         },
       )
       if (requestId !== finalShapeRequestIdRef.current) return
@@ -3111,12 +3210,30 @@ export default function Preview3D({
       if (requestId !== finalShapeRequestIdRef.current) return
       const message = err instanceof Error ? err.message : '最終形状の生成に失敗しました'
       deactivateFinalShape()
-      onPipelineStateChange?.({ phase: 'error', progress: 0, message: '', error: message })
+      onPipelineStateChange?.({
+        phase: 'error',
+        progress: 0,
+        message: '',
+        error: message,
+        background: true,
+      })
     } finally {
       finalShapeGeneratingRef.current = false
       // このキーの生成が終わったので、同じキーの再要求を許可する。
       if (finalShapeInFlightKeyRef.current === geometryKey) {
         finalShapeInFlightKeyRef.current = null
+      }
+      // 生成中に届いた最新の幾何キーがあれば、そのキーで再生成する
+      // （中間値は捨て、最後の値だけ生成する）。
+      const requestedKey = finalShapeRequestedKeyRef.current
+      if (requestedKey !== null && requestedKey !== geometryKey) {
+        if (finalShapeAutoTimerRef.current !== null) {
+          clearTimeout(finalShapeAutoTimerRef.current)
+        }
+        finalShapeAutoTimerRef.current = setTimeout(() => {
+          finalShapeAutoTimerRef.current = null
+          if (!finalShapeGeneratingRef.current) void generateFinalShape()
+        }, 100)
       }
     }
   }
@@ -3153,9 +3270,9 @@ export default function Preview3D({
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer || !selectionBounds) return
-    // 準備完了前（ベースプレビューの読み込み中）は待つ。ただし永続キャッシュに
-    // ヒットしている場合はベース読込を待たずに生成を始める。
-    if (!baseReadyRef.current && !finalShapeCacheProbeRef.current?.hit) return
+    // ベースプレビューの準備完了（地形ブーストの確定を含む）後に生成する。
+    // 先に生成すると gridSize が後から変わり、地形メッシュを取り直す原因になる。
+    if (!baseReadyRef.current) return
     // 幾何キーでのみ再生成を判定する。色・whiteModel だけの変更は
     // 下の見た目更新 effect が処理し、生成パイプラインを走らせない。
     const key = finalShapeGeometryKeyFor(selectionBounds)
@@ -3166,6 +3283,8 @@ export default function Preview3D({
     }
     finalShapeAutoTimerRef.current = setTimeout(() => {
       finalShapeAutoTimerRef.current = null
+      // 生成中なら開始しない（完了後に最新キーで再スケジュールされる）。
+      if (finalShapeGeneratingRef.current) return
       void generateFinalShape()
     }, 500)
   })
@@ -3195,6 +3314,18 @@ export default function Preview3D({
         clearTimeout(finalShapeSectionTimerRef.current)
         finalShapeSectionTimerRef.current = null
       }
+      if (retiredTilesetTimerRef.current !== null) {
+        clearTimeout(retiredTilesetTimerRef.current)
+        retiredTilesetTimerRef.current = null
+      }
+      for (const tileset of retiredTilesetsRef.current) {
+        try {
+          tileset.destroy()
+        } catch {
+          void 0
+        }
+      }
+      retiredTilesetsRef.current = []
       disposeFinalShapeSection()
       disposeFinalShapePrimitive()
       finalShapeActiveRef.current = false
