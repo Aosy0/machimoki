@@ -737,7 +737,8 @@ export default function Preview3D({
   const [finalShapeWarnings, setFinalShapeWarnings] = useState<string[]>([])
   // 断面表示用。完成メッシュ自体は上書きせず、毎回この ref から派生生成する。
   const finalShapeMeshRef = useRef<import('@machimoki/core').RawMesh | null>(null)
-  const finalShapeSectionPrimitiveRef = useRef<Primitive | null>(null)
+  // 断面表示用プリミティブ（body とハッチ付き切断面）。完成メッシュ自体は上書きしない。
+  const finalShapeSectionPrimitiveRef = useRef<Primitive[]>([])
   const finalShapeSectionRequestIdRef = useRef(0)
   const finalShapeSectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 最終形状生成時と同じ変換・色（断面プリミティブ化に使い回す）。
@@ -2563,20 +2564,21 @@ export default function Preview3D({
     viewer.scene.requestRender()
   }
 
-  // 断面プリミティブの破棄（remove & destroy）。
+  // 断面プリミティブの破棄（remove & destroy。body と切断面の両方）。
   const disposeFinalShapeSection = (): void => {
-    const p = finalShapeSectionPrimitiveRef.current
-    finalShapeSectionPrimitiveRef.current = null
-    if (!p) return
-    try {
-      viewerRef.current?.scene.primitives.remove(p)
-    } catch {
-      void 0
-    }
-    try {
-      p.destroy()
-    } catch {
-      void 0
+    const prims = finalShapeSectionPrimitiveRef.current
+    finalShapeSectionPrimitiveRef.current = []
+    for (const p of prims) {
+      try {
+        viewerRef.current?.scene.primitives.remove(p)
+      } catch {
+        void 0
+      }
+      try {
+        p.destroy()
+      } catch {
+        void 0
+      }
     }
   }
 
@@ -2642,8 +2644,29 @@ export default function Preview3D({
       viewer.scene.requestRender()
       return
     }
-    const primitive = buildEngineMeshPrimitive(sectioned, render)
-    if (!primitive) {
+    const { splitSectionMesh, buildSectionHatchPrimitive } = await import('../lib/sectionHatch')
+    if (
+      requestId !== finalShapeSectionRequestIdRef.current ||
+      shapeId !== finalShapeRequestIdRef.current
+    )
+      return
+    // 切断面（キャップ）とそれ以外に分け、切断面だけハッチングで描く。
+    const { cut, body } = splitSectionMesh(sectioned, 'x', offset)
+    const sectionPrimitives: Primitive[] = []
+    const bodyPrimitive = body.indices.length > 0 ? buildEngineMeshPrimitive(body, render) : null
+    if (bodyPrimitive) sectionPrimitives.push(bodyPrimitive)
+    // cut が空なら従来どおり body のみの1プリミティブで描く。
+    const cutPrimitive =
+      cut.indices.length > 0
+        ? buildSectionHatchPrimitive(cut, {
+            centerMatrix: render.centerMatrix,
+            positionScale: render.positionScale,
+            color: render.color,
+            axis: 'x',
+          })
+        : null
+    if (cutPrimitive) sectionPrimitives.push(cutPrimitive)
+    if (sectionPrimitives.length === 0) {
       disposeFinalShapeSection()
       if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
       viewer.scene.requestRender()
@@ -2653,16 +2676,20 @@ export default function Preview3D({
       requestId !== finalShapeSectionRequestIdRef.current ||
       shapeId !== finalShapeRequestIdRef.current
     ) {
-      try {
-        primitive.destroy()
-      } catch {
-        void 0
+      for (const p of sectionPrimitives) {
+        try {
+          p.destroy()
+        } catch {
+          void 0
+        }
       }
       return
     }
     disposeFinalShapeSection()
-    viewer.scene.primitives.add(primitive)
-    finalShapeSectionPrimitiveRef.current = primitive
+    for (const p of sectionPrimitives) {
+      viewer.scene.primitives.add(p)
+    }
+    finalShapeSectionPrimitiveRef.current = sectionPrimitives
     if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
     viewer.scene.requestRender()
   }
