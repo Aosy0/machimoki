@@ -349,31 +349,44 @@ export async function exportPartsTo3MF(
     throw new Error('No parts to export')
   }
 
-  const meshes: RawMesh[] = []
-  for (const part of parts) {
-    if ('mesh' in part) {
-      if (part.mesh.positions.length > 0 && part.mesh.indices.length > 0) {
-        meshes.push(part.mesh)
-      }
-    } else {
-      const m = part.manifold.getMesh()
-      if (m.vertProperties.length > 0 && m.triVerts.length > 0) {
-        meshes.push({ positions: m.vertProperties, indices: m.triVerts })
-      }
-    }
-  }
-
-  if (meshes.length === 0) {
-    throw new Error('No parts to export')
-  }
-
   const rawColor = parts.find((p) => p.color)?.color
   const normalized = rawColor ? normalizeColor(rawColor) : '#FFFFFFFF'
   const color = normalized === '#FFFFFFFF' ? undefined : rawColor
 
-  const union = await unionMeshes(meshes)
+  // 単一の Manifold はメッシュへ戻して再インポートせず、そのまま使う。
+  // 複数パーツ／RawMesh 入力のときだけ従来どおり union する。
+  let union: Manifold | null = null
+  let source: Manifold
+  if (parts.length === 1 && 'manifold' in parts[0]) {
+    source = parts[0].manifold
+  } else {
+    const meshes: RawMesh[] = []
+    for (const part of parts) {
+      if ('mesh' in part) {
+        if (part.mesh.positions.length > 0 && part.mesh.indices.length > 0) {
+          meshes.push(part.mesh)
+        }
+      } else {
+        const m = part.manifold.getMesh()
+        if (m.vertProperties.length > 0 && m.triVerts.length > 0) {
+          meshes.push({ positions: m.vertProperties, indices: m.triVerts })
+        }
+      }
+    }
+
+    if (meshes.length === 0) {
+      throw new Error('No parts to export')
+    }
+
+    union = await unionMeshes(meshes)
+    source = union
+  }
+
   try {
-    const mesh = union.getMesh()
+    const mesh = source.getMesh()
+    if (mesh.vertProperties.length === 0 || mesh.triVerts.length === 0) {
+      throw new Error('No parts to export')
+    }
     const positions = scalePositions(transformForUpAxis(mesh.vertProperties, upAxis), METERS_TO_MM)
     const meshParts = [
       {
@@ -385,7 +398,8 @@ export async function exportPartsTo3MF(
     const xml = buildColored3mfXml(meshParts, 7)
     return createColored3mfZip(xml)
   } finally {
-    union.delete()
+    // 入力の Manifold は呼び出し側が所有するため、union した中間体だけ破棄する。
+    union?.delete()
   }
 }
 

@@ -28,14 +28,12 @@ import {
   exportMeshesToSTL,
   exportTo3MF,
   unionManifolds,
-  unionMeshes,
 } from './manifoldOps.js'
 import {
   buildTerrainCavityMesh,
   componentContainsPoint,
   componentIntersectsBounds,
   dedupeComponents,
-  meshToRaw,
   scaleRawMesh,
 } from './pipelineCore.js'
 
@@ -226,6 +224,16 @@ export interface PrintableGeometryResult {
   mesh: RawMesh
   warnings: string[]
   hollowing?: HollowingReport
+  /** 工程別の処理時間（ミリ秒・計測用。結果の形状には影響しない） */
+  timings?: Record<string, number>
+}
+
+/** シリアライズ前の内部結果。完成 Manifold の所有権は呼び出し側に移る。 */
+interface PrintableGeometryBuild {
+  manifold: Manifold
+  warnings: string[]
+  hollowing?: HollowingReport
+  timings: Record<string, number>
 }
 
 /**
@@ -240,6 +248,41 @@ export async function buildPrintableGeometryFromMeshes(
   bounds: Bounds,
   options: ExportOptions,
 ): Promise<PrintableGeometryResult> {
+  const totalStart = performance.now()
+  const build = await buildPrintableGeometry(buildingMeshes, terrainMesh, bounds, options)
+  try {
+    const getMeshStart = performance.now()
+    const rawMesh = build.manifold.getMesh()
+    const getMesh = performance.now() - getMeshStart
+    return {
+      mesh: {
+        positions: new Float32Array(rawMesh.vertProperties),
+        indices: new Uint32Array(rawMesh.triVerts),
+      },
+      warnings: build.warnings,
+      hollowing: build.hollowing,
+      timings: {
+        ...build.timings,
+        getMesh,
+        total: performance.now() - totalStart,
+      },
+    }
+  } finally {
+    // メッシュ化したら完成 Manifold は不要になる。
+    build.manifold.delete()
+  }
+}
+
+/**
+ * 完成形状の Manifold を生成する内部処理（プレビュー用メッシュ化はしない）。
+ * 戻り値の `manifold` は呼び出し側が delete する。
+ */
+async function buildPrintableGeometry(
+  buildingMeshes: RawMesh[],
+  terrainMesh: RawMesh | null,
+  bounds: Bounds,
+  options: ExportOptions,
+): Promise<PrintableGeometryBuild> {
   const scale = options.scale ?? 1
   const includeSpanning = options.includeSpanningBuildings ?? false
   const pickPoints = options.pickPoints ?? []
@@ -247,6 +290,8 @@ export async function buildPrintableGeometryFromMeshes(
   const hollowBuildings = options.hollowBuildings ?? true
   const shellThickness = options.shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
   const warnings: string[] = []
+  // 工程別タイミング（計測専用。形状には影響しない）。
+  const timings: Record<string, number> = {}
 
   // Open-bottom hollowing requires terrain: the terrain cavity provides the
   // open underside and the building cavities connect to it.
@@ -264,6 +309,7 @@ export async function buildPrintableGeometryFromMeshes(
 
   // Weld & split into connected components so each building is a separate
   // component for deduping and filtering.
+  const preprocessStart = performance.now()
   const components: RawMesh[] = []
   for (const mesh of buildingMeshes) {
     const welded = weldVertices(mesh)
@@ -271,6 +317,7 @@ export async function buildPrintableGeometryFromMeshes(
   }
   const uniqueComponents = dedupeComponents(components)
   alignFlatTerrainToBuildings(terrainMesh, uniqueComponents)
+  timings.preprocess = performance.now() - preprocessStart
 
   // Scale the terrain before hollowing so cavity and cutter dimensions match
   // the final model space.
@@ -290,6 +337,9 @@ export async function buildPrintableGeometryFromMeshes(
   const buildingManifolds: Manifold[] = []
   const buildingCutters: Manifold[] = []
   const hollowingRecords: HollowingRecord[] = []
+  // 建物ごとの Manifold 化とカッター生成（minkowskiDifference）を合算で計測する。
+  let buildingManifoldMs = 0
+  let cutterMs = 0
   for (let j = 0; j < uniqueComponents.length; j++) {
     const comp = uniqueComponents[j]
     if (pickPoints.length > 0) {
@@ -305,6 +355,7 @@ export async function buildPrintableGeometryFromMeshes(
     let manifold: Manifold | null = null
     let createError: string | null = null
     let exclusionStatus: 'cap-unsupported' | 'invalid-geometry' = 'invalid-geometry'
+    const manifoldStart = performance.now()
     try {
       manifold = await createManifoldFromMesh(scaled)
     } catch (error) {
@@ -323,6 +374,7 @@ export async function buildPrintableGeometryFromMeshes(
         exclusionStatus = 'cap-unsupported'
       }
     }
+    buildingManifoldMs += performance.now() - manifoldStart
     if (!manifold) {
       warnings.push(`Building ${j + 1} skipped (not printable): ${createError ?? 'unknown'}`)
       hollowingRecords.push({
@@ -338,6 +390,7 @@ export async function buildPrintableGeometryFromMeshes(
       const manifoldBounds = manifold.boundingBox()
       const minY = manifoldBounds.min[1]
       const maxY = manifoldBounds.max[1]
+      const cutterStart = performance.now()
       try {
         const result = await buildBuildingCutter(manifold, minY, maxY, wallThickness, terrainMinY)
         if (result.status === 'hollowed') {
@@ -350,9 +403,13 @@ export async function buildPrintableGeometryFromMeshes(
         const message = error instanceof Error ? error.message : String(error)
         warnings.push(`Building ${j + 1} hollowing skipped: ${message}`)
         hollowingRecords.push({ index: j + 1, status: 'boolean-failed', reason: message })
+      } finally {
+        cutterMs += performance.now() - cutterStart
       }
     }
   }
+  timings.buildingManifold = buildingManifoldMs
+  timings.cutter = cutterMs
 
   if (pickPoints.length > 0 && buildingManifolds.length === 0) {
     warnings.push('No buildings matched the pick points')
@@ -372,17 +429,29 @@ export async function buildPrintableGeometryFromMeshes(
   // Union terrain + buildings into a single manifold. When an open-bottom
   // shell was requested, subtract the cutters (terrain cavity + building
   // cavities) so the model has one connected interior and an open underside.
-  const meshes: RawMesh[] = []
-  if (terrainMesh) meshes.push(terrainMesh)
-  meshes.push(...buildingManifolds.map((m) => meshToRaw(m.getMesh())))
-
-  if (meshes.length === 0) {
+  // 建物は既に Manifold なので、メッシュへ戻して再インポートする往復をせず
+  // 直接 union する。地形だけは RawMesh から1回だけ Manifold 化する。
+  if (!terrainMesh && buildingManifolds.length === 0) {
     throw new Error('No printable meshes generated for the requested bounds')
   }
 
-  const union = await unionMeshes(meshes)
-  let final: Manifold = union
+  const unionStart = performance.now()
+  const terrainManifold = terrainMesh ? await createManifoldFromMesh(terrainMesh) : null
+  let union: Manifold
   try {
+    union = await unionManifolds(
+      terrainManifold ? [terrainManifold, ...buildingManifolds] : buildingManifolds,
+    )
+  } finally {
+    // union の入力は消費されないため、地形の一時 Manifold はここで破棄する。
+    terrainManifold?.delete()
+  }
+  timings.union = performance.now() - unionStart
+  let final: Manifold = union
+  // 完成 Manifold を呼び出し側へ返したか（true なら finally で破棄しない）。
+  let transferred = false
+  try {
+    const hollowStart = performance.now()
     if (hollowActive && terrainMesh) {
       const cavityMesh = buildTerrainCavityMesh(terrainMesh, wallThickness)
       if (!cavityMesh) {
@@ -400,15 +469,20 @@ export async function buildPrintableGeometryFromMeshes(
       }
       cavity.delete()
       try {
-        final = union.subtract(cutterUnion)
+        const subtracted = union.subtract(cutterUnion)
+        // 減算後は union が中間結果になるため破棄する。
+        union.delete()
+        final = subtracted
       } finally {
         cutterUnion.delete()
       }
     }
+    timings.hollowCavity = performance.now() - hollowStart
 
     // 完成モデルの密閉空洞を検出する（検証済み方式: 非制限ボイドの分解）。
     // 底面開通の一般到達性判定は未実施のため、レポートでは unverified とする。
     let hollowingReport: HollowingReport | undefined
+    const sealedStart = performance.now()
     if (hollowActive) {
       const sealed = await detectSealedCavities(final)
       if (sealed.count > 0) {
@@ -428,20 +502,19 @@ export async function buildPrintableGeometryFromMeshes(
         reachability: 'unverified',
       }
     }
+    timings.sealedCavityCheck = performance.now() - sealedStart
 
-    // 完成メッシュを返す（Manifold を破棄する前にコピーする）。
-    const rawMesh = final.getMesh()
+    // メッシュ化（getMesh）は呼び出し側が最後に1回だけ行う。
+    transferred = true
     return {
-      mesh: {
-        positions: new Float32Array(rawMesh.vertProperties),
-        indices: new Uint32Array(rawMesh.triVerts),
-      },
+      manifold: final,
       warnings,
       hollowing: hollowingReport,
+      timings,
     }
   } finally {
-    if (final !== union) final.delete()
-    union.delete()
+    // 失敗時は完成 Manifold も破棄する（成功時は所有権が呼び出し側へ移る）。
+    if (!transferred) final.delete()
     for (const manifold of buildingManifolds) manifold.delete()
     for (const cutter of buildingCutters) cutter.delete()
   }
@@ -465,27 +538,28 @@ export async function buildPrintableModelFromMeshes(
     )
   }
 
-  const { mesh, warnings, hollowing } = await buildPrintableGeometryFromMeshes(
-    buildingMeshes,
-    terrainMesh,
-    bounds,
-    options,
-  )
+  const build = await buildPrintableGeometry(buildingMeshes, terrainMesh, bounds, options)
+  const { warnings, hollowing } = build
   const upAxis = options.upAxis ?? 'z-up'
-
-  if (options.format === 'stl') {
-    return { buffer: exportMeshesToSTL([mesh], upAxis), warnings, hollowing }
-  }
-
-  // 完成メッシュはもともと Manifold 由来なので、再インポートして 3MF 化する。
-  const manifold = await createManifoldFromMesh(mesh)
   try {
+    if (options.format === 'stl') {
+      // STL はメッシュが必要なので、ここで1回だけ getMesh する。
+      const rawMesh = build.manifold.getMesh()
+      const mesh: RawMesh = {
+        positions: new Float32Array(rawMesh.vertProperties),
+        indices: new Uint32Array(rawMesh.triVerts),
+      }
+      return { buffer: exportMeshesToSTL([mesh], upAxis), warnings, hollowing }
+    }
+
+    // 完成 Manifold をそのまま 3MF 化する（メッシュ経由の再インポートを避ける）。
     const modelColor = terrainMesh
       ? (options.terrainColor ?? '#ffffff')
       : (options.buildingColor ?? '#ffffff')
-    return { buffer: await exportTo3MF(manifold, modelColor, upAxis), warnings, hollowing }
+    return { buffer: await exportTo3MF(build.manifold, modelColor, upAxis), warnings, hollowing }
   } finally {
-    manifold.delete()
+    // 完成 Manifold はここで所有権を終える。
+    build.manifold.delete()
   }
 }
 
