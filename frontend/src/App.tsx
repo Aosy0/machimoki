@@ -9,7 +9,9 @@ import HelpPanel from './components/HelpPanel'
 import Map2D from './components/Map2D'
 import MapSelectionInfoOverlay from './components/MapSelectionInfoOverlay'
 import { exportModel } from './lib/apiClient'
-import { runWorkerExport, triggerDownload } from './lib/workerExport'
+import { runWorkerExport, runWorkerSerialize, triggerDownload } from './lib/workerExport'
+import { finalShapeGeometryKey } from './lib/finalShapeKey'
+import { loadFinalShapeCache } from './lib/finalShapeCache'
 import { useMapLibreRectangleSelection } from './hooks/useMapLibreRectangleSelection'
 import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
@@ -432,6 +434,61 @@ function App() {
     }
     const useWorker = exportOptions.format !== 'machimoki'
     let workerError: unknown = null
+    // 完成メッシュの永続キャッシュを照会し、ヒットしたら取得と形状生成を
+    // スキップしてシリアライズのみ行う（プレビューと同一キーで共有）。
+    if (useWorker) {
+      let cachedMesh: { positions: Float32Array; indices: Uint32Array } | null = null
+      try {
+        const geometryKey = finalShapeGeometryKey({
+          bounds: selectionBounds,
+          lod: exportOptions.lod,
+          excludedBuildingIds: exportOptions.excludedGmlIds,
+          includeSpanningBuildings: exportOptions.includeSpanningBuildings,
+          terrainThickness: exportOptions.terrainThickness,
+          flattenBottom: exportOptions.flattenBottom,
+          reflectActualElevation: exportOptions.reflectActualElevation,
+          terrainGridSize: exportOptions.terrainGridSize,
+          includeTerrain: exportOptions.includeTerrain,
+          scale,
+          openBottom: exportOptions.openBottom,
+          shellThickness: exportOptions.shellThickness,
+          hollowBuildings: exportOptions.hollowBuildings,
+        })
+        const cached = await loadFinalShapeCache(geometryKey)
+        if (cached) cachedMesh = { positions: cached.positions, indices: cached.indices }
+      } catch {
+        cachedMesh = null
+      }
+      if (cachedMesh) {
+        try {
+          setPipelineState({
+            phase: 'composing',
+            progress: 50,
+            message: '3Dモデル生成中（キャッシュ利用）...',
+            error: null,
+          })
+          // バッファは transfer で切り離されるため、コピーを渡す。
+          const { buffer } = await runWorkerSerialize(
+            Date.now(),
+            {
+              positions: cachedMesh.positions.slice(),
+              indices: cachedMesh.indices.slice(),
+            },
+            exportOptions as unknown as import('@machimoki/core').ExportOptions,
+          )
+          triggerDownload(buffer, exportOptions.format)
+          setPipelineState({ phase: 'complete', progress: 100, message: '完了', error: null })
+          setTimeout(
+            () => setPipelineState({ phase: 'idle', progress: 0, message: '', error: null }),
+            2000,
+          )
+          setIsExporting(false)
+          return
+        } catch (err) {
+          console.warn('[Machimoki] キャッシュからのシリアライズ失敗、フル生成へ:', err)
+        }
+      }
+    }
     if (useWorker) {
       try {
         setPipelineState({
@@ -1148,7 +1205,7 @@ function App() {
               openBottom={parameters.openBottom}
               shellThickness={parameters.shellThickness}
               hollowBuildings={parameters.hollowBuildings}
-              terrainGridSize={parameters.terrainGridSize}
+              terrainGridSize={resolvedTerrainGridSize}
               includeTerrain={parameters.includeTerrain}
               buildingColor={parameters.buildingColor}
               terrainColor={parameters.terrainColor}
