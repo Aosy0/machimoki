@@ -83,6 +83,12 @@ import {
   RUNTIME_LOAD_LIMITS,
   type PreviewLoadEstimate,
 } from '../lib/previewBudget'
+import { finalShapeGeometryKey } from '../lib/finalShapeKey'
+import {
+  type CachedFinalShapeMesh,
+  loadFinalShapeCache,
+  saveFinalShapeCache,
+} from '../lib/finalShapeCache'
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 
@@ -733,11 +739,22 @@ export default function Preview3D({
   const finalShapeAutoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // ベースプレビュー（タイル・地形）の読み込み完了フラグ。完了前は最終形状を生成しない。
   const baseReadyRef = useRef(false)
+  // 現在の幾何キーに対する永続キャッシュの照会結果。ヒット時はベース読込を待たずに
+  // 生成を始め、読み込んだメッシュも保持して生成時の再読み込みを避ける。
+  const finalShapeCacheProbeRef = useRef<{
+    key: string
+    hit: boolean
+    mesh: CachedFinalShapeMesh | null
+  } | null>(null)
+  const finalShapeCacheProbeIdRef = useRef(0)
+  // キャッシュ照会の結果を自動生成ウォッチャーへ伝えるための再レンダー用。
+  const [, bumpFinalShapeCacheProbeVersion] = useState(0)
   const [finalShapeOn, setFinalShapeOn] = useState(false)
   const [finalShapeWarnings, setFinalShapeWarnings] = useState<string[]>([])
   // 断面表示用。完成メッシュ自体は上書きせず、毎回この ref から派生生成する。
   const finalShapeMeshRef = useRef<import('@machimoki/core').RawMesh | null>(null)
-  const finalShapeSectionPrimitiveRef = useRef<Primitive | null>(null)
+  // 断面表示用プリミティブ（body とハッチ付き切断面）。完成メッシュ自体は上書きしない。
+  const finalShapeSectionPrimitiveRef = useRef<Primitive[]>([])
   const finalShapeSectionRequestIdRef = useRef(0)
   const finalShapeSectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 最終形状生成時と同じ変換・色（断面プリミティブ化に使い回す）。
@@ -752,6 +769,9 @@ export default function Preview3D({
   const [sectionOn, setSectionOn] = useState(false)
   const [sectionT, setSectionT] = useState(0.5)
   const [sectionKeep, setSectionKeep] = useState<'min' | 'max'>('min')
+  // 断面の陰影切替（false=向きによる陰影、true=フラット固定）。設定はリセットしない。
+  const [sectionFlatShading, setSectionFlatShading] = useState(false)
+  const sectionFlatShadingRef = useRef(false)
   const gridLayerRef = useRef<any>(null)
   const gsiLayerRef = useRef<any>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
@@ -2511,6 +2531,24 @@ export default function Preview3D({
     }
   }
 
+  // 永続キャッシュのキー（形状に影響するパラメータのみ。色は含めない）。
+  const finalShapeGeometryKeyFor = (bounds: SelectionBounds): string =>
+    finalShapeGeometryKey({
+      bounds,
+      lod,
+      excludedBuildingIds,
+      includeSpanningBuildings,
+      terrainThickness,
+      flattenBottom,
+      reflectActualElevation,
+      terrainGridSize,
+      includeTerrain,
+      scale,
+      openBottom,
+      shellThickness,
+      hollowBuildings,
+    })
+
   // 最終形状パラメータのスナップショット。生成後に変わったら「未更新」表示にする。
   const finalShapeParamsKey = (): string =>
     JSON.stringify({
@@ -2563,20 +2601,21 @@ export default function Preview3D({
     viewer.scene.requestRender()
   }
 
-  // 断面プリミティブの破棄（remove & destroy）。
+  // 断面プリミティブの破棄（remove & destroy。body と切断面の両方）。
   const disposeFinalShapeSection = (): void => {
-    const p = finalShapeSectionPrimitiveRef.current
-    finalShapeSectionPrimitiveRef.current = null
-    if (!p) return
-    try {
-      viewerRef.current?.scene.primitives.remove(p)
-    } catch {
-      void 0
-    }
-    try {
-      p.destroy()
-    } catch {
-      void 0
+    const prims = finalShapeSectionPrimitiveRef.current
+    finalShapeSectionPrimitiveRef.current = []
+    for (const p of prims) {
+      try {
+        viewerRef.current?.scene.primitives.remove(p)
+      } catch {
+        void 0
+      }
+      try {
+        p.destroy()
+      } catch {
+        void 0
+      }
     }
   }
 
@@ -2642,8 +2681,30 @@ export default function Preview3D({
       viewer.scene.requestRender()
       return
     }
-    const primitive = buildEngineMeshPrimitive(sectioned, render)
-    if (!primitive) {
+    const { splitSectionMesh, buildSectionHatchPrimitive } = await import('../lib/sectionHatch')
+    if (
+      requestId !== finalShapeSectionRequestIdRef.current ||
+      shapeId !== finalShapeRequestIdRef.current
+    )
+      return
+    // 切断面（キャップ）とそれ以外に分け、切断面だけハッチングで描く。
+    const { cut, body } = splitSectionMesh(sectioned, 'x', offset)
+    const sectionPrimitives: Primitive[] = []
+    const bodyPrimitive = body.indices.length > 0 ? buildEngineMeshPrimitive(body, render) : null
+    if (bodyPrimitive) sectionPrimitives.push(bodyPrimitive)
+    // cut が空なら従来どおり body のみの1プリミティブで描く。
+    const cutPrimitive =
+      cut.indices.length > 0
+        ? buildSectionHatchPrimitive(cut, {
+            centerMatrix: render.centerMatrix,
+            positionScale: render.positionScale,
+            modelColor: render.color,
+            flatShading: sectionFlatShadingRef.current,
+            axis: 'x',
+          })
+        : null
+    if (cutPrimitive) sectionPrimitives.push(cutPrimitive)
+    if (sectionPrimitives.length === 0) {
       disposeFinalShapeSection()
       if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
       viewer.scene.requestRender()
@@ -2653,16 +2714,20 @@ export default function Preview3D({
       requestId !== finalShapeSectionRequestIdRef.current ||
       shapeId !== finalShapeRequestIdRef.current
     ) {
-      try {
-        primitive.destroy()
-      } catch {
-        void 0
+      for (const p of sectionPrimitives) {
+        try {
+          p.destroy()
+        } catch {
+          void 0
+        }
       }
       return
     }
     disposeFinalShapeSection()
-    viewer.scene.primitives.add(primitive)
-    finalShapeSectionPrimitiveRef.current = primitive
+    for (const p of sectionPrimitives) {
+      viewer.scene.primitives.add(p)
+    }
+    finalShapeSectionPrimitiveRef.current = sectionPrimitives
     if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
     viewer.scene.requestRender()
   }
@@ -2712,6 +2777,15 @@ export default function Preview3D({
     scheduleSectionUpdate(sectionT, next)
   }
 
+  // 断面の陰影切替。押したら断面を再生成する。設定はリセットしない。
+  const onSectionShadingToggle = (): void => {
+    const next = !sectionFlatShadingRef.current
+    sectionFlatShadingRef.current = next
+    setSectionFlatShading(next)
+    if (!sectionOn) return
+    scheduleSectionUpdate(sectionT, sectionKeep)
+  }
+
   const deactivateFinalShape = (): void => {
     resetFinalShapeSection()
     finalShapeActiveRef.current = false
@@ -2724,6 +2798,93 @@ export default function Preview3D({
     if (viewer) restoreFinalShapeView(viewer)
   }
 
+  // 完成メッシュのプリミティブ化と表示反映（キャッシュヒット時と生成時の共通後処理）。
+  // 色は表示専用のため、キャッシュヒット時も現在の設定で作り直す。
+  // 要求が古くなっていたら何もせず false を返す。
+  const finalizeFinalShapeMesh = async (
+    mesh: import('@machimoki/core').RawMesh,
+    warnings: string[],
+    requestId: number,
+  ): Promise<boolean> => {
+    const viewer = viewerRef.current
+    const bounds = selectionBounds
+    if (!viewer || !bounds) return false
+    const { buildEngineMeshPrimitive } = await import('../lib/engineMeshPrimitive')
+    if (requestId !== finalShapeRequestIdRef.current) return false
+    // 完成メッシュはスケール適用済みのため、プレビューでは 1/scale で戻す。
+    const centerMatrix =
+      terrainSampleCacheRef.current?.centerMatrix ??
+      Transforms.eastNorthUpToFixedFrame(
+        Cartesian3.fromDegrees(
+          (bounds.west + bounds.east) / 2,
+          (bounds.south + bounds.north) / 2,
+          0,
+        ),
+      )
+    const finalColor = whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor
+    const primitive = buildEngineMeshPrimitive(mesh, {
+      centerMatrix,
+      positionScale: 1 / scale,
+      color: finalColor,
+      // 地形プレビューと同じCAD調シェーダーで描く。既定のPBRライティングでは
+      // 白模型の上面が白飛びし、スムーズ法線では壁面に不要なハイライトが出る。
+      // 最終形状表示中は影を受ける他オブジェクトがないため影は切る。
+      cadShaded: true,
+      shadows: ShadowMode.DISABLED,
+    })
+    if (!primitive) throw new Error('最終形状メッシュが空でした')
+    disposeFinalShapePrimitive()
+    viewer.scene.primitives.add(primitive)
+    finalShapePrimitiveRef.current = primitive
+    // 断面はこの完成メッシュから毎回派生する（上書きしない）。
+    finalShapeMeshRef.current = mesh
+    finalShapeRenderRef.current = {
+      centerMatrix,
+      positionScale: 1 / scale,
+      color: finalColor,
+      flat: true,
+      cadShaded: true,
+      shadows: ShadowMode.DISABLED,
+    }
+    finalShapeActiveRef.current = true
+    setFinalShapeOn(true)
+    // 警告は最大3件まで控えめに表示する。
+    setFinalShapeWarnings(warnings.slice(0, 3))
+    applyFinalShapeView(viewer)
+    // ベース読込完了前にキャッシュから最終形状を表示した場合は、まだカメラが
+    // モデルを捉えていないため、完成メッシュのバウンディングスフィアへフレーミングする。
+    // ベース読込前は地形スフィアが無く、既定の setView ではモデルが画面外になる
+    // ことがあるため、モデル自身の球を使って確実に収める。
+    // ベース読込完了後の通常経路や、ユーザーが既に視点を決めている場合は何もしない
+    // （ベース側のフレーミングと衝突してカメラが飛ぶのを避ける）。
+    if (!baseReadyRef.current) {
+      const framed = cameraFramedForRef.current
+      if (!framed || !sameBounds(framed, bounds)) {
+        const instances = primitive.geometryInstances
+        const instance = Array.isArray(instances) ? instances[0] : instances
+        const sphere = instance?.geometry?.boundingSphere
+        if (sphere) {
+          const radius = Math.max(sphere.radius, 1)
+          viewer.camera.viewBoundingSphere(
+            sphere,
+            new HeadingPitchRange(
+              CesiumMath.toRadians(35),
+              CesiumMath.toRadians(-45),
+              Math.max(radius * 2.4, 300),
+            ),
+          )
+          viewer.camera.lookAtTransform(Matrix4.IDENTITY)
+          cameraFramedForRef.current = bounds
+          viewer.scene.requestRender()
+        } else {
+          applyPresetViewRef.current?.(35, -45)
+        }
+      }
+    }
+    onPipelineStateChange?.({ phase: 'complete', progress: 100, message: '完了', error: null })
+    return true
+  }
+
   // 最終形状プレビューの生成（エクスポートと同一の完成メッシュを Worker で作る）。
   const generateFinalShape = async (): Promise<void> => {
     const viewer = viewerRef.current
@@ -2733,7 +2894,27 @@ export default function Preview3D({
     finalShapeRequestIdRef.current = requestId
     // 断面表示中なら破棄して初期状態に戻す（派生元が変わるため）。
     resetFinalShapeSection()
+    // ジオメトリに影響するパラメータのみで永続キャッシュのキーにする（色は含めない）。
+    const geometryKey = finalShapeGeometryKeyFor(bounds)
     try {
+      // ネットワーク取得の前にキャッシュを照会する。ヒットしたらWorkerを起動しない。
+      // 先読み済みのエントリがあれば IndexedDB を読み直さない。
+      let cached: CachedFinalShapeMesh | null = null
+      const probe = finalShapeCacheProbeRef.current
+      if (probe?.key === geometryKey) cached = probe.mesh
+      if (!cached) {
+        try {
+          cached = await loadFinalShapeCache(geometryKey)
+        } catch {
+          cached = null
+        }
+      }
+      if (requestId !== finalShapeRequestIdRef.current) return
+      if (cached) {
+        // 色だけ変えた場合もキャッシュヒットで即時反映される。
+        await finalizeFinalShapeMesh(cached, cached.warnings, requestId)
+        return
+      }
       onPipelineStateChange?.({
         phase: 'acquiring',
         progress: 5,
@@ -2804,49 +2985,14 @@ export default function Preview3D({
         },
       )
       if (requestId !== finalShapeRequestIdRef.current) return
-      const { buildEngineMeshPrimitive } = await import('../lib/engineMeshPrimitive')
-      if (requestId !== finalShapeRequestIdRef.current) return
-      // 完成メッシュはスケール適用済みのため、プレビューでは 1/scale で戻す。
-      const centerMatrix =
-        terrainSampleCacheRef.current?.centerMatrix ??
-        Transforms.eastNorthUpToFixedFrame(
-          Cartesian3.fromDegrees(
-            (bounds.west + bounds.east) / 2,
-            (bounds.south + bounds.north) / 2,
-            0,
-          ),
-        )
-      const finalColor = whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor
-      const primitive = buildEngineMeshPrimitive(mesh, {
-        centerMatrix,
-        positionScale: 1 / scale,
-        color: finalColor,
-        // 地形プレビューと同じCAD調シェーダーで描く。既定のPBRライティングでは
-        // 白模型の上面が白飛びし、スムーズ法線では壁面に不要なハイライトが出る。
-        // 最終形状表示中は影を受ける他オブジェクトがないため影は切る。
-        cadShaded: true,
-        shadows: ShadowMode.DISABLED,
+      // 成功時は永続キャッシュへ保存する（fire-and-forget）。
+      void saveFinalShapeCache({
+        key: geometryKey,
+        positions: mesh.positions,
+        indices: mesh.indices,
+        warnings,
       })
-      if (!primitive) throw new Error('最終形状メッシュが空でした')
-      disposeFinalShapePrimitive()
-      viewer.scene.primitives.add(primitive)
-      finalShapePrimitiveRef.current = primitive
-      // 断面はこの完成メッシュから毎回派生する（上書きしない）。
-      finalShapeMeshRef.current = mesh
-      finalShapeRenderRef.current = {
-        centerMatrix,
-        positionScale: 1 / scale,
-        color: finalColor,
-        flat: true,
-        cadShaded: true,
-        shadows: ShadowMode.DISABLED,
-      }
-      finalShapeActiveRef.current = true
-      setFinalShapeOn(true)
-      // 警告は最大3件まで控えめに表示する。
-      setFinalShapeWarnings(warnings.slice(0, 3))
-      applyFinalShapeView(viewer)
-      onPipelineStateChange?.({ phase: 'complete', progress: 100, message: '完了', error: null })
+      await finalizeFinalShapeMesh(mesh, warnings, requestId)
     } catch (err) {
       if (requestId !== finalShapeRequestIdRef.current) return
       const message = err instanceof Error ? err.message : '最終形状の生成に失敗しました'
@@ -2855,14 +3001,41 @@ export default function Preview3D({
     }
   }
 
+  // 永続キャッシュの先読み。ヒット時はベースプレビューの読み込みを待たずに
+  // 自動生成を開始できるよう、結果を ref に保持して再レンダーを促す。
+  useEffect(() => {
+    if (!selectionBounds) {
+      finalShapeCacheProbeRef.current = null
+      finalShapeCacheProbeIdRef.current += 1
+      return
+    }
+    const geometryKey = finalShapeGeometryKeyFor(selectionBounds)
+    if (finalShapeCacheProbeRef.current?.key === geometryKey) return
+    // キーが変わったら古い照会結果は破棄する。
+    const probeId = finalShapeCacheProbeIdRef.current + 1
+    finalShapeCacheProbeIdRef.current = probeId
+    finalShapeCacheProbeRef.current = { key: geometryKey, hit: false, mesh: null }
+    void loadFinalShapeCache(geometryKey).then((cached) => {
+      if (probeId !== finalShapeCacheProbeIdRef.current) return
+      finalShapeCacheProbeRef.current = {
+        key: geometryKey,
+        hit: cached !== null,
+        mesh: cached,
+      }
+      // ヒット時は再レンダーして自動生成ウォッチャーを再評価させる。
+      if (cached) bumpFinalShapeCacheProbeVersion((v) => v + 1)
+    })
+  })
+
   // 最終形状の自動生成。ベースプレビューの準備完了後に500msデバウンスで実行する。
   // 要求済みのキーと同じキーでは再生成しない（生成完了時の phase complete では再発火しない）。
   // 生成中は直前の最終形状を表示したままにし、古い結果は requestId ガードで破棄する。
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer || !selectionBounds) return
-    // 準備完了前（ベースプレビューの読み込み中）は待つ。
-    if (!baseReadyRef.current) return
+    // 準備完了前（ベースプレビューの読み込み中）は待つ。ただし永続キャッシュに
+    // ヒットしている場合はベース読込を待たずに生成を始める。
+    if (!baseReadyRef.current && !finalShapeCacheProbeRef.current?.hit) return
     const key = finalShapeParamsKey()
     if (key === finalShapeRequestedKeyRef.current) return
     finalShapeRequestedKeyRef.current = key
@@ -3245,6 +3418,23 @@ export default function Preview3D({
             }}
           >
             反対側
+          </button>
+          <button
+            data-testid="final-shape-section-shading"
+            onClick={onSectionShadingToggle}
+            style={{
+              background: sectionFlatShading ? 'var(--accent)' : 'var(--surface)',
+              color: sectionFlatShading ? '#fff' : 'var(--text)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: '6px',
+              padding: '6px 10px',
+              fontSize: '11px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {sectionFlatShading ? '断面: フラット' : '断面: 影あり'}
           </button>
         </div>
       )}
