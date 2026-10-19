@@ -91,7 +91,12 @@ import {
   saveFinalShapeCache,
 } from '../lib/finalShapeCache'
 import { buildFinalShapeInWorker, terminateFinalShapeWorker } from '../lib/finalShape'
-import { loadBuildingMeshes, loadTerrainMesh, meshDatasetKey } from '../lib/meshDataCache'
+import {
+  buildingMeshesKey,
+  loadBuildingMeshes,
+  loadTerrainSample,
+  terrainSampleKey,
+} from '../lib/meshDataCache'
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 
@@ -3138,7 +3143,7 @@ export default function Preview3D({
       const meshParams = finalShapeMeshParams(bounds)
       const buildingMeshes = await loadBuildingMeshes(meshParams)
       if (requestId !== finalShapeRequestIdRef.current) return
-      let terrainMesh: import('@machimoki/core').RawMesh | null = null
+      let terrainSample: import('@machimoki/core').TerrainSample | null = null
       if (includeTerrain) {
         onPipelineStateChange?.({
           phase: 'acquiring',
@@ -3147,7 +3152,7 @@ export default function Preview3D({
           error: null,
           background: true,
         })
-        terrainMesh = await loadTerrainMesh(meshParams)
+        terrainSample = await loadTerrainSample(meshParams)
         if (requestId !== finalShapeRequestIdRef.current) return
       }
       onPipelineStateChange?.({
@@ -3179,9 +3184,11 @@ export default function Preview3D({
       const { mesh, warnings } = await buildFinalShapeInWorker(
         requestId,
         {
-          key: meshDatasetKey(meshParams),
+          buildingKey: buildingMeshesKey(meshParams),
+          // 地形なし→ありの切替でもサンプルを送り直せるよう、有無をキーに含める。
+          terrainKey: includeTerrain ? terrainSampleKey(meshParams) : 'no-terrain',
           buildingMeshes,
-          terrainMesh,
+          terrainSample,
         },
         bounds,
         options,

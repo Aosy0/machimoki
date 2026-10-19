@@ -61,7 +61,8 @@ export type {
 export { buildPrintableModel } from './pipeline.js'
 
 export { buildBuildingMeshes } from './meshBuilder.js'
-export { buildTerrainMesh } from './terrain.js'
+export { buildTerrainMesh, sampleTerrainGrid, buildTerrainSlabFromSample } from './terrain.js'
+export type { TerrainSample } from './terrain.js'
 
 export { validateMesh } from './validate.js'
 

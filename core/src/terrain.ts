@@ -12,7 +12,7 @@ import {
 } from 'cesium'
 import type { TerrainProvider } from 'cesium'
 import type { Bounds, RawMesh } from './types'
-import { buildSlabIndices } from './pipelineCore'
+import { buildTerrainSlabFromSample, type TerrainSample } from './terrainSample.js'
 
 const TERRAIN_GRID_SIZE = 128
 const TERRAIN_SAMPLE_BATCH_SIZE = 1024
@@ -43,13 +43,17 @@ async function sampleTerrainInBatches(
   return sampled
 }
 
-export async function buildTerrainMesh(
+/**
+ * 地形の高さグリッドをサンプリングする（Cesium Terrain を使用）。
+ *
+ * @param terrainProvider 既存の TerrainProvider（省略時は PLATEAU Terrain から生成）
+ */
+export async function sampleTerrainGrid(
   bounds: Bounds,
-  thickness: number,
-  flattenBottom: boolean,
   gridSize: number = TERRAIN_GRID_SIZE,
   reflectActualElevation = false,
-): Promise<RawMesh> {
+  terrainProvider?: TerrainProvider,
+): Promise<TerrainSample> {
   const n = Number.isFinite(gridSize) ? Math.max(2, Math.floor(gridSize)) : TERRAIN_GRID_SIZE
   const widthDeg = bounds.east - bounds.west
   const heightDeg = bounds.north - bounds.south
@@ -65,17 +69,21 @@ export async function buildTerrainMesh(
     }
   }
 
-  let sampled: Cartographic[]
-  let terrainProvider: any
-  try {
-    terrainProvider = await (CesiumTerrainProvider as any).fromUrl(DIRECT_TERRAIN_URL, {
-      requestVertexNormals: true,
-    } as any)
-  } catch (e) {
-    throw new Error(`PLATEAU-Terrain取得失敗: ${DIRECT_TERRAIN_URL} - ${(e as Error).message}`)
+  let provider: TerrainProvider
+  if (terrainProvider) {
+    provider = terrainProvider
+  } else {
+    try {
+      provider = await (CesiumTerrainProvider as any).fromUrl(DIRECT_TERRAIN_URL, {
+        requestVertexNormals: true,
+      } as any)
+    } catch (e) {
+      throw new Error(`PLATEAU-Terrain取得失敗: ${DIRECT_TERRAIN_URL} - ${(e as Error).message}`)
+    }
   }
+  let sampled: Cartographic[]
   try {
-    sampled = await sampleTerrainInBatches(terrainProvider, positions)
+    sampled = await sampleTerrainInBatches(provider, positions)
   } catch (e) {
     throw new Error(`PLATEAU-Terrain取得失敗: ${DIRECT_TERRAIN_URL} - ${(e as Error).message}`)
   }
@@ -91,9 +99,8 @@ export async function buildTerrainMesh(
   const centerMatrix = Transforms.eastNorthUpToFixedFrame(centerCartesian)
   const invCenterMatrix = Matrix4.inverse(centerMatrix, new Matrix4())
 
-  const vertices: number[] = []
-  const topZValues: number[] = []
-
+  const topPositions = new Float64Array(n * n * 3)
+  const topYValues = new Float64Array(n * n)
   for (let i = 0; i < sampled.length; i++) {
     const cart = Cartesian3.fromRadians(
       sampled[i].longitude,
@@ -102,30 +109,38 @@ export async function buildTerrainMesh(
     )
     const localCart = Matrix4.multiplyByPoint(invCenterMatrix, cart, new Cartesian3())
     const engine = enuToEngine(localCart.x, localCart.y, localCart.z)
-    vertices.push(engine.x, engine.y, engine.z)
-    topZValues.push(engine.y)
-  }
-
-  const numVertices = n * n
-
-  // Determine bottom Z
-  const minTopZ = Math.min(...topZValues)
-  const flatBottomZ = reflectActualElevation
-    ? Math.min(0, minTopZ - thickness)
-    : minTopZ - thickness
-  const useFlatBottom = reflectActualElevation || flattenBottom
-  const bottomZ = useFlatBottom ? flatBottomZ : -thickness
-
-  const allVertices: number[] = [...vertices]
-
-  // Bottom vertices
-  for (let i = 0; i < numVertices; i++) {
-    const y = useFlatBottom ? bottomZ : topZValues[i] - thickness
-    allVertices.push(vertices[i * 3], y, vertices[i * 3 + 2])
+    topPositions[i * 3] = engine.x
+    topPositions[i * 3 + 1] = engine.y
+    topPositions[i * 3 + 2] = engine.z
+    topYValues[i] = engine.y
   }
 
   return {
-    positions: new Float32Array(allVertices),
-    indices: buildSlabIndices(n),
+    bounds,
+    gridSize: n,
+    reflectActualElevation,
+    topPositions,
+    topYValues,
+    // 従来と同じ算出方法（NaN の扱いも含めて一致させる）。
+    minTopY: Math.min(...topYValues),
   }
 }
+
+/**
+ * 地形の高さグリッドをサンプリングして地形スラブを構築する（従来の公開API）。
+ * 厚み・flattenBottom だけを変える場合は `sampleTerrainGrid` の結果を
+ * `buildTerrainSlabFromSample` に渡すことで再サンプリングを避けられる。
+ */
+export async function buildTerrainMesh(
+  bounds: Bounds,
+  thickness: number,
+  flattenBottom: boolean,
+  gridSize: number = TERRAIN_GRID_SIZE,
+  reflectActualElevation = false,
+): Promise<RawMesh> {
+  const sample = await sampleTerrainGrid(bounds, gridSize, reflectActualElevation)
+  return buildTerrainSlabFromSample(sample, thickness, flattenBottom)
+}
+
+export { buildTerrainSlabFromSample }
+export type { TerrainSample }

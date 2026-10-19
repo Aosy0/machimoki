@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildingMeshesKey,
   createLatestPromiseCache,
-  meshDatasetKey,
   terrainMeshKey,
+  terrainSampleKey,
   type MeshDatasetParams,
 } from './meshDataCache'
 
@@ -37,30 +37,41 @@ describe('建物/地形の取得キー', () => {
     ).not.toBe(key)
   })
 
-  it('地形キーは gridSize の null/undefined を同一視し、厚みで変わる', () => {
-    const a = terrainMeshKey({ ...baseParams, terrainGridSize: null })
-    const b = terrainMeshKey({ ...baseParams, terrainGridSize: undefined })
+  it('地形サンプルキーは厚み・flatten に依存せず、gridSize の null/undefined を同一視する', () => {
+    const a = terrainSampleKey({ ...baseParams, terrainGridSize: null })
+    const b = terrainSampleKey({ ...baseParams, terrainGridSize: undefined })
     expect(a).toBe(b)
-    expect(terrainMeshKey({ ...baseParams, terrainThicknessMeters: 0.02 })).not.toBe(a)
+    // 厚み・flatten を変えても高さグリッドは取り直さない。
+    expect(
+      terrainSampleKey({
+        ...baseParams,
+        terrainThicknessMeters: 0.5,
+        flattenBottom: false,
+      }),
+    ).toBe(a)
+    // gridSize / reflectActualElevation はサンプル形状が変わるのでキーも変わる。
+    expect(terrainSampleKey({ ...baseParams, terrainGridSize: 256 })).not.toBe(a)
+    expect(terrainSampleKey({ ...baseParams, reflectActualElevation: true })).not.toBe(a)
   })
 
-  it('includeTerrain=false のデータセットキーは地形条件に依存しない', () => {
-    const offA = meshDatasetKey({ ...baseParams, includeTerrain: false })
-    const offB = meshDatasetKey({
-      ...baseParams,
-      includeTerrain: false,
-      terrainThicknessMeters: 0.5,
-      terrainGridSize: 256,
-    })
-    expect(offA).toBe(offB)
+  it('スラブキーは厚み・flatten を含む', () => {
+    const a = terrainMeshKey(baseParams)
+    expect(terrainMeshKey({ ...baseParams, terrainThicknessMeters: 0.02 })).not.toBe(a)
+    expect(terrainMeshKey({ ...baseParams, flattenBottom: false })).not.toBe(a)
+  })
 
-    const onA = meshDatasetKey({ ...baseParams, includeTerrain: true })
-    const onB = meshDatasetKey({
-      ...baseParams,
-      includeTerrain: true,
-      terrainThicknessMeters: 0.5,
-    })
-    expect(onA).not.toBe(onB)
+  it('データセット（建物＋サンプル）の再送判定は厚み変更で変わらない', () => {
+    const building = buildingMeshesKey(baseParams)
+    const sample = terrainSampleKey(baseParams)
+    const afterThickness = {
+      building: buildingMeshesKey({ ...baseParams, terrainThicknessMeters: 0.5 }),
+      sample: terrainSampleKey({ ...baseParams, terrainThicknessMeters: 0.5 }),
+    }
+    expect(afterThickness.building).toBe(building)
+    expect(afterThickness.sample).toBe(sample)
+
+    // gridSize は地形サンプル形状が変わるので再取得・再送対象。
+    expect(terrainSampleKey({ ...baseParams, terrainGridSize: 256 })).not.toBe(sample)
   })
 })
 

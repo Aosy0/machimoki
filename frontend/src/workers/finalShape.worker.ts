@@ -1,22 +1,22 @@
 import { setWasmUrl } from 'manifold-3d/lib/wasm.js'
 import wasmUrl from 'manifold-3d/manifold.wasm?url'
 import { buildPrintableGeometryFromMeshes } from '../../../core/src/pipelineUtils.ts'
+import { buildTerrainSlabFromSample, type TerrainSample } from '../../../core/src/terrainSample.ts'
 import type { Bounds, ExportOptions, RawMesh } from '../../../core/src/types.ts'
 
 setWasmUrl(wasmUrl)
 
-export type FinalShapeWorkerDataset = {
-  buildingMeshes: RawMesh[]
-  terrainMesh: RawMesh | null
-}
-
 export type FinalShapeWorkerRequest = {
   type: 'build'
   requestId: number
-  /** 入力データセットのキー。同じキーのときは dataset を省略して再送を避ける。 */
-  datasetKey: string
-  /** datasetKey が変わったときだけ送られる建物/地形メッシュ。 */
-  dataset?: FinalShapeWorkerDataset
+  /** 建物データのキー。変わったときだけ buildingMeshes を送る。 */
+  buildingKey: string
+  /** 地形サンプル（高さグリッド）のキー。変わったときだけ terrainSample を送る。 */
+  terrainKey: string
+  /** buildingKey が変わったときだけ送られる建物メッシュ。 */
+  buildingMeshes?: RawMesh[]
+  /** undefined = 送信なし / null = 地形なし。 */
+  terrainSample?: TerrainSample | null
   bounds: Bounds
   options: ExportOptions
 }
@@ -32,32 +32,54 @@ export type FinalShapeWorkerResponse =
     }
   | { type: 'error'; requestId: number; message: string }
 
-// Worker 内に保持する入力データセット。datasetKey が変わったときだけ差し替える。
-let storedDatasetKey: string | null = null
+// Worker 内に保持する入力データ。建物と地形サンプルは別キーで管理し、
+// 変わった方だけ再送してもらう（厚み変更ではサンプルを送り直さない）。
+let storedBuildingKey: string | null = null
 let storedBuildingMeshes: RawMesh[] | null = null
-let storedTerrainMesh: RawMesh | null = null
+let storedTerrainKey: string | null = null
+let storedTerrainSample: TerrainSample | null = null
 
 self.onmessage = async (e: MessageEvent<FinalShapeWorkerRequest>) => {
   const msg = e.data
   if (msg.type !== 'build') return
-  const { requestId, datasetKey, bounds, options } = msg
+  const { requestId, buildingKey, terrainKey, bounds, options } = msg
   const post = (message: FinalShapeWorkerResponse): void => {
     ;(self as unknown as { postMessage: (msg: unknown) => void }).postMessage(message)
   }
   try {
-    if (msg.dataset) {
-      storedDatasetKey = datasetKey
-      storedBuildingMeshes = msg.dataset.buildingMeshes
-      storedTerrainMesh = msg.dataset.terrainMesh
+    if (msg.buildingMeshes) {
+      storedBuildingKey = buildingKey
+      storedBuildingMeshes = msg.buildingMeshes
     }
-    if (storedDatasetKey !== datasetKey || storedBuildingMeshes === null) {
-      throw new Error('最終形状の入力データセットが設定されていません')
+    if (msg.terrainSample !== undefined) {
+      storedTerrainKey = terrainKey
+      storedTerrainSample = msg.terrainSample
+    }
+    if (storedBuildingKey !== buildingKey || storedBuildingMeshes === null) {
+      throw new Error('最終形状の建物データセットが設定されていません')
+    }
+    if (storedTerrainKey !== terrainKey) {
+      throw new Error('最終形状の地形データセットが設定されていません')
     }
     post({ type: 'progress', requestId, message: 'WASM初期化中...' })
+    // 高さグリッドは保持済みのため、厚み・flattenBottom の変更ではスラブ構築のみ行う。
+    let terrainMesh: RawMesh | null = null
+    let terrainSlabMs = 0
+    if (storedTerrainSample) {
+      const slabStart = performance.now()
+      const scale = options.scale ?? 1
+      const thicknessMeters = options.terrainThickness / (scale * 1000)
+      terrainMesh = buildTerrainSlabFromSample(
+        storedTerrainSample,
+        thicknessMeters,
+        options.flattenBottom,
+      )
+      terrainSlabMs = performance.now() - slabStart
+    }
     // エクスポートと同一の形状生成処理（シリアライズはしない）
     const result = await buildPrintableGeometryFromMeshes(
       storedBuildingMeshes,
-      storedTerrainMesh,
+      terrainMesh,
       bounds,
       options,
     )
@@ -66,7 +88,7 @@ self.onmessage = async (e: MessageEvent<FinalShapeWorkerRequest>) => {
       requestId,
       mesh: result.mesh,
       warnings: result.warnings,
-      timings: result.timings,
+      timings: { ...result.timings, terrainSlab: terrainSlabMs },
     })
   } catch (err) {
     post({

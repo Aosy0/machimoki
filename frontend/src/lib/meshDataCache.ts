@@ -6,7 +6,7 @@
  * 破棄して次回リトライできるようにする。
  */
 
-import type { Bounds, RawMesh } from '@machimoki/core'
+import type { Bounds, RawMesh, TerrainSample } from '@machimoki/core'
 import type { Lod } from './catalogApi'
 
 export interface MeshDatasetParams {
@@ -35,22 +35,21 @@ export function buildingMeshesKey(params: MeshDatasetParams): string {
   })
 }
 
-/** 地形メッシュの取得キー（色など表示だけの条件は含めない）。 */
-export function terrainMeshKey(params: MeshDatasetParams): string {
+/** 地形の高さグリッド（サンプル）のキー。厚み・flattenBottom は含めない。 */
+export function terrainSampleKey(params: MeshDatasetParams): string {
   return JSON.stringify({
     bounds: params.bounds,
-    thickness: params.terrainThicknessMeters,
-    flattenBottom: params.flattenBottom,
     gridSize: params.terrainGridSize ?? null,
     reflectActualElevation: params.reflectActualElevation ?? false,
   })
 }
 
-/** 建物＋地形をまとめたデータセットキー（Worker へのメッシュ再送判定に使う）。 */
-export function meshDatasetKey(params: MeshDatasetParams): string {
+/** 地形スラブ（厚み・flattenBottom を含む）のキー。 */
+export function terrainMeshKey(params: MeshDatasetParams): string {
   return JSON.stringify({
-    building: buildingMeshesKey(params),
-    terrain: params.includeTerrain ? terrainMeshKey(params) : null,
+    sample: terrainSampleKey(params),
+    thickness: params.terrainThicknessMeters,
+    flattenBottom: params.flattenBottom,
   })
 }
 
@@ -93,7 +92,7 @@ export function createLatestPromiseCache<T>(): LatestPromiseCache<T> {
 }
 
 const buildingCache = createLatestPromiseCache<RawMesh[]>()
-const terrainCache = createLatestPromiseCache<RawMesh | null>()
+const terrainSampleCache = createLatestPromiseCache<TerrainSample>()
 
 /** 建物メッシュを取得する（同じキーの取得中/取得済み Promise を共有する）。 */
 export function loadBuildingMeshes(params: MeshDatasetParams): Promise<RawMesh[]> {
@@ -103,17 +102,33 @@ export function loadBuildingMeshes(params: MeshDatasetParams): Promise<RawMesh[]
   })
 }
 
-/** 地形メッシュを取得する（includeTerrain=false なら null）。 */
-export function loadTerrainMesh(params: MeshDatasetParams): Promise<RawMesh | null> {
+/**
+ * 地形の高さグリッド（サンプル）を取得する。
+ * 厚み・flattenBottom が変わっても同じサンプルを再利用できる。
+ */
+export function loadTerrainSample(params: MeshDatasetParams): Promise<TerrainSample | null> {
   if (!params.includeTerrain) return Promise.resolve(null)
-  return terrainCache.get(terrainMeshKey(params), async () => {
-    const { buildTerrainMesh } = await import('@machimoki/core')
-    return buildTerrainMesh(
+  return terrainSampleCache.get(terrainSampleKey(params), async () => {
+    const start = performance.now()
+    const { sampleTerrainGrid } = await import('@machimoki/core')
+    const sample = await sampleTerrainGrid(
       params.bounds,
-      params.terrainThicknessMeters,
-      params.flattenBottom,
       params.terrainGridSize ?? undefined,
       params.reflectActualElevation ?? false,
     )
+    // 厚み変更時に再サンプリングしていないことを確認できる計測ログ。
+    console.debug('[terrain] sample ms', Math.round(performance.now() - start))
+    return sample
   })
+}
+
+/**
+ * 地形スラブを取得する。高さグリッドはキャッシュから再利用し、
+ * 厚み・flattenBottom の変更時はスラブ構築のみ行う。
+ */
+export async function loadTerrainMesh(params: MeshDatasetParams): Promise<RawMesh | null> {
+  const sample = await loadTerrainSample(params)
+  if (!sample) return null
+  const { buildTerrainSlabFromSample } = await import('@machimoki/core')
+  return buildTerrainSlabFromSample(sample, params.terrainThicknessMeters, params.flattenBottom)
 }
