@@ -1232,7 +1232,8 @@ function App() {
             />
             {pipelineState.background &&
               pipelineState.phase !== 'idle' &&
-              pipelineState.phase !== 'complete' && (
+              pipelineState.phase !== 'complete' &&
+              pipelineState.phase !== 'error' && (
                 // パラメータ変更による再生成中は、画面を覆わず隅に小さく表示する。
                 <div
                   data-testid="background-update-indicator"

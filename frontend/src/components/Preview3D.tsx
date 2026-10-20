@@ -796,6 +796,19 @@ export default function Preview3D({
   const [sectionOn, setSectionOn] = useState(false)
   const [sectionT, setSectionT] = useState(0.5)
   const [sectionKeep, setSectionKeep] = useState<'min' | 'max'>('min')
+  // 生成完了時に最新の断面位置・側を使うための現在値（生成中のスライダー変更にも追従）。
+  const sectionStateRef = useRef({ t: sectionT, keep: sectionKeep })
+  sectionStateRef.current = { t: sectionT, keep: sectionKeep }
+  const sectionOnRef = useRef(sectionOn)
+  sectionOnRef.current = sectionOn
+  // 初回のサイレント先読み生成（ベース準備完了後に1回だけ）の状態。
+  const prefetchedFinalShapeRef = useRef<{ key: string; mesh: CachedFinalShapeMesh } | null>(null)
+  const prefetchBoundsRef = useRef<string | null>(null)
+  const prefetchInFlightRef = useRef(false)
+  // 先読み用の requestId（表示生成の正のIDと衝突しないよう負数を使う）。
+  const prefetchRequestIdRef = useRef(-1)
+  // 現在のパラメータでの幾何キー（先読み結果が古くなっていないかの判定用）。
+  const currentFinalShapeKeyRef = useRef<string | null>(null)
   // 断面の陰影切替（false=向きによる陰影、true=フラット固定）。設定はリセットしない。
   const [sectionFlatShading, setSectionFlatShading] = useState(false)
   const sectionFlatShadingRef = useRef(false)
@@ -815,11 +828,6 @@ export default function Preview3D({
   // 再構築を後回しにする。後回しにした再構築は最終形状が解除された時点で走らせる。
   const deferredBaseRebuildRef = useRef(false)
   const [baseRebuildNonce, setBaseRebuildNonce] = useState(0)
-  // 進行中のベースプレビュー読み込みを中断するためのハンドラ（生成開始時に呼ぶ）。
-  const baseLoadCancelRef = useRef<(() => void) | null>(null)
-  // シーンから外したタイルセット。破棄は重いため生成完了後に1件ずつ遅延処理する。
-  const retiredTilesetsRef = useRef<Cesium3DTileset[]>([])
-  const retiredTilesetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [isOrthographic, setIsOrthographic] = useState(false)
   const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
@@ -1147,56 +1155,6 @@ export default function Preview3D({
     finalShapeActiveRef.current ||
     finalShapeGeneratingRef.current ||
     finalShapeAutoTimerRef.current !== null
-
-  // シーンから外したタイルセットを、生成中を避けて1件ずつ破棄する。
-  // destroy はタイルキャッシュの解放で重く、まとめて同期実行すると
-  // パラメータ変更直後のメインスレッドを数秒ブロックするため遅延させる。
-  const scheduleRetiredTilesetDispose = (): void => {
-    if (retiredTilesetTimerRef.current !== null) return
-    retiredTilesetTimerRef.current = setTimeout(() => {
-      retiredTilesetTimerRef.current = null
-      if (finalShapeGeneratingRef.current) {
-        // 生成中は破棄しない（生成完了後に再開する）。
-        scheduleRetiredTilesetDispose()
-        return
-      }
-      const tileset = retiredTilesetsRef.current.shift()
-      if (!tileset) return
-      try {
-        tileset.destroy()
-      } catch {
-        void 0
-      }
-      if (retiredTilesetsRef.current.length > 0) scheduleRetiredTilesetDispose()
-    }, 200)
-  }
-
-  // 最終形状の生成開始時に呼ぶ。進行中のベース読み込みを中断し、既にシーンへ
-  // 追加済みのタイルセットをシーンから外して読み込み・パースを止める
-  // （破棄は生成完了後に遅延）。解除時は nonce でベースを再構築する。
-  const pauseBasePreview = (): void => {
-    const cancel = baseLoadCancelRef.current
-    baseLoadCancelRef.current = null
-    if (cancel) {
-      deferredBaseRebuildRef.current = true
-      cancel()
-    }
-    // ベース読み込みを中断/破棄したため、以降の生成が準備完了待ちで
-    // 止まらないよう準備完了扱いにする（解除時は nonce で再構築する）。
-    baseReadyRef.current = true
-    const viewer = viewerRef.current
-    if (!viewer) return
-    for (const ts of tilesetsRef.current) {
-      try {
-        viewer.scene.primitives.remove(ts)
-      } catch {
-        void 0
-      }
-      retiredTilesetsRef.current.push(ts)
-    }
-    tilesetsRef.current = []
-    if (retiredTilesetsRef.current.length > 0) scheduleRetiredTilesetDispose()
-  }
 
   const toggleProjection = useCallback(() => {
     const viewer = viewerRef.current
@@ -1816,14 +1774,6 @@ export default function Preview3D({
       }, 300)
       cancelScheduled = () => window.clearTimeout(timer)
     }
-
-    // 最終形状の生成開始時に、進行中のベース読み込みを止めるためのハンドラ。
-    const cancelBaseLoad = (): void => {
-      cancelled = true
-      cancelScheduled?.()
-      estimateAbort.abort()
-    }
-    baseLoadCancelRef.current = cancelBaseLoad
 
     async function load() {
       try {
@@ -2616,7 +2566,6 @@ export default function Preview3D({
       cancelled = true
       cancelScheduled?.()
       estimateAbort.abort()
-      if (baseLoadCancelRef.current === cancelBaseLoad) baseLoadCancelRef.current = null
       // ベース再読み込み中は最終形状を自動生成しない。待機中の要求があれば破棄する。
       baseReadyRef.current = false
       if (finalShapeAutoTimerRef.current !== null) {
@@ -2672,6 +2621,10 @@ export default function Preview3D({
       hollowBuildings,
     })
 
+  currentFinalShapeKeyRef.current = selectionBounds
+    ? finalShapeGeometryKeyFor(selectionBounds)
+    : null
+
   // 建物/地形取得の共有キャッシュ用パラメータ（色など表示だけの条件は含めない）。
   const finalShapeMeshParams = (bounds: SelectionBounds) => ({
     bounds,
@@ -2682,6 +2635,27 @@ export default function Preview3D({
     flattenBottom,
     terrainGridSize,
     reflectActualElevation,
+  })
+
+  // 最終形状生成のオプション（表示生成と初回先読み生成で共通）。
+  const finalShapeExportOptions = (): import('@machimoki/core').ExportOptions => ({
+    terrainThickness,
+    flattenBottom,
+    reflectActualElevation,
+    terrainGridSize: terrainGridSize ?? undefined,
+    format: '3mf',
+    lod,
+    includeTerrain,
+    buildingColor,
+    terrainColor,
+    upAxis: 'z-up',
+    scale,
+    includeSpanningBuildings,
+    pickPoints,
+    excludedGmlIds: excludedBuildingIds,
+    openBottom,
+    shellThickness,
+    hollowBuildings,
   })
 
   // 表示だけに影響する見た目キー。変化しても生成パイプラインは走らせず、
@@ -2889,23 +2863,64 @@ export default function Preview3D({
     }, 150)
   }
 
-  // 断面トグルの切替。OFFでは断面を消して元の最終形状に戻す。
-  const toggleSection = (): void => {
+  // 生成完了後、現在の断面位置・側で断面を表示する（断面ON時のみ）。
+  const showFinalShapeSection = (): void => {
+    const viewer = viewerRef.current
+    if (!viewer || !sectionOnRef.current) return
     if (!finalShapeActiveRef.current || !finalShapeMeshRef.current) return
+    if (finalShapeSectionTimerRef.current !== null) {
+      clearTimeout(finalShapeSectionTimerRef.current)
+      finalShapeSectionTimerRef.current = null
+    }
+    // 新しい断面ができるまでは完成メッシュを隠しておく。
+    if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
+    viewer.scene.requestRender()
+    const requestId = finalShapeSectionRequestIdRef.current + 1
+    finalShapeSectionRequestIdRef.current = requestId
+    const { t, keep } = sectionStateRef.current
+    void updateFinalShapeSection(t, keep, requestId)
+  }
+
+  // 断面トグルの切替。
+  // ON: 正確な最終形状を（無ければ生成して）断面表示する。
+  // OFF: 最終形状を破棄してベースプレビューへ戻す。
+  const toggleSection = (): void => {
+    const viewer = viewerRef.current
+    if (!viewer) return
     if (sectionOn) {
-      if (finalShapeSectionTimerRef.current !== null) {
-        clearTimeout(finalShapeSectionTimerRef.current)
-        finalShapeSectionTimerRef.current = null
+      // 進行中の生成結果を破棄し、ベースプレビューへ戻す。
+      finalShapeRequestIdRef.current += 1
+      finalShapeInFlightKeyRef.current = null
+      finalShapeGeneratingRef.current = false
+      if (finalShapeAutoTimerRef.current !== null) {
+        clearTimeout(finalShapeAutoTimerRef.current)
+        finalShapeAutoTimerRef.current = null
       }
-      finalShapeSectionRequestIdRef.current += 1
-      disposeFinalShapeSection()
       setSectionOn(false)
-      if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
-      viewerRef.current?.scene.requestRender()
+      finalShapeRequestedKeyRef.current = null
+      deactivateFinalShape()
       return
     }
     setSectionOn(true)
-    scheduleSectionUpdate(sectionT, sectionKeep)
+    // 既に現在の幾何キーの最終形状が表示中なら、そのまま断面を出す。
+    const geometryKey = selectionBounds ? finalShapeGeometryKeyFor(selectionBounds) : null
+    if (
+      finalShapeActiveRef.current &&
+      finalShapeMeshRef.current &&
+      geometryKey !== null &&
+      geometryKey === finalShapeBuiltGeometryKeyRef.current
+    ) {
+      showFinalShapeSection()
+      return
+    }
+    // 先読み済みならデバウンスを待たずに即表示する（生成は走らない）。
+    if (geometryKey !== null && prefetchedFinalShapeRef.current?.key === geometryKey) {
+      sectionOnRef.current = true
+      finalShapeRequestedKeyRef.current = geometryKey
+      void generateFinalShape()
+      return
+    }
+    // 最終形状が無い/古い場合は、断面ON限定の自動生成ウォッチャーが生成する。
   }
 
   const onSectionPositionChange = (t: number): void => {
@@ -3108,16 +3123,15 @@ export default function Preview3D({
     finalShapeRequestIdRef.current = requestId
     // 生成完了まではベース再構築を後回しにする。
     finalShapeGeneratingRef.current = true
-    // 進行中のベース読み込みを止め、メインスレッドを生成へ譲る。
-    pauseBasePreview()
-    // 断面表示中なら破棄して初期状態に戻す（派生元が変わるため）。
-    resetFinalShapeSection()
+    // 生成中は前の断面を表示し続ける（完了後に新しい断面へ差し替える）。
     try {
       // ネットワーク取得の前にキャッシュを照会する。ヒットしたらWorkerを起動しない。
       // 先読み済みのエントリがあれば IndexedDB を読み直さない。
       let cached: CachedFinalShapeMesh | null = null
+      const prefetched = prefetchedFinalShapeRef.current
+      if (prefetched?.key === geometryKey) cached = prefetched.mesh
       const probe = finalShapeCacheProbeRef.current
-      if (probe?.key === geometryKey) cached = probe.mesh
+      if (!cached && probe?.key === geometryKey) cached = probe.mesh
       if (!cached) {
         try {
           cached = await loadFinalShapeCache(geometryKey)
@@ -3129,7 +3143,8 @@ export default function Preview3D({
       if (cached) {
         // 色だけ変えた場合もキャッシュヒットで即時反映される。
         finalShapeBuiltGeometryKeyRef.current = geometryKey
-        await finalizeFinalShapeMesh(cached, cached.warnings, requestId)
+        const finalized = await finalizeFinalShapeMesh(cached, cached.warnings, requestId)
+        if (finalized) showFinalShapeSection()
         return
       }
       onPipelineStateChange?.({
@@ -3162,25 +3177,7 @@ export default function Preview3D({
         error: null,
         background: true,
       })
-      const options: import('@machimoki/core').ExportOptions = {
-        terrainThickness,
-        flattenBottom,
-        reflectActualElevation,
-        terrainGridSize: terrainGridSize ?? undefined,
-        format: '3mf',
-        lod,
-        includeTerrain,
-        buildingColor,
-        terrainColor,
-        upAxis: 'z-up',
-        scale,
-        includeSpanningBuildings,
-        pickPoints,
-        excludedGmlIds: excludedBuildingIds,
-        openBottom,
-        shellThickness,
-        hollowBuildings,
-      }
+      const options = finalShapeExportOptions()
       const { mesh, warnings } = await buildFinalShapeInWorker(
         requestId,
         {
@@ -3213,9 +3210,13 @@ export default function Preview3D({
         warnings,
       })
       await finalizeFinalShapeMesh(mesh, warnings, requestId)
+      if (finalShapeActiveRef.current) showFinalShapeSection()
     } catch (err) {
       if (requestId !== finalShapeRequestIdRef.current) return
       const message = err instanceof Error ? err.message : '最終形状の生成に失敗しました'
+      // 失敗時はベースプレビューへ戻し、断面もOFFにする（再トグルで再試行可能）。
+      setSectionOn(false)
+      finalShapeRequestedKeyRef.current = null
       deactivateFinalShape()
       onPipelineStateChange?.({
         phase: 'error',
@@ -3225,30 +3226,86 @@ export default function Preview3D({
         background: true,
       })
     } finally {
-      finalShapeGeneratingRef.current = false
-      // このキーの生成が終わったので、同じキーの再要求を許可する。
-      if (finalShapeInFlightKeyRef.current === geometryKey) {
-        finalShapeInFlightKeyRef.current = null
-      }
-      // 生成中に届いた最新の幾何キーがあれば、そのキーで再生成する
-      // （中間値は捨て、最後の値だけ生成する）。
-      const requestedKey = finalShapeRequestedKeyRef.current
-      if (requestedKey !== null && requestedKey !== geometryKey) {
-        if (finalShapeAutoTimerRef.current !== null) {
-          clearTimeout(finalShapeAutoTimerRef.current)
+      // 古い生成の後始末で新しい生成の状態を壊さない（requestId で判定）。
+      if (requestId === finalShapeRequestIdRef.current) {
+        finalShapeGeneratingRef.current = false
+        // このキーの生成が終わったので、同じキーの再要求を許可する。
+        if (finalShapeInFlightKeyRef.current === geometryKey) {
+          finalShapeInFlightKeyRef.current = null
         }
-        finalShapeAutoTimerRef.current = setTimeout(() => {
-          finalShapeAutoTimerRef.current = null
-          if (!finalShapeGeneratingRef.current) void generateFinalShape()
-        }, 100)
+        // 生成中に届いた最新の幾何キーがあれば、そのキーで再生成する
+        // （中間値は捨て、最後の値だけ生成する）。断面OFFなら生成しない。
+        const requestedKey = finalShapeRequestedKeyRef.current
+        if (sectionOnRef.current && requestedKey !== null && requestedKey !== geometryKey) {
+          if (finalShapeAutoTimerRef.current !== null) {
+            clearTimeout(finalShapeAutoTimerRef.current)
+          }
+          finalShapeAutoTimerRef.current = setTimeout(() => {
+            finalShapeAutoTimerRef.current = null
+            if (!finalShapeGeneratingRef.current) void generateFinalShape()
+          }, 100)
+        }
       }
     }
   }
 
-  // 永続キャッシュの先読み。ヒット時はベースプレビューの読み込みを待たずに
-  // 自動生成を開始できるよう、結果を ref に保持して再レンダーを促す。
+  // ベースプレビュー準備完了後に一度だけ実行するサイレント先読み生成。
+  // 表示・進捗・ローディングは一切変えず、永続キャッシュと常駐Workerの
+  // 入力データ（建物メッシュ・地形サンプル）を温めるためのもの。
+  // 失敗しても無視し、断面ON時の通常生成で再試行する。
+  const prefetchFinalShape = async (
+    bounds: SelectionBounds,
+    geometryKey: string,
+  ): Promise<void> => {
+    if (prefetchInFlightRef.current) return
+    prefetchInFlightRef.current = true
+    // 表示生成（正のrequestId）と衝突しないよう負のIDを使う。
+    const requestId = prefetchRequestIdRef.current--
+    try {
+      // 既に永続キャッシュがあるならメッシュを保持するだけでよい。
+      const cached = await loadFinalShapeCache(geometryKey).catch(() => null)
+      if (cached) {
+        prefetchedFinalShapeRef.current = { key: geometryKey, mesh: cached }
+        return
+      }
+      const meshParams = finalShapeMeshParams(bounds)
+      const buildingMeshes = await loadBuildingMeshes(meshParams)
+      let terrainSample: import('@machimoki/core').TerrainSample | null = null
+      if (includeTerrain) terrainSample = await loadTerrainSample(meshParams)
+      const { mesh, warnings } = await buildFinalShapeInWorker(
+        requestId,
+        {
+          buildingKey: buildingMeshesKey(meshParams),
+          terrainKey: includeTerrain ? terrainSampleKey(meshParams) : 'no-terrain',
+          buildingMeshes,
+          terrainSample,
+        },
+        bounds,
+        finalShapeExportOptions(),
+      )
+      // 生成中にパラメータが変わっていたら、古いキーでキャッシュを上書きしない。
+      if (currentFinalShapeKeyRef.current !== geometryKey) return
+      prefetchedFinalShapeRef.current = {
+        key: geometryKey,
+        mesh: { positions: mesh.positions, indices: mesh.indices, warnings },
+      }
+      void saveFinalShapeCache({
+        key: geometryKey,
+        positions: mesh.positions,
+        indices: mesh.indices,
+        warnings,
+      })
+    } catch {
+      // 先読み失敗は無視する（断面ONで再試行）。
+    } finally {
+      prefetchInFlightRef.current = false
+    }
+  }
+
+  // 永続キャッシュの先読み（断面ON時のみ）。正確な形状を生成する前に
+  // IndexedDB を照会し、ヒット時はWorkerを起動せず即プリミティブ化する。
   useEffect(() => {
-    if (!selectionBounds) {
+    if (!selectionBounds || !sectionOn) {
       finalShapeCacheProbeRef.current = null
       finalShapeCacheProbeIdRef.current += 1
       return
@@ -3271,12 +3328,15 @@ export default function Preview3D({
     })
   })
 
-  // 最終形状の自動生成。ベースプレビューの準備完了後に500msデバウンスで実行する。
-  // 要求済みのキーと同じキーでは再生成しない（生成完了時の phase complete では再発火しない）。
-  // 生成中は直前の最終形状を表示したままにし、古い結果は requestId ガードで破棄する。
+  // 正確な最終形状の自動生成は「断面ON時のみ」。
+  // 通常のプレビューはベース（タイル＋ソリッド地形）を表示し、外形は編集用の
+  // 高速表示のままにする。断面ON中は幾何キーが変わるたびに再生成し、
+  // 生成中は前の断面を表示し続ける（古い結果は requestId ガードで破棄）。
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer || !selectionBounds) return
+    // 断面OFFでは最終形状を生成しない（ベースプレビューを即時表示）。
+    if (!sectionOn) return
     // ベースプレビューの準備完了（地形ブーストの確定を含む）後に生成する。
     // 先に生成すると gridSize が後から変わり、地形メッシュを取り直す原因になる。
     if (!baseReadyRef.current) return
@@ -3311,6 +3371,26 @@ export default function Preview3D({
     void refreshFinalShapeAppearance()
   })
 
+  // 初回のサイレント先読み。ベースプレビュー準備完了後に一度だけ実行し、
+  // 永続キャッシュ・常駐Workerの入力データを温める（表示は変えない）。
+  // パラメータ変更では再実行せず、選択範囲が変わったときだけ行う。
+  useEffect(() => {
+    if (!selectionBounds) return
+    const geometryKey = currentFinalShapeKeyRef.current
+    if (geometryKey === null) return
+    // 古い先読み結果は破棄する。
+    if (prefetchedFinalShapeRef.current && prefetchedFinalShapeRef.current.key !== geometryKey) {
+      prefetchedFinalShapeRef.current = null
+    }
+    if (sectionOn || !baseReadyRef.current || finalShapeActiveRef.current) return
+    const boundsKey = JSON.stringify(selectionBounds)
+    if (prefetchBoundsRef.current === boundsKey) return
+    if (finalShapeBuiltGeometryKeyRef.current === geometryKey) return
+    if (prefetchedFinalShapeRef.current?.key === geometryKey) return
+    prefetchBoundsRef.current = boundsKey
+    void prefetchFinalShape(selectionBounds, geometryKey)
+  })
+
   // アンマウント時は最終形状・断面プリミティブを破棄する。
   useEffect(() => {
     return () => {
@@ -3322,18 +3402,6 @@ export default function Preview3D({
         clearTimeout(finalShapeSectionTimerRef.current)
         finalShapeSectionTimerRef.current = null
       }
-      if (retiredTilesetTimerRef.current !== null) {
-        clearTimeout(retiredTilesetTimerRef.current)
-        retiredTilesetTimerRef.current = null
-      }
-      for (const tileset of retiredTilesetsRef.current) {
-        try {
-          tileset.destroy()
-        } catch {
-          void 0
-        }
-      }
-      retiredTilesetsRef.current = []
       disposeFinalShapeSection()
       disposeFinalShapePrimitive()
       finalShapeActiveRef.current = false
@@ -3642,7 +3710,8 @@ export default function Preview3D({
           ))}
         </div>
       </div>
-      {finalShapeOn && (
+      {/* 断面パネルは範囲選択があれば常に表示する（ONで正確な形状を生成）。 */}
+      {selectionBounds && (
         <div
           data-testid="final-shape-section-panel"
           style={{
