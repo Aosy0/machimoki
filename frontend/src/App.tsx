@@ -141,6 +141,8 @@ function coverageApiBase(): string {
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>(loadStoredTab)
   const [isExporting, setIsExporting] = useState(false)
+  // Preview3D の重い処理（最終形状・断面・中空シェル）が進行中か。
+  const [previewBusy, setPreviewBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [coverageVisible, setCoverageVisible] = useState(true)
   const [coverageLoading, setCoverageLoading] = useState(false)
@@ -600,6 +602,11 @@ function App() {
   }, [parameters, selectionBounds, scale, pickPoints, excludedBuildingIds, resolvedTerrainGridSize])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
+  // 重い処理が進行中なら、他のタスクの complete/background に上書きされても
+  // オーバーレイを維持する。pipelineState が完了済みの間は汎用メッセージを出す。
+  const previewBusyOverlay = previewBusy && pipelineState.phase !== 'error'
+  const previewBusyFallback =
+    previewBusyOverlay && (pipelineState.phase === 'idle' || pipelineState.phase === 'complete')
   const handleDismissError = () => {
     setErrorMessage(null)
     clearSelectionError()
@@ -1220,17 +1227,20 @@ function App() {
               onTerrainResolutionBoostChange={setTerrainResolutionBoost}
               buildingsVisible={buildingsVisible}
               onBuildingsVisibleChange={setBuildingsVisible}
+              onBusyChange={setPreviewBusy}
             />
             <LoadingOverlay
-              message={pipelineState.message}
+              message={previewBusyFallback ? '処理中...' : pipelineState.message}
               visible={
-                !pipelineState.background &&
-                pipelineState.phase !== 'idle' &&
-                pipelineState.phase !== 'complete'
+                previewBusyOverlay ||
+                (!pipelineState.background &&
+                  pipelineState.phase !== 'idle' &&
+                  pipelineState.phase !== 'complete')
               }
-              progress={pipelineState.progress}
+              progress={previewBusyFallback ? undefined : pipelineState.progress}
             />
             {pipelineState.background &&
+              !previewBusy &&
               pipelineState.phase !== 'idle' &&
               pipelineState.phase !== 'complete' &&
               pipelineState.phase !== 'error' && (

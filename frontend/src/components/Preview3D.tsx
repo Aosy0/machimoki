@@ -97,6 +97,10 @@ import {
   loadTerrainSample,
   terrainSampleKey,
 } from '../lib/meshDataCache'
+import {
+  buildHollowBuildingPrimitive,
+  terminateHollowBuildingsWorker,
+} from '../lib/hollowBuildings'
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 
@@ -705,6 +709,11 @@ interface Preview3DProps {
   buildingsVisible?: boolean
   /** 建物表示のON/OFF変更をAppへ通知する（バナーの切替ボタン用）。 */
   onBuildingsVisibleChange?: (visible: boolean) => void
+  /**
+   * 重い処理（最終形状生成・断面派生・中空シェル生成）の進行中フラグ。
+   * すべて終わるまで true のまま App 側でオーバーレイを維持する。
+   */
+  onBusyChange?: (busy: boolean) => void
 }
 
 export default function Preview3D({
@@ -733,6 +742,7 @@ export default function Preview3D({
   onTerrainResolutionBoostChange,
   buildingsVisible = true,
   onBuildingsVisibleChange,
+  onBusyChange,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -1165,6 +1175,28 @@ export default function Preview3D({
     finalShapeActiveRef.current ||
     finalShapeGeneratingRef.current ||
     finalShapeAutoTimerRef.current !== null
+
+  // 重い処理（最終形状生成・断面派生・中空シェル生成）の進行中カウンタ。
+  // 1つでも残っている間は App のローディングを維持する。
+  const busyTaskCountRef = useRef(0)
+  const busyActiveRef = useRef(false)
+  // 最新レンダーの generateFinalShape。古いタイマーから呼んでも最新の
+  // props（幾何キー）で生成できるようにする（古いクロージャの再生成ループ防止）。
+  const generateFinalShapeRef = useRef<(() => Promise<void>) | null>(null)
+  const notifyBusy = (): void => {
+    const busy = busyTaskCountRef.current > 0
+    if (busy === busyActiveRef.current) return
+    busyActiveRef.current = busy
+    onBusyChange?.(busy)
+  }
+  const beginBusy = (): void => {
+    busyTaskCountRef.current += 1
+    notifyBusy()
+  }
+  const endBusy = (): void => {
+    busyTaskCountRef.current = Math.max(0, busyTaskCountRef.current - 1)
+    notifyBusy()
+  }
 
   const toggleProjection = useCallback(() => {
     const viewer = viewerRef.current
@@ -2937,10 +2969,12 @@ export default function Preview3D({
     finalShapeSectionRequestIdRef.current = requestId
     const { t, keep } = sectionStateRef.current
     finalShapeSectionPendingRef.current = true
+    beginBusy()
     void updateFinalShapeSection(t, keep, requestId).finally(() => {
       if (requestId === finalShapeSectionRequestIdRef.current) {
         finalShapeSectionPendingRef.current = false
       }
+      endBusy()
     })
   }
 
@@ -2981,7 +3015,7 @@ export default function Preview3D({
     // 先読み済みならデバウンスを待たずに即表示する（生成は走らない）。
     if (geometryKey !== null && prefetchedFinalShapeRef.current?.key === geometryKey) {
       finalShapeRequestedKeyRef.current = geometryKey
-      void generateFinalShape()
+      void generateFinalShapeRef.current?.()
       return
     }
     // 最終形状が無い/古い場合は、断面ON限定の自動生成ウォッチャーが生成する。
@@ -3187,6 +3221,7 @@ export default function Preview3D({
     finalShapeRequestIdRef.current = requestId
     // 生成完了まではベース再構築を後回しにする。
     finalShapeGeneratingRef.current = true
+    beginBusy()
     // 生成中は前の断面を表示し続ける（完了後に新しい断面へ差し替える）。
     try {
       // ネットワーク取得の前にキャッシュを照会する。ヒットしたらWorkerを起動しない。
@@ -3216,7 +3251,8 @@ export default function Preview3D({
         progress: 5,
         message: '最終形状: 建物データ取得中...',
         error: null,
-        background: true,
+        // 断面ON中の再生成はフォアグラウンド（ローディング表示）にする。
+        background: !sectionOnRef.current,
       })
       // 建物/地形は共有キャッシュから取得する（エクスポート経路と二重取得しない）。
       const meshParams = finalShapeMeshParams(bounds)
@@ -3229,7 +3265,7 @@ export default function Preview3D({
           progress: 30,
           message: '最終形状: 地形データ取得中...',
           error: null,
-          background: true,
+          background: !sectionOnRef.current,
         })
         terrainSample = await loadTerrainSample(meshParams)
         if (requestId !== finalShapeRequestIdRef.current) return
@@ -3239,7 +3275,7 @@ export default function Preview3D({
         progress: 55,
         message: '最終形状: 完成メッシュを生成中...',
         error: null,
-        background: true,
+        background: !sectionOnRef.current,
       })
       const options = finalShapeExportOptions()
       const { mesh, warnings } = await buildFinalShapeInWorker(
@@ -3260,7 +3296,7 @@ export default function Preview3D({
             progress: 55,
             message,
             error: null,
-            background: true,
+            background: !sectionOnRef.current,
           })
         },
       )
@@ -3290,6 +3326,7 @@ export default function Preview3D({
         background: true,
       })
     } finally {
+      endBusy()
       // 古い生成の後始末で新しい生成の状態を壊さない（requestId で判定）。
       if (requestId === finalShapeRequestIdRef.current) {
         finalShapeGeneratingRef.current = false
@@ -3306,7 +3343,9 @@ export default function Preview3D({
           }
           finalShapeAutoTimerRef.current = setTimeout(() => {
             finalShapeAutoTimerRef.current = null
-            if (!finalShapeGeneratingRef.current) void generateFinalShape()
+            if (!finalShapeGeneratingRef.current) {
+              void generateFinalShapeRef.current?.()
+            }
           }, 100)
         }
       }
@@ -3366,6 +3405,9 @@ export default function Preview3D({
     }
   }
 
+  // 最新クロージャを保持する（タイマー再スケジュール用）。
+  generateFinalShapeRef.current = generateFinalShape
+
   // 永続キャッシュの先読み（断面ON時のみ）。正確な形状を生成する前に
   // IndexedDB を照会し、ヒット時はWorkerを起動せず即プリミティブ化する。
   useEffect(() => {
@@ -3416,7 +3458,7 @@ export default function Preview3D({
       finalShapeAutoTimerRef.current = null
       // 生成中なら開始しない（完了後に最新キーで再スケジュールされる）。
       if (finalShapeGeneratingRef.current) return
-      void generateFinalShape()
+      void generateFinalShapeRef.current?.()
       // 連続変更は最後の値だけ生成する（中間値はタイマー破棄でスキップ）。
     }, 175)
   })
@@ -3496,6 +3538,16 @@ export default function Preview3D({
       viewer.scene.requestRender()
     }
 
+    // 断面ON中（最終形状/断面が見えている間）は中空シェルが見えないため生成しない。
+    // 断面OFFに戻ったときに再生成する（見えない処理で進捗を奪い合わない）。
+    if (sectionOn || finalShapeActiveRef.current || finalShapeGeneratingRef.current) {
+      const wasActive = hollowBuildingsActiveRef.current
+      disposeHollow()
+      hollowBuildingsActiveRef.current = false
+      if (wasActive) restoreHollowView()
+      return
+    }
+
     if (!openBottom || !hollowBuildings) {
       disposeHollow()
       if (hollowBuildingsActiveRef.current) {
@@ -3509,25 +3561,50 @@ export default function Preview3D({
     hollowBuildingsActiveRef.current = true
     // 生成中はタイルセットの外殻を隠す（重なると中空形状が見えない）。
     applyHollowView()
+    // シェル生成中は App のローディングを維持する（完了/キャンセルで解除）。
+    let busyReleased = false
+    const releaseBusy = (): void => {
+      if (busyReleased) return
+      busyReleased = true
+      endBusy()
+    }
+    beginBusy()
+    // 他の生成（最終形状など）の完了通知で上書きされても、処理中は必ず
+    // 進捗が見えるよう1秒ごとに状態を再送する。
+    const startedAt = Date.now()
+    const heartbeat = setInterval(() => {
+      if (cancelled || requestId !== hollowBuildingRequestIdRef.current) return
+      onPipelineStateChange?.({
+        phase: 'acquiring',
+        progress: 55,
+        message: `建物の中空化中... (${Math.round((Date.now() - startedAt) / 1000)}秒)`,
+        error: null,
+      })
+    }, 1000)
     void (async () => {
       try {
-        const background = finalShapeActiveRef.current
         onPipelineStateChange?.({
           phase: 'acquiring',
           progress: 55,
           message: '建物の中空プレビューを生成中...',
           error: null,
-          background,
         })
-        const buildingMeshes = await loadBuildingMeshes(finalShapeMeshParams(selectionBounds))
+        const meshParams = finalShapeMeshParams(selectionBounds)
+        const buildingMeshes = await loadBuildingMeshes(meshParams)
         if (cancelled || requestId !== hollowBuildingRequestIdRef.current) return
-        const { buildHollowBuildingPrimitive } = await import('../lib/hollowBuildings')
+        const wallThickness = shellThickness / (scale * 1000)
         const primitive = await buildHollowBuildingPrimitive({
           bounds: selectionBounds,
+          // 建物取得条件＋壁厚＋包含設定でキャッシュ（再切替時に再生成しない）。
+          cacheKey: JSON.stringify({
+            building: buildingMeshesKey(meshParams),
+            wall: wallThickness,
+            spanning: includeSpanningBuildings,
+          }),
           buildingMeshes,
           includeSpanningBuildings,
           // 実スケールのプレビュー空間での壁厚（エクスポートの見た目と合わせる）。
-          wallThickness: shellThickness / (scale * 1000),
+          wallThickness,
           buildingColor: whiteModel ? '#ffffff' : buildingColor,
           onProgress: (message) => {
             if (cancelled || requestId !== hollowBuildingRequestIdRef.current) return
@@ -3536,7 +3613,6 @@ export default function Preview3D({
               progress: 55,
               message,
               error: null,
-              background,
             })
           },
         })
@@ -3562,17 +3638,40 @@ export default function Preview3D({
           restoreHollowView()
         }
         viewer.scene.requestRender()
-        onPipelineStateChange?.({ phase: 'complete', progress: 100, message: '完了', error: null })
+        // 最終形状の生成中なら、その完了時にまとめて complete にする。
+        if (!finalShapeGeneratingRef.current && finalShapeAutoTimerRef.current === null) {
+          onPipelineStateChange?.({
+            phase: 'complete',
+            progress: 100,
+            message: '完了',
+            error: null,
+          })
+        }
       } catch (err) {
         if (cancelled || requestId !== hollowBuildingRequestIdRef.current) return
+        const message = err instanceof Error ? err.message : String(err)
         console.warn('[Preview3D] 建物中空プレビュー生成に失敗:', err)
+        setCoverageWarning(`建物の中空化に失敗したため、タイル表示に戻しました: ${message}`)
         hollowBuildingsActiveRef.current = false
         restoreHollowView()
+        if (!finalShapeGeneratingRef.current && finalShapeAutoTimerRef.current === null) {
+          onPipelineStateChange?.({
+            phase: 'complete',
+            progress: 100,
+            message: '完了',
+            error: null,
+          })
+        }
+      } finally {
+        clearInterval(heartbeat)
+        releaseBusy()
       }
     })()
     return () => {
       cancelled = true
+      clearInterval(heartbeat)
       disposeHollow()
+      releaseBusy()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -3587,6 +3686,7 @@ export default function Preview3D({
     buildingColor,
     whiteModel,
     includeTerrain,
+    sectionOn,
   ])
 
   // 初回のサイレント先読み。ベースプレビュー準備完了後に一度だけ実行し、
@@ -3627,6 +3727,7 @@ export default function Preview3D({
       // （アンマウント後に catch 側の state 更新が走らないようにする）。
       finalShapeRequestIdRef.current += 1
       terminateFinalShapeWorker()
+      terminateHollowBuildingsWorker()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
