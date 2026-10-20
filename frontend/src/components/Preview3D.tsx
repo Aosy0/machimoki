@@ -777,6 +777,8 @@ export default function Preview3D({
   const finalShapeSectionPrimitiveRef = useRef<Primitive[]>([])
   const finalShapeSectionRequestIdRef = useRef(0)
   const finalShapeSectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 断面派生が進行中か（セーフティ effect の二重実行防止）。
+  const finalShapeSectionPendingRef = useRef(false)
   // 断面の元メッシュ（同じ t/keep の再配色では sectionMesh を再計算しない）。
   const finalShapeSectionSourceRef = useRef<{
     shapeId: number
@@ -2727,6 +2729,7 @@ export default function Preview3D({
       clearTimeout(finalShapeSectionTimerRef.current)
       finalShapeSectionTimerRef.current = null
     }
+    finalShapeSectionPendingRef.current = false
     // 進行中の断面生成を無効化する。
     finalShapeSectionRequestIdRef.current += 1
     // 元メッシュのキャッシュも破棄する（形状が変わるため）。
@@ -2878,7 +2881,12 @@ export default function Preview3D({
     const requestId = finalShapeSectionRequestIdRef.current + 1
     finalShapeSectionRequestIdRef.current = requestId
     const { t, keep } = sectionStateRef.current
-    void updateFinalShapeSection(t, keep, requestId)
+    finalShapeSectionPendingRef.current = true
+    void updateFinalShapeSection(t, keep, requestId).finally(() => {
+      if (requestId === finalShapeSectionRequestIdRef.current) {
+        finalShapeSectionPendingRef.current = false
+      }
+    })
   }
 
   // 断面トグルの切替。
@@ -2902,6 +2910,8 @@ export default function Preview3D({
       return
     }
     setSectionOn(true)
+    // クリック直後（再レンダー前）に断面派生が走っても判定できるよう即時反映する。
+    sectionOnRef.current = true
     // 既に現在の幾何キーの最終形状が表示中なら、そのまま断面を出す。
     const geometryKey = selectionBounds ? finalShapeGeometryKeyFor(selectionBounds) : null
     if (
@@ -2915,7 +2925,6 @@ export default function Preview3D({
     }
     // 先読み済みならデバウンスを待たずに即表示する（生成は走らない）。
     if (geometryKey !== null && prefetchedFinalShapeRef.current?.key === geometryKey) {
-      sectionOnRef.current = true
       finalShapeRequestedKeyRef.current = geometryKey
       void generateFinalShape()
       return
@@ -3370,6 +3379,17 @@ export default function Preview3D({
     finalShapeAppearanceKeyRef.current = key
     void refreshFinalShapeAppearance()
   })
+
+  // 断面ON直後に断面プリミティブが無い場合の保険。生成完了通知の取りこぼしや
+  // 先読みキャッシュからの即時表示でも、必ず断面を派生させる。
+  useEffect(() => {
+    if (!sectionOn) return
+    if (finalShapeSectionPendingRef.current) return
+    if (!finalShapeActiveRef.current || !finalShapeMeshRef.current) return
+    if (finalShapeSectionPrimitiveRef.current.length > 0) return
+    showFinalShapeSection()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sectionOn])
 
   // 初回のサイレント先読み。ベースプレビュー準備完了後に一度だけ実行し、
   // 永続キャッシュ・常駐Workerの入力データを温める（表示は変えない）。
