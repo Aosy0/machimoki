@@ -20,7 +20,7 @@ import { pickSectionColor } from './sectionColor'
 /** 切断面の陰影係数（CAD調の光量に合わせて少し落とす）。 */
 const HATCH_BASE_SHADE = 0.92
 /** ハッチ間隔（表示メートル）。 */
-const HATCH_SPACING_METERS = 30.2
+const HATCH_SPACING_METERS = 10.2
 /**
  * ハッチ線の半幅（セル間隔に対する割合）。
  * 画面一定幅にすると拡大時に間隔だけ広がって線が相対的に細く見えるため、
@@ -28,9 +28,9 @@ const HATCH_SPACING_METERS = 30.2
  */
 const HATCH_HALF_WIDTH_CELLS = 0.05
 /** ハッチ線色の明度係数（ベース色を暗くして線にする）。 */
-const HATCH_LINE_FACTOR = 0.4
+const HATCH_LINE_FACTOR = 0.5
 /** この明度（sRGB輝度）未満のベース色には明るい線を使う（自動反転）。 */
-const HATCH_LINE_INVERT_LUM = 0.45
+const HATCH_LINE_INVERT_LUM = 0.25
 
 export const HATCH_VERTEX_SHADER = `
 in vec3 position3DHigh;
