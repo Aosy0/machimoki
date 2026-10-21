@@ -833,9 +833,13 @@ export default function Preview3D({
     terrainColor: string
   } | null>(null)
   // 最終形状の表示中・生成予定/生成中は、隠れて見えないベースプレビューの
-  // 再構築を後回しにする。後回しにした再構築は最終形状が解除された時点で走らせる。
-  const deferredBaseRebuildRef = useRef(false)
+  // 再構築を後回しにする。解除時に最新化する。
+  // ・basePreview: タイル/地形を含むベース全体（bounds/lod等の変更）
+  // ・terrainParams: ソリッド地形のみ（openBottom/厚み等の変更）
+  const deferredBasePreviewRef = useRef(false)
+  const deferredTerrainParamsRef = useRef(false)
   const [baseRebuildNonce, setBaseRebuildNonce] = useState(0)
+  const [terrainParamsNonce, setTerrainParamsNonce] = useState(0)
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [isOrthographic, setIsOrthographic] = useState(false)
   const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
@@ -1694,14 +1698,14 @@ export default function Preview3D({
       solidTerrainPrimitiveRef.current !== null ||
       terrainSampleCacheRef.current !== null
     if (hadBasePreview && sameSelection && isBaseRebuildDeferred()) {
-      deferredBaseRebuildRef.current = true
+      deferredBasePreviewRef.current = true
       // ベースは非表示のまま最終形状を表示し続ける。生成ウォッチャーが
       // 準備完了待ちで止まらないよう、準備完了扱いを維持する。
       baseReadyRef.current = true
       return
     }
     // 実際にベースを再構築するので、後回しフラグを解除する。
-    deferredBaseRebuildRef.current = false
+    deferredBasePreviewRef.current = false
 
     for (const ts of tilesetsRef.current) {
       if (tileLoadHandlerRef.current) {
@@ -3030,11 +3034,25 @@ export default function Preview3D({
     disposeFinalShapePrimitive()
     const viewer = viewerRef.current
     if (viewer) restoreFinalShapeView(viewer)
-    // 表示中に後回しにしたベース再構築があれば、ここで最新化する。
-    if (deferredBaseRebuildRef.current) {
-      deferredBaseRebuildRef.current = false
+    // 表示中に後回しにした再構築があれば、ここで最新化する。
+    // 地形パラメータだけの変更なら地形だけを再構築し、タイルは維持する
+    // （連打時にベース全体を作り直して何も表示されない時間を作らない）。
+    if (deferredTerrainParamsRef.current) {
+      deferredTerrainParamsRef.current = false
+      setTerrainParamsNonce((n) => n + 1)
+    }
+    // ベース全体の再読込が必要、または中断などでベースが空なら作り直す。
+    const baseMissing =
+      tilesetsRef.current.length === 0 && solidTerrainPrimitiveRef.current === null
+    if (deferredBasePreviewRef.current || baseMissing) {
+      deferredBasePreviewRef.current = false
       setBaseRebuildNonce((n) => n + 1)
     }
+    // キャンセルされた生成が acquiring のまま残ってオーバーレイが消えない
+    // ことがあるため、busy を解放して完了状態へ戻す（失敗時は error が上書きする）。
+    busyTaskCountRef.current = 0
+    notifyBusy()
+    onPipelineStateChange?.({ phase: 'complete', progress: 100, message: '完了', error: null })
   }
 
   // 完成メッシュのプリミティブ化と表示反映（キャッシュヒット時と生成時の共通後処理）。
@@ -3085,6 +3103,7 @@ export default function Preview3D({
       cadShaded: true,
       shadows: ShadowMode.DISABLED,
     }
+    const wasActive = finalShapeActiveRef.current
     finalShapeActiveRef.current = true
     setFinalShapeOn(true)
     // 警告は最大3件まで控えめに表示する。見た目更新時も維持できるよう ref にも保持する。
@@ -3093,14 +3112,9 @@ export default function Preview3D({
     // この表示を作ったときの見た目キーを記録し、色だけの変更を検出する。
     finalShapeAppearanceKeyRef.current = finalShapeAppearanceKey()
     applyFinalShapeView(viewer)
-    // まだカメラがこの範囲を捉えていない場合のみ、完成メッシュのバウンディング
-    // スフィアへフレーミングする。ベース読込前は地形スフィアが無く、既定の
-    // setView ではモデルが画面外になることがあるため、モデル自身の球を使って
-    // 確実に収める。ベース側で既にフレーミング済み、またはユーザーが視点を
-    // 決めている場合は何もしない（ベースのフレーミングと衝突してカメラが飛ぶのを避ける）。
-    // 生成開始時にベースを止めると baseReady が先に true になり得るため、
-    // baseReady ではなく「フレーム済みか」で判定する。
-    {
+    // 生成のたびに視点を動かさない。非表示→表示に切り替わる最初の1回だけ、
+    // まだカメラがこの範囲を捉えていない場合にモデル球へフレーミングする。
+    if (!wasActive) {
       const framed = cameraFramedForRef.current
       if (!framed || !sameBounds(framed, bounds)) {
         const instances = primitive.geometryInstances
@@ -3681,9 +3695,10 @@ export default function Preview3D({
     // 最終形状表示中/生成中は、隠れて見えないベース地形の再構築を後回しにする
     // （サンプルのキャッシュはそのまま維持し、解除時に最新化する）。
     if (isBaseRebuildDeferred()) {
-      deferredBaseRebuildRef.current = true
+      deferredTerrainParamsRef.current = true
       return
     }
+    deferredTerrainParamsRef.current = false
 
     if (solidTerrainPrimitiveRef.current) {
       try {
@@ -3720,6 +3735,7 @@ export default function Preview3D({
     terrainColor,
     scale,
     reflectActualElevation,
+    terrainParamsNonce,
   ])
 
   return (
