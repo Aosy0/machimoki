@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
-import { buildTerrainMesh } from '../src/terrain';
+import {
+  buildTerrainMesh,
+  buildTerrainSlabFromSample,
+  sampleTerrainGrid,
+} from '../src/terrain';
 import type { Bounds } from '../src/types';
 
 vi.mock('cesium', () => {
@@ -209,5 +213,72 @@ describe('terrain', () => {
     for (let i = numVertices; i < numVertices * 2; i++) {
       expect(mesh.positions[i * 3 + 1]).toBe(-5);
     }
+  });
+});
+
+describe('terrain sample reuse (sample + slab)', () => {
+  beforeEach(async () => {
+    const { CesiumTerrainProvider, sampleTerrainMostDetailed } = await import('cesium');
+    (CesiumTerrainProvider.fromUrl as unknown as MockInstance)
+      .mockReset()
+      .mockResolvedValue({ availability: {} });
+    (sampleTerrainMostDetailed as unknown as MockInstance).mockReset().mockImplementation((_provider, positions) =>
+      Promise.resolve(
+        positions.map((p: { longitude: number; latitude: number }, i: number) => ({
+          longitude: p.longitude,
+          latitude: p.latitude,
+          height: i * 0.1,
+        })),
+      ),
+    );
+  });
+
+  it('sample + slab の合成は buildTerrainMesh と完全一致する（体積・bbox・三角形数）', async () => {
+    const gridSize = 64;
+    const sample = await sampleTerrainGrid(bounds, gridSize, false);
+    const fromSample = buildTerrainSlabFromSample(sample, 10, true);
+    const direct = await buildTerrainMesh(bounds, 10, true, gridSize, false);
+
+    expect(fromSample.indices).toEqual(direct.indices);
+    expect(fromSample.positions).toEqual(direct.positions);
+    expect(fromSample.positions.length / 3).toBe(gridSize * gridSize * 2);
+  });
+
+  it('同じサンプルから厚みだけ変えたスラブは、都度生成した結果と完全一致する', async () => {
+    const gridSize = 64;
+    const sample = await sampleTerrainGrid(bounds, gridSize, false);
+
+    const thick10 = buildTerrainSlabFromSample(sample, 10, true);
+    const thick25 = buildTerrainSlabFromSample(sample, 25, true);
+    const direct25 = await buildTerrainMesh(bounds, 25, true, gridSize, false);
+
+    // 表層は同一（サンプル再利用で変わらない）。
+    const topVertexCount = gridSize * gridSize * 3;
+    expect(thick25.positions.slice(0, topVertexCount)).toEqual(
+      thick10.positions.slice(0, topVertexCount),
+    );
+    // 厚み変更後の結果は都度サンプリングした場合と完全一致。
+    expect(thick25.indices).toEqual(direct25.indices);
+    expect(thick25.positions).toEqual(direct25.positions);
+  });
+
+  it('flattenBottom の変更も同じサンプルから完全一致で構築できる', async () => {
+    const gridSize = 64;
+    const sample = await sampleTerrainGrid(bounds, gridSize, false);
+
+    const flat = buildTerrainSlabFromSample(sample, 10, true);
+    const relative = buildTerrainSlabFromSample(sample, 10, false);
+    const directRelative = await buildTerrainMesh(bounds, 10, false, gridSize, false);
+
+    expect(relative.indices).toEqual(directRelative.indices);
+    expect(relative.positions).toEqual(directRelative.positions);
+    // flatten の違いで底面だけが変わる。
+    const topVertexCount = gridSize * gridSize * 3;
+    expect(relative.positions.slice(0, topVertexCount)).toEqual(
+      flat.positions.slice(0, topVertexCount),
+    );
+    expect(relative.positions.slice(topVertexCount)).not.toEqual(
+      flat.positions.slice(topVertexCount),
+    );
   });
 });

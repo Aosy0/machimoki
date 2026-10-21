@@ -5,7 +5,7 @@
  * no I/O, no Cesium, and only calls manifold-3d through existing manifoldOps.
  */
 
-import type { Manifold } from 'manifold-3d'
+import type { CrossSection, Manifold } from 'manifold-3d'
 import {
   Bounds,
   ExportOptions,
@@ -28,14 +28,12 @@ import {
   exportMeshesToSTL,
   exportTo3MF,
   unionManifolds,
-  unionMeshes,
 } from './manifoldOps.js'
 import {
   buildTerrainCavityMesh,
   componentContainsPoint,
   componentIntersectsBounds,
   dedupeComponents,
-  meshToRaw,
   scaleRawMesh,
 } from './pipelineCore.js'
 
@@ -54,13 +52,340 @@ const DEFAULT_SHELL_THICKNESS_MM = 1.6
  * Returns the per-building status so callers can record why a building was
  * kept solid ('small' / 'no-section' / 'boolean-failed').
  */
-type CutterResult =
-  | { status: 'hollowed'; cutter: Manifold }
-  | { status: 'small' }
-  | { status: 'no-section' }
-  | { status: 'boolean-failed' }
+type CutterPath = '2d' | '3d'
 
-async function buildBuildingCutter(
+type CutterResult =
+  | { status: 'hollowed'; cutter: Manifold; path: CutterPath }
+  | { status: 'small'; path: CutterPath }
+  | { status: 'no-section'; path: CutterPath }
+  | { status: 'boolean-failed'; path: CutterPath }
+
+/** プリズム判定で断面を比較する高さ（対象高さに対する比率）。 */
+const PRISM_SAMPLE_FRACTIONS = [0.12, 0.3, 0.5, 0.7, 0.88]
+/** プリズム断面比較の許容誤差（面積・位置・対称差の相対値）。 */
+const PRISM_MATCH_TOLERANCE = 1e-4
+/** 凸判定（面積と凸包面積の相対差）の許容誤差。 */
+const CONVEX_AREA_TOLERANCE = 1e-6
+
+/** 2D高速経路の適用失敗理由（実データの内訳計測用）。 */
+export interface Cutter2DDiagnostics {
+  attempts: number
+  applied: number
+  /** 前提条件（高さ・bbox・断面位置など）で対象外。 */
+  precondition: number
+  /** 基準断面が空。 */
+  emptySection: number
+  /** 断面の面積が一致しない。 */
+  notPrismArea: number
+  /** 断面の bbox が一致しない。 */
+  notPrismBounds: number
+  /** 断面の対称差面積が一致しない。 */
+  notPrismShape: number
+  /** 穴あり（複数コンター）。足跡プリズム経路へ回す。 */
+  notConvexContours: number
+  /** 面積が凸包と一致しない（凹形状）。足跡プリズム経路へ回す。 */
+  notConvexArea: number
+  /** 2D侵食が空（中空化できない）。 */
+  erosionEmpty: number
+  /** 足跡プリズムの minkowski でカッターを生成できた数。 */
+  appliedFootprint: number
+  /** 足跡プリズムの侵食が空。 */
+  footprintEmpty: number
+}
+
+export function createCutter2DDiagnostics(): Cutter2DDiagnostics {
+  return {
+    attempts: 0,
+    applied: 0,
+    precondition: 0,
+    emptySection: 0,
+    notPrismArea: 0,
+    notPrismBounds: 0,
+    notPrismShape: 0,
+    notConvexContours: 0,
+    notConvexArea: 0,
+    erosionEmpty: 0,
+    appliedFootprint: 0,
+    footprintEmpty: 0,
+  }
+}
+
+type CrossSectionMismatch = 'area' | 'bounds' | 'shape'
+
+/** 2つの断面が許容誤差内で同一形状か。不一致なら理由を返す。 */
+function matchCrossSections(
+  a: CrossSection,
+  b: CrossSection,
+  tolerance: number,
+): true | CrossSectionMismatch {
+  if (a.isEmpty() || b.isEmpty()) return a.isEmpty() && b.isEmpty() ? true : 'shape'
+  const area = a.area()
+  if (!(area > 0)) return 'area'
+  if (Math.abs(area - b.area()) > tolerance * area) return 'area'
+  const scale = Math.sqrt(area)
+  const boundsA = a.bounds()
+  const boundsB = b.bounds()
+  for (let axis = 0; axis < 2; axis++) {
+    if (Math.abs(boundsA.min[axis] - boundsB.min[axis]) > tolerance * scale) return 'bounds'
+    if (Math.abs(boundsA.max[axis] - boundsB.max[axis]) > tolerance * scale) return 'bounds'
+  }
+  // 形状差（対称差面積）でも一致を確認する。
+  const onlyA = a.subtract(b)
+  let difference = onlyA.area()
+  onlyA.delete()
+  const onlyB = b.subtract(a)
+  difference += onlyB.area()
+  onlyB.delete()
+  return difference <= tolerance * area ? true : 'shape'
+}
+
+/** 凸判定の不一致理由。 */
+function convexityMismatch(cross: CrossSection): 'contours' | 'area' | null {
+  if (cross.isEmpty() || cross.numContour() !== 1) return 'contours'
+  const area = cross.area()
+  if (!(area > 0)) return 'area'
+  const hull = cross.hull()
+  try {
+    return Math.abs(hull.area() - area) <= CONVEX_AREA_TOLERANCE * area ? null : 'area'
+  } finally {
+    hull.delete()
+  }
+}
+
+/**
+ * 4つの角シフトの交差は真の侵食（全シフトの交差）の上位集合。
+ * これが空なら真の侵食も必ず空なので、重い minkowski を省略できる。
+ */
+function cornerShiftsEmpty(footprint: CrossSection, t: number): boolean {
+  const shifts = [
+    footprint.translate(t, t),
+    footprint.translate(t, -t),
+    footprint.translate(-t, t),
+    footprint.translate(-t, -t),
+  ]
+  try {
+    const first = shifts[0].intersect(shifts[1])
+    try {
+      const second = first.intersect(shifts[2])
+      try {
+        const third = second.intersect(shifts[3])
+        try {
+          return third.isEmpty() || !(third.area() > 0)
+        } finally {
+          third.delete()
+        }
+      } finally {
+        second.delete()
+      }
+    } finally {
+      first.delete()
+    }
+  } finally {
+    for (const shift of shifts) shift.delete()
+  }
+}
+
+/**
+ * 非凸・穴ありの足跡でも、垂直プリズムなら足跡を押し出したプリズムと
+ * 立方体(2t)の minkowskiDifference で厳密な侵食が得られる。
+ * 建物全体ではなく足跡プリズムを使うため大幅に軽い。
+ *
+ * @returns Manifold=成功 / 'empty'=侵食空 / null=minkowski失敗（3Dへフォールバック）
+ */
+async function buildFootprintPrismCutter(
+  footprint: CrossSection,
+  zTop: number,
+  zBottom: number,
+  t: number,
+): Promise<Manifold | 'empty' | null> {
+  const height = zTop - zBottom
+  if (!(height > 2 * t)) return 'empty'
+  const prism = footprint.extrude(height)
+  const placed = prism.translate([0, 0, zBottom])
+  prism.delete()
+  const cube = await createBox(2 * t)
+  let eroded: Manifold
+  try {
+    eroded = placed.minkowskiDifference(cube)
+  } finally {
+    cube.delete()
+    placed.delete()
+  }
+  if (eroded.status() !== 'NoError') {
+    eroded.delete()
+    return null
+  }
+  if (!(eroded.volume() > 0)) {
+    eroded.delete()
+    return 'empty'
+  }
+  try {
+    return eroded.rotate([-90, 0, 0])
+  } finally {
+    eroded.delete()
+  }
+}
+
+/**
+ * 垂直プリズム＋凸足跡の建物向けの2D侵食経路。
+ *
+ * 垂直プリズム F×[yBottom, maxY] に対する立方体(2t)の3D侵食は、
+ * 足跡の正方形(t)による2D侵食と等価: (F ⊖ square(t)) × [yBottom+t, maxY−t]。
+ * 凸多角形では正方形の支持関数の最大が角で達成されるため、
+ * 4つのシフトコピーの交差が厳密な侵食になる。
+ *
+ * 適用条件を満たさない場合（非プリズム・非凸・侵食が空など）は null を返し、
+ * 呼び出し側が既存3D経路へフォールバックする。
+ */
+export async function buildBuildingCutter2D(
+  building: Manifold,
+  minY: number,
+  maxY: number,
+  shellThickness: number,
+  modelMinY: number,
+  diagnostics?: Cutter2DDiagnostics,
+): Promise<CutterResult | null> {
+  if (diagnostics) diagnostics.attempts++
+  const t = shellThickness
+  const height = maxY - minY
+  if (!(height > 2 * t)) {
+    if (diagnostics) diagnostics.precondition++
+    return null
+  }
+
+  const bbox = building.boundingBox()
+  if (!(Math.min(bbox.max[0] - bbox.min[0], bbox.max[2] - bbox.min[2]) > 2 * t)) {
+    if (diagnostics) diagnostics.precondition++
+    return null
+  }
+
+  // 足跡は現行の3D経路と同じスライス位置から取得する（穴も保持）。
+  const sliceOffset = Math.min(Math.max(1e-3, height * 0.02), height * 0.15)
+  const yTop = minY + 2 * t
+  const yBottom = Math.min(modelMinY, minY) - 2 * t
+  if (!(yTop > yBottom)) {
+    if (diagnostics) diagnostics.precondition++
+    return null
+  }
+  const erodedHeight = maxY - t - (yBottom + t)
+  if (!(erodedHeight > 0)) {
+    if (diagnostics) diagnostics.precondition++
+    return null
+  }
+
+  const rotated = building.rotate([90, 0, 0])
+  const samples: CrossSection[] = []
+  let reference: CrossSection | null = null
+  try {
+    const rotatedBounds = rotated.boundingBox()
+    const zMin = rotatedBounds.min[2]
+    const zSpan = rotatedBounds.max[2] - zMin
+    if (!(zSpan > 0) || !(zMin + sliceOffset < rotatedBounds.max[2])) {
+      if (diagnostics) diagnostics.precondition++
+      return null
+    }
+
+    reference = rotated.slice(zMin + sliceOffset)
+    if (reference.isEmpty()) {
+      if (diagnostics) diagnostics.emptySection++
+      return null
+    }
+
+    // 対象区間で垂直プリズムか: 複数高さの断面が基準断面と一致することを確認する。
+    for (const fraction of PRISM_SAMPLE_FRACTIONS) {
+      const sample = rotated.slice(zMin + zSpan * fraction)
+      samples.push(sample)
+      const mismatch = matchCrossSections(reference, sample, PRISM_MATCH_TOLERANCE)
+      if (mismatch !== true) {
+        if (diagnostics) {
+          if (mismatch === 'area') diagnostics.notPrismArea++
+          else if (mismatch === 'bounds') diagnostics.notPrismBounds++
+          else diagnostics.notPrismShape++
+        }
+        return null
+      }
+    }
+    // 凸足跡は4シフト交差が厳密な侵食になる。
+    const convexMismatch = convexityMismatch(reference)
+    if (convexMismatch !== null) {
+      if (diagnostics) {
+        if (convexMismatch === 'contours') diagnostics.notConvexContours++
+        else diagnostics.notConvexArea++
+      }
+      // 非凸・穴ありでも垂直プリズムなら、足跡プリズムの minkowski で厳密に侵食できる。
+      // 先に4シフト交差で空かを判定し、空なら重い minkowski を省略する。
+      if (cornerShiftsEmpty(reference, t)) {
+        if (diagnostics) diagnostics.footprintEmpty++
+        return { status: 'boolean-failed', path: '2d' }
+      }
+      const footprintCutter = await buildFootprintPrismCutter(
+        reference,
+        rotatedBounds.max[2],
+        yBottom,
+        t,
+      )
+      if (footprintCutter === null) return null // minkowski失敗のみ3Dへ
+      if (footprintCutter === 'empty') {
+        if (diagnostics) diagnostics.footprintEmpty++
+        return { status: 'boolean-failed', path: '2d' }
+      }
+      if (diagnostics) diagnostics.appliedFootprint++
+      return { status: 'hollowed', cutter: footprintCutter, path: '2d' }
+    }
+
+    const shiftPP = reference.translate(t, t)
+    const shiftPN = reference.translate(t, -t)
+    const shiftNP = reference.translate(-t, t)
+    const shiftNN = reference.translate(-t, -t)
+    try {
+      const cornerPP = shiftPP.intersect(shiftPN)
+      try {
+        const cornerPN = cornerPP.intersect(shiftNP)
+        try {
+          const eroded = cornerPN.intersect(shiftNN)
+          try {
+            if (eroded.isEmpty() || !(eroded.area() > 0)) {
+              // 垂直プリズム＋凸足跡では3D侵食も空になるため、3Dを走らせず失敗扱いにする。
+              if (diagnostics) diagnostics.erosionEmpty++
+              return { status: 'boolean-failed', path: '2d' }
+            }
+            const solid = eroded.extrude(erodedHeight)
+            try {
+              const rotatedBack = solid.rotate([-90, 0, 0])
+              try {
+                const cutter = rotatedBack.translate([0, yBottom + t, 0])
+                if (diagnostics) diagnostics.applied++
+                return { status: 'hollowed', cutter, path: '2d' }
+              } finally {
+                rotatedBack.delete()
+              }
+            } finally {
+              solid.delete()
+            }
+          } finally {
+            eroded.delete()
+          }
+        } finally {
+          cornerPN.delete()
+        }
+      } finally {
+        cornerPP.delete()
+      }
+    } finally {
+      shiftPP.delete()
+      shiftPN.delete()
+      shiftNP.delete()
+      shiftNN.delete()
+    }
+  } finally {
+    for (const sample of samples) sample.delete()
+    reference?.delete()
+    rotated.delete()
+  }
+}
+
+/** 既存の3D経路（立方体(2t)の minkowskiDifference）。 */
+export async function buildBuildingCutter3D(
   building: Manifold,
   minY: number,
   maxY: number,
@@ -69,11 +394,11 @@ async function buildBuildingCutter(
 ): Promise<CutterResult> {
   const t = shellThickness
   const height = maxY - minY
-  if (!(height > 2 * t)) return { status: 'small' }
+  if (!(height > 2 * t)) return { status: 'small', path: '3d' }
 
   const bbox = building.boundingBox()
   if (!(Math.min(bbox.max[0] - bbox.min[0], bbox.max[2] - bbox.min[2]) > 2 * t)) {
-    return { status: 'small' }
+    return { status: 'small', path: '3d' }
   }
 
   // 底面直上でスライスして真の断面を得る。ε はこの空間の単位で、
@@ -81,10 +406,10 @@ async function buildBuildingCutter(
   const sliceOffset = Math.min(Math.max(1e-3, height * 0.02), height * 0.15)
   const yTop = minY + 2 * t
   const yBottom = Math.min(modelMinY, minY) - 2 * t
-  if (!(yTop > yBottom)) return { status: 'no-section' }
+  if (!(yTop > yBottom)) return { status: 'no-section', path: '3d' }
 
   const prism = await createSlicePrism(building, sliceOffset, yBottom, yTop)
-  if (!prism) return { status: 'no-section' }
+  if (!prism) return { status: 'no-section', path: '3d' }
   try {
     const fused = await unionManifolds([building, prism])
     try {
@@ -93,9 +418,9 @@ async function buildBuildingCutter(
         const eroded = fused.minkowskiDifference(cube)
         if (eroded.status() !== 'NoError' || !(eroded.volume() > 0)) {
           eroded.delete()
-          return { status: 'boolean-failed' }
+          return { status: 'boolean-failed', path: '3d' }
         }
-        return { status: 'hollowed', cutter: eroded }
+        return { status: 'hollowed', cutter: eroded, path: '3d' }
       } finally {
         cube.delete()
       }
@@ -105,6 +430,30 @@ async function buildBuildingCutter(
   } finally {
     prism.delete()
   }
+}
+
+/**
+ * 建物のカッターを生成する。垂直プリズム＋凸足跡なら2D侵食の高速経路、
+ * それ以外は既存の3D侵食へフォールバックする（形状は同一）。
+ */
+export async function buildBuildingCutter(
+  building: Manifold,
+  minY: number,
+  maxY: number,
+  shellThickness: number,
+  modelMinY: number,
+  diagnostics?: Cutter2DDiagnostics,
+): Promise<CutterResult> {
+  const fast = await buildBuildingCutter2D(
+    building,
+    minY,
+    maxY,
+    shellThickness,
+    modelMinY,
+    diagnostics,
+  )
+  if (fast) return fast
+  return buildBuildingCutter3D(building, minY, maxY, shellThickness, modelMinY)
 }
 
 /**
@@ -226,6 +575,16 @@ export interface PrintableGeometryResult {
   mesh: RawMesh
   warnings: string[]
   hollowing?: HollowingReport
+  /** 工程別の処理時間（ミリ秒・計測用。結果の形状には影響しない） */
+  timings?: Record<string, number>
+}
+
+/** シリアライズ前の内部結果。完成 Manifold の所有権は呼び出し側に移る。 */
+interface PrintableGeometryBuild {
+  manifold: Manifold
+  warnings: string[]
+  hollowing?: HollowingReport
+  timings: Record<string, number>
 }
 
 /**
@@ -240,6 +599,41 @@ export async function buildPrintableGeometryFromMeshes(
   bounds: Bounds,
   options: ExportOptions,
 ): Promise<PrintableGeometryResult> {
+  const totalStart = performance.now()
+  const build = await buildPrintableGeometry(buildingMeshes, terrainMesh, bounds, options)
+  try {
+    const getMeshStart = performance.now()
+    const rawMesh = build.manifold.getMesh()
+    const getMesh = performance.now() - getMeshStart
+    return {
+      mesh: {
+        positions: new Float32Array(rawMesh.vertProperties),
+        indices: new Uint32Array(rawMesh.triVerts),
+      },
+      warnings: build.warnings,
+      hollowing: build.hollowing,
+      timings: {
+        ...build.timings,
+        getMesh,
+        total: performance.now() - totalStart,
+      },
+    }
+  } finally {
+    // メッシュ化したら完成 Manifold は不要になる。
+    build.manifold.delete()
+  }
+}
+
+/**
+ * 完成形状の Manifold を生成する内部処理（プレビュー用メッシュ化はしない）。
+ * 戻り値の `manifold` は呼び出し側が delete する。
+ */
+async function buildPrintableGeometry(
+  buildingMeshes: RawMesh[],
+  terrainMesh: RawMesh | null,
+  bounds: Bounds,
+  options: ExportOptions,
+): Promise<PrintableGeometryBuild> {
   const scale = options.scale ?? 1
   const includeSpanning = options.includeSpanningBuildings ?? false
   const pickPoints = options.pickPoints ?? []
@@ -247,6 +641,8 @@ export async function buildPrintableGeometryFromMeshes(
   const hollowBuildings = options.hollowBuildings ?? true
   const shellThickness = options.shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
   const warnings: string[] = []
+  // 工程別タイミング（計測専用。形状には影響しない）。
+  const timings: Record<string, number> = {}
 
   // Open-bottom hollowing requires terrain: the terrain cavity provides the
   // open underside and the building cavities connect to it.
@@ -264,6 +660,7 @@ export async function buildPrintableGeometryFromMeshes(
 
   // Weld & split into connected components so each building is a separate
   // component for deduping and filtering.
+  const preprocessStart = performance.now()
   const components: RawMesh[] = []
   for (const mesh of buildingMeshes) {
     const welded = weldVertices(mesh)
@@ -271,6 +668,7 @@ export async function buildPrintableGeometryFromMeshes(
   }
   const uniqueComponents = dedupeComponents(components)
   alignFlatTerrainToBuildings(terrainMesh, uniqueComponents)
+  timings.preprocess = performance.now() - preprocessStart
 
   // Scale the terrain before hollowing so cavity and cutter dimensions match
   // the final model space.
@@ -290,6 +688,13 @@ export async function buildPrintableGeometryFromMeshes(
   const buildingManifolds: Manifold[] = []
   const buildingCutters: Manifold[] = []
   const hollowingRecords: HollowingRecord[] = []
+  // 建物ごとの Manifold 化とカッター生成（2D高速経路/3D経路別）を計測する。
+  let buildingManifoldMs = 0
+  let cutter2dMs = 0
+  let cutter3dMs = 0
+  let cutter2dCount = 0
+  let cutter3dCount = 0
+  const cutter2dDiagnostics = createCutter2DDiagnostics()
   for (let j = 0; j < uniqueComponents.length; j++) {
     const comp = uniqueComponents[j]
     if (pickPoints.length > 0) {
@@ -305,6 +710,7 @@ export async function buildPrintableGeometryFromMeshes(
     let manifold: Manifold | null = null
     let createError: string | null = null
     let exclusionStatus: 'cap-unsupported' | 'invalid-geometry' = 'invalid-geometry'
+    const manifoldStart = performance.now()
     try {
       manifold = await createManifoldFromMesh(scaled)
     } catch (error) {
@@ -323,6 +729,7 @@ export async function buildPrintableGeometryFromMeshes(
         exclusionStatus = 'cap-unsupported'
       }
     }
+    buildingManifoldMs += performance.now() - manifoldStart
     if (!manifold) {
       warnings.push(`Building ${j + 1} skipped (not printable): ${createError ?? 'unknown'}`)
       hollowingRecords.push({
@@ -338,8 +745,24 @@ export async function buildPrintableGeometryFromMeshes(
       const manifoldBounds = manifold.boundingBox()
       const minY = manifoldBounds.min[1]
       const maxY = manifoldBounds.max[1]
+      const cutterStart = performance.now()
       try {
-        const result = await buildBuildingCutter(manifold, minY, maxY, wallThickness, terrainMinY)
+        const result = await buildBuildingCutter(
+          manifold,
+          minY,
+          maxY,
+          wallThickness,
+          terrainMinY,
+          cutter2dDiagnostics,
+        )
+        // 2D高速経路と3D経路の適用数・時間を分けて記録する。
+        if (result.path === '2d') {
+          cutter2dMs += performance.now() - cutterStart
+          cutter2dCount++
+        } else {
+          cutter3dMs += performance.now() - cutterStart
+          cutter3dCount++
+        }
         if (result.status === 'hollowed') {
           buildingCutters.push(result.cutter)
           hollowingRecords.push({ index: j + 1, status: 'hollowed' })
@@ -347,12 +770,32 @@ export async function buildPrintableGeometryFromMeshes(
           hollowingRecords.push({ index: j + 1, status: result.status })
         }
       } catch (error) {
+        cutter3dMs += performance.now() - cutterStart
+        cutter3dCount++
         const message = error instanceof Error ? error.message : String(error)
         warnings.push(`Building ${j + 1} hollowing skipped: ${message}`)
         hollowingRecords.push({ index: j + 1, status: 'boolean-failed', reason: message })
       }
     }
   }
+  timings.buildingManifold = buildingManifoldMs
+  timings.cutter = cutter2dMs + cutter3dMs
+  timings.cutter2d = cutter2dMs
+  timings.cutter3d = cutter3dMs
+  timings.cutter2dCount = cutter2dCount
+  timings.cutter3dCount = cutter3dCount
+  // 2D高速経路の適用失敗理由（実データの内訳確認用）。
+  timings.cutter2dApplied = cutter2dDiagnostics.applied
+  timings.cutter2dFailPrecondition = cutter2dDiagnostics.precondition
+  timings.cutter2dFailEmptySection = cutter2dDiagnostics.emptySection
+  timings.cutter2dFailNotPrismArea = cutter2dDiagnostics.notPrismArea
+  timings.cutter2dFailNotPrismBounds = cutter2dDiagnostics.notPrismBounds
+  timings.cutter2dFailNotPrismShape = cutter2dDiagnostics.notPrismShape
+  timings.cutter2dFailNotConvexContours = cutter2dDiagnostics.notConvexContours
+  timings.cutter2dFailNotConvexArea = cutter2dDiagnostics.notConvexArea
+  timings.cutter2dFailErosionEmpty = cutter2dDiagnostics.erosionEmpty
+  timings.cutter2dAppliedFootprint = cutter2dDiagnostics.appliedFootprint
+  timings.cutter2dFailFootprintEmpty = cutter2dDiagnostics.footprintEmpty
 
   if (pickPoints.length > 0 && buildingManifolds.length === 0) {
     warnings.push('No buildings matched the pick points')
@@ -372,17 +815,29 @@ export async function buildPrintableGeometryFromMeshes(
   // Union terrain + buildings into a single manifold. When an open-bottom
   // shell was requested, subtract the cutters (terrain cavity + building
   // cavities) so the model has one connected interior and an open underside.
-  const meshes: RawMesh[] = []
-  if (terrainMesh) meshes.push(terrainMesh)
-  meshes.push(...buildingManifolds.map((m) => meshToRaw(m.getMesh())))
-
-  if (meshes.length === 0) {
+  // 建物は既に Manifold なので、メッシュへ戻して再インポートする往復をせず
+  // 直接 union する。地形だけは RawMesh から1回だけ Manifold 化する。
+  if (!terrainMesh && buildingManifolds.length === 0) {
     throw new Error('No printable meshes generated for the requested bounds')
   }
 
-  const union = await unionMeshes(meshes)
-  let final: Manifold = union
+  const unionStart = performance.now()
+  const terrainManifold = terrainMesh ? await createManifoldFromMesh(terrainMesh) : null
+  let union: Manifold
   try {
+    union = await unionManifolds(
+      terrainManifold ? [terrainManifold, ...buildingManifolds] : buildingManifolds,
+    )
+  } finally {
+    // union の入力は消費されないため、地形の一時 Manifold はここで破棄する。
+    terrainManifold?.delete()
+  }
+  timings.union = performance.now() - unionStart
+  let final: Manifold = union
+  // 完成 Manifold を呼び出し側へ返したか（true なら finally で破棄しない）。
+  let transferred = false
+  try {
+    const hollowStart = performance.now()
     if (hollowActive && terrainMesh) {
       const cavityMesh = buildTerrainCavityMesh(terrainMesh, wallThickness)
       if (!cavityMesh) {
@@ -400,15 +855,20 @@ export async function buildPrintableGeometryFromMeshes(
       }
       cavity.delete()
       try {
-        final = union.subtract(cutterUnion)
+        const subtracted = union.subtract(cutterUnion)
+        // 減算後は union が中間結果になるため破棄する。
+        union.delete()
+        final = subtracted
       } finally {
         cutterUnion.delete()
       }
     }
+    timings.hollowCavity = performance.now() - hollowStart
 
     // 完成モデルの密閉空洞を検出する（検証済み方式: 非制限ボイドの分解）。
     // 底面開通の一般到達性判定は未実施のため、レポートでは unverified とする。
     let hollowingReport: HollowingReport | undefined
+    const sealedStart = performance.now()
     if (hollowActive) {
       const sealed = await detectSealedCavities(final)
       if (sealed.count > 0) {
@@ -428,20 +888,19 @@ export async function buildPrintableGeometryFromMeshes(
         reachability: 'unverified',
       }
     }
+    timings.sealedCavityCheck = performance.now() - sealedStart
 
-    // 完成メッシュを返す（Manifold を破棄する前にコピーする）。
-    const rawMesh = final.getMesh()
+    // メッシュ化（getMesh）は呼び出し側が最後に1回だけ行う。
+    transferred = true
     return {
-      mesh: {
-        positions: new Float32Array(rawMesh.vertProperties),
-        indices: new Uint32Array(rawMesh.triVerts),
-      },
+      manifold: final,
       warnings,
       hollowing: hollowingReport,
+      timings,
     }
   } finally {
-    if (final !== union) final.delete()
-    union.delete()
+    // 失敗時は完成 Manifold も破棄する（成功時は所有権が呼び出し側へ移る）。
+    if (!transferred) final.delete()
     for (const manifold of buildingManifolds) manifold.delete()
     for (const cutter of buildingCutters) cutter.delete()
   }
@@ -465,27 +924,28 @@ export async function buildPrintableModelFromMeshes(
     )
   }
 
-  const { mesh, warnings, hollowing } = await buildPrintableGeometryFromMeshes(
-    buildingMeshes,
-    terrainMesh,
-    bounds,
-    options,
-  )
+  const build = await buildPrintableGeometry(buildingMeshes, terrainMesh, bounds, options)
+  const { warnings, hollowing } = build
   const upAxis = options.upAxis ?? 'z-up'
-
-  if (options.format === 'stl') {
-    return { buffer: exportMeshesToSTL([mesh], upAxis), warnings, hollowing }
-  }
-
-  // 完成メッシュはもともと Manifold 由来なので、再インポートして 3MF 化する。
-  const manifold = await createManifoldFromMesh(mesh)
   try {
+    if (options.format === 'stl') {
+      // STL はメッシュが必要なので、ここで1回だけ getMesh する。
+      const rawMesh = build.manifold.getMesh()
+      const mesh: RawMesh = {
+        positions: new Float32Array(rawMesh.vertProperties),
+        indices: new Uint32Array(rawMesh.triVerts),
+      }
+      return { buffer: exportMeshesToSTL([mesh], upAxis), warnings, hollowing }
+    }
+
+    // 完成 Manifold をそのまま 3MF 化する（メッシュ経由の再インポートを避ける）。
     const modelColor = terrainMesh
       ? (options.terrainColor ?? '#ffffff')
       : (options.buildingColor ?? '#ffffff')
-    return { buffer: await exportTo3MF(manifold, modelColor, upAxis), warnings, hollowing }
+    return { buffer: await exportTo3MF(build.manifold, modelColor, upAxis), warnings, hollowing }
   } finally {
-    manifold.delete()
+    // 完成 Manifold はここで所有権を終える。
+    build.manifold.delete()
   }
 }
 

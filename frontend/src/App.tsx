@@ -12,6 +12,7 @@ import { exportModel } from './lib/apiClient'
 import { runWorkerExport, runWorkerSerialize, triggerDownload } from './lib/workerExport'
 import { finalShapeGeometryKey } from './lib/finalShapeKey'
 import { loadFinalShapeCache } from './lib/finalShapeCache'
+import { loadBuildingMeshes, loadTerrainMesh } from './lib/meshDataCache'
 import { useMapLibreRectangleSelection } from './hooks/useMapLibreRectangleSelection'
 import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
@@ -140,6 +141,8 @@ function coverageApiBase(): string {
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>(loadStoredTab)
   const [isExporting, setIsExporting] = useState(false)
+  // Preview3D の重い処理（最終形状・断面・中空シェル）が進行中か。
+  const [previewBusy, setPreviewBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [coverageVisible, setCoverageVisible] = useState(true)
   const [coverageLoading, setCoverageLoading] = useState(false)
@@ -497,12 +500,19 @@ function App() {
           message: '建物データ取得中...',
           error: null,
         })
-        const { buildBuildingMeshes, buildTerrainMesh } = await import('@machimoki/core')
-        const buildingMeshes = await buildBuildingMeshes(
-          selectionBounds,
-          exportOptions.lod,
-          exportOptions.excludedGmlIds,
-        )
+        // 建物/地形はプレビューと共有するインメモリキャッシュから取得する
+        // （同じ条件ならプレビュー側の取得結果を再利用し、二重取得しない）。
+        const meshParams = {
+          bounds: selectionBounds,
+          lod: exportOptions.lod,
+          excludedGmlIds: exportOptions.excludedGmlIds,
+          includeTerrain: exportOptions.includeTerrain,
+          terrainThicknessMeters: parameters.terrainThickness / (scale * 1000),
+          flattenBottom: exportOptions.flattenBottom,
+          terrainGridSize: exportOptions.terrainGridSize,
+          reflectActualElevation: exportOptions.reflectActualElevation,
+        }
+        const buildingMeshes = await loadBuildingMeshes(meshParams)
         let terrainMesh: import('@machimoki/core').RawMesh | null = null
         if (exportOptions.includeTerrain) {
           setPipelineState({
@@ -511,15 +521,7 @@ function App() {
             message: '地形データ取得中...',
             error: null,
           })
-          // terrainThickness is user-facing printed mm; convert to model-space meters (same formula as core).
-          const terrainThicknessMeters = parameters.terrainThickness / (scale * 1000)
-          terrainMesh = await buildTerrainMesh(
-            selectionBounds,
-            terrainThicknessMeters,
-            exportOptions.flattenBottom,
-            exportOptions.terrainGridSize,
-            exportOptions.reflectActualElevation,
-          )
+          terrainMesh = await loadTerrainMesh(meshParams)
         }
         setPipelineState({
           phase: 'composing',
@@ -600,6 +602,11 @@ function App() {
   }, [parameters, selectionBounds, scale, pickPoints, excludedBuildingIds, resolvedTerrainGridSize])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
+  // 重い処理が進行中なら、他のタスクの complete/background に上書きされても
+  // オーバーレイを維持する。pipelineState が完了済みの間は汎用メッセージを出す。
+  const previewBusyOverlay = previewBusy && pipelineState.phase !== 'error'
+  const previewBusyFallback =
+    previewBusyOverlay && (pipelineState.phase === 'idle' || pipelineState.phase === 'complete')
   const handleDismissError = () => {
     setErrorMessage(null)
     clearSelectionError()
@@ -1220,12 +1227,62 @@ function App() {
               onTerrainResolutionBoostChange={setTerrainResolutionBoost}
               buildingsVisible={buildingsVisible}
               onBuildingsVisibleChange={setBuildingsVisible}
+              onBusyChange={setPreviewBusy}
             />
             <LoadingOverlay
-              message={pipelineState.message}
-              visible={pipelineState.phase !== 'idle' && pipelineState.phase !== 'complete'}
-              progress={pipelineState.progress}
+              message={previewBusyFallback ? '処理中...' : pipelineState.message}
+              visible={
+                previewBusyOverlay ||
+                (!pipelineState.background &&
+                  pipelineState.phase !== 'idle' &&
+                  pipelineState.phase !== 'complete')
+              }
+              progress={previewBusyFallback ? undefined : pipelineState.progress}
             />
+            {pipelineState.background &&
+              !previewBusy &&
+              pipelineState.phase !== 'idle' &&
+              pipelineState.phase !== 'complete' &&
+              pipelineState.phase !== 'error' && (
+                // パラメータ変更による再生成中は、画面を覆わず隅に小さく表示する。
+                <div
+                  data-testid="background-update-indicator"
+                  style={{
+                    position: 'absolute',
+                    left: '16px',
+                    bottom: '16px',
+                    zIndex: 30,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 12px',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: '999px',
+                    color: 'var(--text-dim)',
+                    fontSize: '12px',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <style>{`
+                    .machimoki-update-dot {
+                      width: 8px;
+                      height: 8px;
+                      border-radius: 50%;
+                      background: var(--accent);
+                      animation: machimoki-update-pulse 1s ease-in-out infinite;
+                    }
+                    @keyframes machimoki-update-pulse {
+                      0%, 100% { opacity: 0.35; }
+                      50% { opacity: 1; }
+                    }
+                  `}</style>
+                  <span className="machimoki-update-dot" />
+                  <span>
+                    更新中… {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
+                  </span>
+                </div>
+              )}
             <LoadingOverlay
               message="エクスポート中..."
               visible={isExporting && pipelineState.phase === 'idle'}
