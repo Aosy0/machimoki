@@ -21,6 +21,12 @@ import { pickSectionColor } from './sectionColor'
 const HATCH_BASE_SHADE = 0.92
 /** ハッチ間隔（表示メートル）。 */
 const HATCH_SPACING_METERS = 30.2
+/**
+ * ハッチ線の半幅（セル間隔に対する割合）。
+ * 画面一定幅にすると拡大時に間隔だけ広がって線が相対的に細く見えるため、
+ * 間隔に対する一定割合にして距離によらず相対的な太さを保つ。
+ */
+const HATCH_HALF_WIDTH_CELLS = 0.05
 /** ハッチ線色の明度係数（ベース色を暗くして線にする）。 */
 const HATCH_LINE_FACTOR = 0.4
 /** この明度（sRGB輝度）未満のベース色には明るい線を使う（自動反転）。 */
@@ -81,11 +87,12 @@ void main()
     // 45°の斜線ハッチ。間隔は表示メートル単位（モデルに張り付き、拡大で間隔も拡大）。
     float c = (v_hatch.x + v_hatch.y) / ${HATCH_SPACING_METERS};
     float fw = fwidth(c);
-    // ライン中心からの距離をピクセル単位で求め、画面一定幅（約1px）の線にする。
-    float distPx = abs(fract(c + 0.5) - 0.5) / max(fw, 1e-4);
-    float line = 1.0 - smoothstep(0.5, 1.2, distPx);
-    // 非常に遠くでセルがサブピクセルになった場合のみフェードし、通常距離では変化させない。
-    line *= 1.0 - smoothstep(0.6, 1.0, fw);
+    // 線幅はセル間隔に対する一定割合にする（距離が変わっても相対的な太さが変わらない）。
+    // 画面一定幅にすると、拡大で間隔が広がるぶん線が相対的に細く見えてしまう。
+    float dCell = abs(fract(c + 0.5) - 0.5);
+    float halfW = ${HATCH_HALF_WIDTH_CELLS};
+    float aa = min(max(fw * 0.7, 1e-5), halfW * 0.6);
+    float line = 1.0 - smoothstep(halfW - aa, halfW + aa, dCell);
 
     vec3 col = mix(baseColor, lineColor, line);
     out_FragColor = czm_gammaCorrect(vec4(col, v_color.a));
