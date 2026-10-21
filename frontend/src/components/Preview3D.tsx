@@ -97,10 +97,6 @@ import {
   loadTerrainSample,
   terrainSampleKey,
 } from '../lib/meshDataCache'
-import {
-  buildHollowBuildingPrimitive,
-  terminateHollowBuildingsWorker,
-} from '../lib/hollowBuildings'
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 
@@ -748,10 +744,6 @@ export default function Preview3D({
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetsRef = useRef<Cesium3DTileset[]>([])
   const solidTerrainPrimitiveRef = useRef<Primitive[] | null>(null)
-  // 底面開口＋建物中空化ONの中空シェルプレビュー（タイルセットの代わりに表示）。
-  const hollowBuildingPrimitiveRef = useRef<Primitive | null>(null)
-  const hollowBuildingsActiveRef = useRef(false)
-  const hollowBuildingRequestIdRef = useRef(0)
   // 最終形状プレビュー（エクスポートと同一の完成メッシュ）の表示状態。
   const finalShapePrimitiveRef = useRef<Primitive | null>(null)
   const finalShapeActiveRef = useRef(false)
@@ -939,14 +931,10 @@ export default function Preview3D({
   }, [terrainOnlyBySize, onTerrainResolutionBoostChange])
 
   // 建物表示トグル: 表示/非表示をタイルセットへ適用し、非表示→表示に戻したとき未読み込みなら読み込む
-  // 中空プレビュー・最終形状プレビュー中はタイルセットを非表示のまま維持する。
+  // 最終形状プレビュー中はタイルセットを非表示のまま維持する。
   useEffect(() => {
     for (const ts of tilesetsRef.current) {
-      ts.show =
-        buildingsVisible && !hollowBuildingsActiveRef.current && !finalShapeActiveRef.current
-    }
-    if (hollowBuildingPrimitiveRef.current) {
-      hollowBuildingPrimitiveRef.current.show = buildingsVisible && !finalShapeActiveRef.current
+      ts.show = buildingsVisible && !finalShapeActiveRef.current
     }
     viewerRef.current?.scene.requestRender()
     const wasVisible = prevBuildingsVisibleRef.current
@@ -2081,11 +2069,8 @@ export default function Preview3D({
               viewer!.scene.primitives.add(tileset)
               loadedTilesets.push(tileset)
               // 非表示トグル中でも読み込みは継続し、到着分は非表示のまま保持する
-              // 中空プレビュー・最終形状プレビュー中はタイルセットを非表示のまま維持する。
-              tileset.show =
-                buildingsVisibleRef.current &&
-                !hollowBuildingsActiveRef.current &&
-                !finalShapeActiveRef.current
+              // 最終形状プレビュー中はタイルセットを非表示のまま維持する。
+              tileset.show = buildingsVisibleRef.current && !finalShapeActiveRef.current
               // 白模型ON時はPLATEAU Viewと同様に拡散色を純白へ置換する
               tileset.customShader = createBuildingCustomShader(
                 whiteModelRef.current ? Color.WHITE : baseBuildingColor(),
@@ -2544,8 +2529,7 @@ export default function Preview3D({
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
           // 最終形状プレビュー中はグローブを出さない（建物の下面を確認できるようにする）。
-          viewer!.scene.globe.show =
-            !finalShapeActiveRef.current && !hollowBuildingsActiveRef.current
+          viewer!.scene.globe.show = !finalShapeActiveRef.current
           viewer!.scene.requestRender()
           console.log('[Preview3D] Globe clipping planes applied')
           setDebugInfo(null)
@@ -2610,8 +2594,7 @@ export default function Preview3D({
           const globePlanes = createGlobeClippingPlanes(bounds)
           viewer!.scene.globe.clippingPlanes = globePlanes
           // 最終形状プレビュー中はグローブを出さない（建物の下面を確認できるようにする）。
-          viewer!.scene.globe.show =
-            !finalShapeActiveRef.current && !hollowBuildingsActiveRef.current
+          viewer!.scene.globe.show = !finalShapeActiveRef.current
           setCoverageWarning('地形データの一部を取得できませんでした。地球儀表示に切り替えています')
           onPipelineStateChange?.({
             phase: 'complete',
@@ -2747,7 +2730,7 @@ export default function Preview3D({
   const finalShapeColor = (): string =>
     whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor
 
-  // 最終形状表示中のシーン切替（タイルセット・地形プリミティブ・中空シェル・グローブを隠す）。
+  // 最終形状表示中のシーン切替（タイルセット・地形プリミティブ・グローブを隠す）。
   const applyFinalShapeView = (viewer: Viewer): void => {
     for (const ts of tilesetsRef.current) {
       ts.show = false
@@ -2757,10 +2740,6 @@ export default function Preview3D({
         p.show = false
       }
     }
-    // 中空シェルがあれば隠す（完成メッシュと重なるため）。
-    if (hollowBuildingPrimitiveRef.current) {
-      hollowBuildingPrimitiveRef.current.show = false
-    }
     viewer.scene.globe.show = false
     // 下から見られるよう衝突判定を外す（地形なしのグローブ状態と同じ扱い）。
     viewer.scene.screenSpaceCameraController.enableCollisionDetection = false
@@ -2768,27 +2747,17 @@ export default function Preview3D({
   }
 
   // 最終形状解除時の復帰（ベースプレビューの表示に戻す）。
-  // 中空建物プレビューが有効な場合はそちらを維持する。
   const restoreFinalShapeView = (viewer: Viewer): void => {
     for (const ts of tilesetsRef.current) {
-      ts.show = buildingsVisibleRef.current && !hollowBuildingsActiveRef.current
+      ts.show = buildingsVisibleRef.current
     }
     if (solidTerrainPrimitiveRef.current) {
       for (const p of solidTerrainPrimitiveRef.current) {
         p.show = true
       }
     }
-    if (hollowBuildingPrimitiveRef.current) {
-      hollowBuildingPrimitiveRef.current.show = buildingsVisibleRef.current
-    }
-    if (!includeTerrain && hollowBuildingsActiveRef.current) {
-      // 地形OFFでも建物の下側へ回り込めるようにする。
-      viewer.scene.globe.show = false
-      viewer.scene.screenSpaceCameraController.enableCollisionDetection = false
-    } else {
-      viewer.scene.globe.show = !includeTerrain
-      viewer.scene.screenSpaceCameraController.enableCollisionDetection = true
-    }
+    viewer.scene.globe.show = !includeTerrain
+    viewer.scene.screenSpaceCameraController.enableCollisionDetection = true
     viewer.scene.requestRender()
   }
 
@@ -2985,7 +2954,15 @@ export default function Preview3D({
     const viewer = viewerRef.current
     if (!viewer) return
     if (sectionOn) {
-      // 進行中の生成結果を破棄し、ベースプレビューへ戻す。
+      // 断面だけを解除する（現在位置・側は既定に戻す）。
+      resetFinalShapeSection()
+      if (openBottom && finalShapeActiveRef.current) {
+        // 底面開口ONなら完成メッシュ（全形・中空）を表示したまま維持する。
+        if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
+        viewer.scene.requestRender()
+        return
+      }
+      // どちらもOFFになるため、進行中の生成を破棄してベースプレビューへ戻す。
       finalShapeRequestIdRef.current += 1
       finalShapeInFlightKeyRef.current = null
       finalShapeGeneratingRef.current = false
@@ -2993,7 +2970,6 @@ export default function Preview3D({
         clearTimeout(finalShapeAutoTimerRef.current)
         finalShapeAutoTimerRef.current = null
       }
-      setSectionOn(false)
       finalShapeRequestedKeyRef.current = null
       deactivateFinalShape()
       return
@@ -3252,7 +3228,7 @@ export default function Preview3D({
         message: '最終形状: 建物データ取得中...',
         error: null,
         // 断面ON中の再生成はフォアグラウンド（ローディング表示）にする。
-        background: !sectionOnRef.current,
+        background: false,
       })
       // 建物/地形は共有キャッシュから取得する（エクスポート経路と二重取得しない）。
       const meshParams = finalShapeMeshParams(bounds)
@@ -3265,7 +3241,7 @@ export default function Preview3D({
           progress: 30,
           message: '最終形状: 地形データ取得中...',
           error: null,
-          background: !sectionOnRef.current,
+          background: false,
         })
         terrainSample = await loadTerrainSample(meshParams)
         if (requestId !== finalShapeRequestIdRef.current) return
@@ -3275,7 +3251,7 @@ export default function Preview3D({
         progress: 55,
         message: '最終形状: 完成メッシュを生成中...',
         error: null,
-        background: !sectionOnRef.current,
+        background: false,
       })
       const options = finalShapeExportOptions()
       const { mesh, warnings } = await buildFinalShapeInWorker(
@@ -3296,7 +3272,8 @@ export default function Preview3D({
             progress: 55,
             message,
             error: null,
-            background: !sectionOnRef.current,
+            // 底面開口ON/断面ONの生成はユーザーに見える形（オーバーレイ）で行う。
+            background: false,
           })
         },
       )
@@ -3441,8 +3418,9 @@ export default function Preview3D({
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer || !selectionBounds) return
-    // 断面OFFでは最終形状を生成しない（ベースプレビューを即時表示）。
-    if (!sectionOn) return
+    // 底面開口ONまたは断面ONのときだけ最終形状を生成・表示する
+    // （どちらもOFFなら高速なベースプレビュー）。
+    if (!sectionOn && !openBottom) return
     // ベースプレビューの準備完了（地形ブーストの確定を含む）後に生成する。
     // 先に生成すると gridSize が後から変わり、地形メッシュを取り直す原因になる。
     if (!baseReadyRef.current) return
@@ -3488,206 +3466,23 @@ export default function Preview3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionOn])
 
-  // 底面開口＋建物中空化ONの中空シェルプレビュー。
-  // 建物は共有キャッシュから取得し、エクスポートと同じ侵食処理で中空化して
-  // タイルセットの代わりに表示する（地形キャビティは既存のまま）。
+  // 底面開口OFFかつ断面OFFに戻ったら、完成メッシュを破棄して
+  // 高速なベースプレビュー（タイル＋ソリッド地形）へ復帰する。
   useEffect(() => {
-    const viewer = viewerRef.current
-    if (!viewer || !selectionBounds) return
-    const requestId = hollowBuildingRequestIdRef.current + 1
-    hollowBuildingRequestIdRef.current = requestId
-
-    const disposeHollow = (): void => {
-      const p = hollowBuildingPrimitiveRef.current
-      hollowBuildingPrimitiveRef.current = null
-      if (!p) return
-      try {
-        viewer.scene.primitives.remove(p)
-      } catch {
-        void 0
-      }
-      try {
-        p.destroy()
-      } catch {
-        void 0
-      }
+    if (openBottom || sectionOn) return
+    if (!finalShapeActiveRef.current && !finalShapeGeneratingRef.current) return
+    // 進行中の生成結果を破棄する。
+    finalShapeRequestIdRef.current += 1
+    finalShapeInFlightKeyRef.current = null
+    finalShapeGeneratingRef.current = false
+    if (finalShapeAutoTimerRef.current !== null) {
+      clearTimeout(finalShapeAutoTimerRef.current)
+      finalShapeAutoTimerRef.current = null
     }
-    const applyHollowView = (): void => {
-      for (const ts of tilesetsRef.current) {
-        ts.show = false
-      }
-      if (hollowBuildingPrimitiveRef.current) {
-        hollowBuildingPrimitiveRef.current.show =
-          buildingsVisibleRef.current && !finalShapeActiveRef.current
-      }
-      if (!includeTerrain) {
-        // 地形OFF（グローブ表示）でも建物の下側へ回り込めるようにする。
-        viewer.scene.globe.show = false
-        viewer.scene.screenSpaceCameraController.enableCollisionDetection = false
-      }
-      viewer.scene.requestRender()
-    }
-    const restoreHollowView = (): void => {
-      for (const ts of tilesetsRef.current) {
-        ts.show = buildingsVisibleRef.current && !finalShapeActiveRef.current
-      }
-      if (!includeTerrain && !finalShapeActiveRef.current) {
-        viewer.scene.globe.show = true
-        viewer.scene.screenSpaceCameraController.enableCollisionDetection = true
-      }
-      viewer.scene.requestRender()
-    }
-
-    // 断面ON中（最終形状/断面が見えている間）は中空シェルが見えないため生成しない。
-    // 断面OFFに戻ったときに再生成する（見えない処理で進捗を奪い合わない）。
-    if (sectionOn || finalShapeActiveRef.current || finalShapeGeneratingRef.current) {
-      const wasActive = hollowBuildingsActiveRef.current
-      disposeHollow()
-      hollowBuildingsActiveRef.current = false
-      if (wasActive) restoreHollowView()
-      return
-    }
-
-    if (!openBottom || !hollowBuildings) {
-      disposeHollow()
-      if (hollowBuildingsActiveRef.current) {
-        hollowBuildingsActiveRef.current = false
-        restoreHollowView()
-      }
-      return
-    }
-
-    let cancelled = false
-    hollowBuildingsActiveRef.current = true
-    // 生成中はタイルセットの外殻を隠す（重なると中空形状が見えない）。
-    applyHollowView()
-    // シェル生成中は App のローディングを維持する（完了/キャンセルで解除）。
-    let busyReleased = false
-    const releaseBusy = (): void => {
-      if (busyReleased) return
-      busyReleased = true
-      endBusy()
-    }
-    beginBusy()
-    // 他の生成（最終形状など）の完了通知で上書きされても、処理中は必ず
-    // 進捗が見えるよう1秒ごとに状態を再送する。
-    const startedAt = Date.now()
-    const heartbeat = setInterval(() => {
-      if (cancelled || requestId !== hollowBuildingRequestIdRef.current) return
-      onPipelineStateChange?.({
-        phase: 'acquiring',
-        progress: 55,
-        message: `建物の中空化中... (${Math.round((Date.now() - startedAt) / 1000)}秒)`,
-        error: null,
-      })
-    }, 1000)
-    void (async () => {
-      try {
-        onPipelineStateChange?.({
-          phase: 'acquiring',
-          progress: 55,
-          message: '建物の中空プレビューを生成中...',
-          error: null,
-        })
-        const meshParams = finalShapeMeshParams(selectionBounds)
-        const buildingMeshes = await loadBuildingMeshes(meshParams)
-        if (cancelled || requestId !== hollowBuildingRequestIdRef.current) return
-        const wallThickness = shellThickness / (scale * 1000)
-        const primitive = await buildHollowBuildingPrimitive({
-          bounds: selectionBounds,
-          // 建物取得条件＋壁厚＋包含設定でキャッシュ（再切替時に再生成しない）。
-          cacheKey: JSON.stringify({
-            building: buildingMeshesKey(meshParams),
-            wall: wallThickness,
-            spanning: includeSpanningBuildings,
-          }),
-          buildingMeshes,
-          includeSpanningBuildings,
-          // 実スケールのプレビュー空間での壁厚（エクスポートの見た目と合わせる）。
-          wallThickness,
-          buildingColor: whiteModel ? '#ffffff' : buildingColor,
-          onProgress: (message) => {
-            if (cancelled || requestId !== hollowBuildingRequestIdRef.current) return
-            onPipelineStateChange?.({
-              phase: 'acquiring',
-              progress: 55,
-              message,
-              error: null,
-            })
-          },
-        })
-        if (cancelled || requestId !== hollowBuildingRequestIdRef.current) {
-          try {
-            primitive?.destroy()
-          } catch {
-            void 0
-          }
-          return
-        }
-        disposeHollow()
-        if (primitive) {
-          // 最終形状プレビュー中は完成メッシュと重なるため隠したまま保持する。
-          primitive.show = buildingsVisibleRef.current && !finalShapeActiveRef.current
-          viewer.scene.primitives.add(primitive)
-          hollowBuildingPrimitiveRef.current = primitive
-          hollowBuildingsActiveRef.current = true
-          applyHollowView()
-        } else {
-          // 空メッシュ時はタイルセット表示に戻す（フォールバック）。
-          hollowBuildingsActiveRef.current = false
-          restoreHollowView()
-        }
-        viewer.scene.requestRender()
-        // 最終形状の生成中なら、その完了時にまとめて complete にする。
-        if (!finalShapeGeneratingRef.current && finalShapeAutoTimerRef.current === null) {
-          onPipelineStateChange?.({
-            phase: 'complete',
-            progress: 100,
-            message: '完了',
-            error: null,
-          })
-        }
-      } catch (err) {
-        if (cancelled || requestId !== hollowBuildingRequestIdRef.current) return
-        const message = err instanceof Error ? err.message : String(err)
-        console.warn('[Preview3D] 建物中空プレビュー生成に失敗:', err)
-        setCoverageWarning(`建物の中空化に失敗したため、タイル表示に戻しました: ${message}`)
-        hollowBuildingsActiveRef.current = false
-        restoreHollowView()
-        if (!finalShapeGeneratingRef.current && finalShapeAutoTimerRef.current === null) {
-          onPipelineStateChange?.({
-            phase: 'complete',
-            progress: 100,
-            message: '完了',
-            error: null,
-          })
-        }
-      } finally {
-        clearInterval(heartbeat)
-        releaseBusy()
-      }
-    })()
-    return () => {
-      cancelled = true
-      clearInterval(heartbeat)
-      disposeHollow()
-      releaseBusy()
-    }
+    finalShapeRequestedKeyRef.current = null
+    deactivateFinalShape()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    selectionBounds,
-    lod,
-    excludedBuildingIds,
-    includeSpanningBuildings,
-    openBottom,
-    hollowBuildings,
-    shellThickness,
-    scale,
-    buildingColor,
-    whiteModel,
-    includeTerrain,
-    sectionOn,
-  ])
+  }, [openBottom, sectionOn])
 
   // 初回のサイレント先読み。ベースプレビュー準備完了後に一度だけ実行し、
   // 永続キャッシュ・常駐Workerの入力データを温める（表示は変えない）。
@@ -3700,7 +3495,7 @@ export default function Preview3D({
     if (prefetchedFinalShapeRef.current && prefetchedFinalShapeRef.current.key !== geometryKey) {
       prefetchedFinalShapeRef.current = null
     }
-    if (sectionOn || !baseReadyRef.current || finalShapeActiveRef.current) return
+    if (sectionOn || openBottom || !baseReadyRef.current || finalShapeActiveRef.current) return
     const boundsKey = JSON.stringify(selectionBounds)
     if (prefetchBoundsRef.current === boundsKey) return
     if (finalShapeBuiltGeometryKeyRef.current === geometryKey) return
@@ -3727,7 +3522,6 @@ export default function Preview3D({
       // （アンマウント後に catch 側の state 更新が走らないようにする）。
       finalShapeRequestIdRef.current += 1
       terminateFinalShapeWorker()
-      terminateHollowBuildingsWorker()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
