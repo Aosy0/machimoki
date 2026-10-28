@@ -32,6 +32,37 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* ノッチ付き端末でもヘッダーが隠れないようにする。 */
+.app-header {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* iOS Safari は16px未満の入力でフォーカス時に自動ズームする。 */
+@media (pointer: coarse) {
+  input:not([type='range']):not([type='checkbox']):not([type='color']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* スマホのモードバーとMapLibre帰属表示が重ならないようにする。 */
+@media (max-width: 1023px) {
+  .maplibregl-ctrl-bottom-right {
+    bottom: 96px;
+  }
 }
 
 /* Color input: swatch-style for dark theme */

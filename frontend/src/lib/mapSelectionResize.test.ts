@@ -15,6 +15,7 @@ import {
   movedBeyondTolerance,
   resizeCursor,
   selectionHandleScreenPoints,
+  COARSE_HANDLE_METRICS,
   HANDLE_CORNER_MIN_DIMENSION_PX,
   HANDLE_EDGE_MIN_LENGTH_PX,
   HANDLE_EDGE_MIN_THICKNESS_PX,
@@ -433,5 +434,28 @@ describe('movedBeyondTolerance', () => {
       movedBeyondTolerance({ x: 0, y: 0 }, { x: 0, y: RESIZE_MOVE_TOLERANCE_PX + 0.1 }),
       true,
     )
+  })
+})
+
+describe('coarseハンドルmetrics', () => {
+  it('タッチでは角の当たり判定が広がる', () => {
+    const point = { x: 20, y: 10 }
+    assert.equal(hitTestSelectionHandle(point, square), null)
+    assert.equal(hitTestSelectionHandle(point, square, COARSE_HANDLE_METRICS), 'nw')
+  })
+
+  it('coarseでは小さな矩形のハンドルを間引く閾値も広がる', () => {
+    const small: SelectionHandlePoints = {
+      nw: { x: 0, y: 0 },
+      ne: { x: 30, y: 0 },
+      se: { x: 30, y: 30 },
+      sw: { x: 0, y: 30 },
+      north: { x: 15, y: 0 },
+      east: { x: 30, y: 15 },
+      south: { x: 15, y: 30 },
+      west: { x: 0, y: 15 },
+    }
+    assert.equal(handleVisibility(small).corners, true)
+    assert.equal(handleVisibility(small, COARSE_HANDLE_METRICS).corners, false)
   })
 })

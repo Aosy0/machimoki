@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { FixedSizeList, type ListChildComponentProps } from 'react-window'
+import { useIsCompactLayout } from '../hooks/useMediaQuery'
 
 export interface BuildingListItem {
   id: string
@@ -26,6 +27,7 @@ interface RowData {
   onExclude: (id: string) => void
   onRestore: (id: string) => void
   onHoverItem: (id: string | null) => void
+  compact: boolean
 }
 
 const ITEM_SIZE = 28
@@ -72,8 +74,8 @@ const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>
         onClick={() => (excluded ? data.onRestore(item.id) : data.onExclude(item.id))}
         style={{
           flexShrink: 0,
-          padding: '2px 8px',
-          fontSize: '10px',
+          padding: data.compact ? '6px 10px' : '2px 8px',
+          fontSize: data.compact ? '12px' : '10px',
           cursor: 'pointer',
           borderRadius: '3px',
           border: excluded ? '1px solid var(--accent)' : '1px solid #b3591f',
@@ -100,7 +102,9 @@ export default function BuildingListPanel({
   onHoverItem,
 }: BuildingListPanelProps) {
   const [filter, setFilter] = useState('')
-  const [open, setOpen] = useState(true)
+  const isCompact = useIsCompactLayout()
+  const [open, setOpen] = useState(!isCompact)
+  const itemSize = isCompact ? 36 : ITEM_SIZE
 
   const excludedSet = useMemo(() => new Set(excludedIds), [excludedIds])
   const filtered = useMemo(() => {
@@ -110,12 +114,12 @@ export default function BuildingListPanel({
   }, [items, filter])
 
   const itemData = useMemo<RowData>(
-    () => ({ items: filtered, excludedSet, onExclude, onRestore, onHoverItem }),
-    [filtered, excludedSet, onExclude, onRestore, onHoverItem],
+    () => ({ items: filtered, excludedSet, onExclude, onRestore, onHoverItem, compact: isCompact }),
+    [filtered, excludedSet, onExclude, onRestore, onHoverItem, isCompact],
   )
 
   const listHeight =
-    filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * ITEM_SIZE) : 0
+    filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * itemSize) : 0
 
   if (items.length === 0) return null
 
@@ -123,11 +127,15 @@ export default function BuildingListPanel({
     <div
       style={{
         position: 'absolute',
-        top: '52px',
+        top: isCompact ? '160px' : '52px',
         left: '16px',
         zIndex: 10,
-        width: '264px',
-        maxHeight: open ? 'calc(100% - 160px)' : 'auto',
+        width: 'min(264px, calc(100vw - 32px))',
+        maxHeight: open
+          ? isCompact
+            ? '38dvh'
+            : 'calc(100% - 160px)'
+          : 'auto',
         display: 'flex',
         flexDirection: 'column',
         background: 'var(--surface)',
@@ -184,7 +192,7 @@ export default function BuildingListPanel({
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
-            padding: '7px 10px',
+            padding: isCompact ? '10px' : '7px 10px',
             background: 'transparent',
             border: 'none',
             width: '100%',
@@ -230,7 +238,7 @@ export default function BuildingListPanel({
               height={listHeight}
               width="100%"
               itemCount={filtered.length}
-              itemSize={ITEM_SIZE}
+              itemSize={itemSize}
               itemData={itemData}
               itemKey={(index, data) => data.items[index].id}
             >

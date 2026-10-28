@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Map as MapLibreMap, setWorkerUrl } from 'maplibre-gl'
 import FacilitySearchBox from './FacilitySearchBox'
 import { isPoiFallbackEnabled } from '../lib/poiSearch'
+import { useIsCompactLayout } from '../hooks/useMediaQuery'
 import 'maplibre-gl/dist/maplibre-gl.css'
 // Vite用worker設定（削除するとworker 404で地図が白紙になるため必須）。
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
@@ -75,13 +76,6 @@ export interface Map2DProps {
   onMapReady?: (map: MapLibreMap) => void
   /** Map破棄時（アンマウント・タブ切替）に呼ばれる。親の参照外し用。 */
   onMapUnload?: () => void
-  /** 選択範囲を現在の表示範囲に設定するコールバック（モバイル代替） */
-  onSelectCurrentBounds?: (bounds: {
-    west: number
-    south: number
-    east: number
-    north: number
-  }) => void
 }
 
 export default function Map2D({
@@ -89,13 +83,13 @@ export default function Map2D({
   onWebGLFailure,
   onMapReady,
   onMapUnload,
-  onSelectCurrentBounds,
 }: Map2DProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const [activeMap, setActiveMap] = useState<MapLibreMap | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [errorState, setErrorState] = useState<MapErrorKind | null>(null)
+  const isCompact = useIsCompactLayout()
   // コールバックはref経由で参照し、地図インスタンスの再生成を抑止する
   const readyRef = useRef(onMapReady)
   const unloadRef = useRef(onMapUnload)
@@ -154,6 +148,9 @@ export default function Map2D({
           attributionControl: { compact: true },
           // 既定の boxZoom は Shift+ドラッグと競合するため抑止
           boxZoom: false,
+          // 2D地図では回転・ピッチ不要。右ドラッグをパン用に空ける。
+          dragRotate: false,
+          touchPitch: false,
         })
       } catch {
         map = new MapLibreMap({
@@ -165,6 +162,8 @@ export default function Map2D({
           maxZoom: MAP2D_MAX_ZOOM,
           attributionControl: { compact: true },
           boxZoom: false,
+          dragRotate: false,
+          touchPitch: false,
         })
         setNotice('組み込みの簡易スタイルで表示しています（道路・行政境界・水域のみ）')
       }
@@ -185,6 +184,12 @@ export default function Map2D({
     }
     const activeMap: MapLibreMap = createdMap
     mapRef.current = activeMap
+    // 2D地図では回転不要。ピンチズームと2本指パンは残す。
+    try {
+      activeMap.touchZoomRotate.disableRotation()
+    } catch {
+      /* 古いMapLibreでは無視 */
+    }
     readyRef.current?.(activeMap)
     setActiveMap(activeMap)
 
@@ -261,18 +266,6 @@ export default function Map2D({
     }
   }, [handleVisibilityChange, handleWindowResize, vendoredStyleValid])
 
-  // 現在の表示範囲を取得するハンドラ
-  const handleSelectCurrentBounds = useCallback(() => {
-    if (!mapRef.current || !onSelectCurrentBounds) return
-    const bounds = mapRef.current.getBounds()
-    onSelectCurrentBounds({
-      west: bounds.getWest(),
-      south: bounds.getSouth(),
-      east: bounds.getEast(),
-      north: bounds.getNorth(),
-    })
-  }, [onSelectCurrentBounds])
-
   // WebGL 失敗時は手入力・プリセット退避を促す
   if (errorState === 'webgl') {
     return (
@@ -309,23 +302,32 @@ export default function Map2D({
       <div
         ref={containerRef}
         data-testid="map2d-container"
-        style={{ position: 'absolute', inset: 0 }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          WebkitTouchCallout: 'none',
+          touchAction: 'none',
+        }}
       />
       {activeMap && <FacilitySearchBox map={activeMap} />}
       <div
         data-testid="map2d-attribution"
         style={{
           position: 'absolute',
-          bottom: '4px',
-          right: '4px',
-          fontSize: '12px',
+          bottom: isCompact ? '146px' : '4px',
+          left: isCompact ? '8px' : undefined,
+          right: isCompact ? 'auto' : '4px',
+          fontSize: isCompact ? 10 : 12,
           color: 'var(--text-dim, #666)',
           background: 'rgba(255, 255, 255, 0.7)',
-          padding: '3px 8px',
+          padding: isCompact ? '2px 6px' : '3px 8px',
           borderRadius: '3px',
           zIndex: 1,
           pointerEvents: 'auto',
-          whiteSpace: 'nowrap',
+          whiteSpace: isCompact ? 'normal' : 'nowrap',
+          maxWidth: isCompact ? 'calc(100% - 16px)' : undefined,
+          textAlign: isCompact ? 'left' : undefined,
+          lineHeight: isCompact ? 1.4 : undefined,
         }}
       >
         <a href={GSI_LICENSE_URL} target="_blank" rel="noreferrer">
@@ -344,27 +346,6 @@ export default function Map2D({
           </>
         )}
       </div>
-      {onSelectCurrentBounds && (
-        <button
-          type="button"
-          data-testid="map2d-select-current-bounds"
-          onClick={handleSelectCurrentBounds}
-          style={{
-            position: 'absolute',
-            top: '8px',
-            right: '8px',
-            fontSize: '14px',
-            background: 'rgba(255, 255, 255, 0.9)',
-            border: '1px solid #ccc',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            zIndex: 1,
-            cursor: 'pointer',
-          }}
-        >
-          現在の表示範囲を選択
-        </button>
-      )}
       {notice ? (
         <div
           data-testid="map2d-fallback-notice"

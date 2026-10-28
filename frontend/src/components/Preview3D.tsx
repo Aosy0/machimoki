@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useHasCoarsePointer, useIsCompactLayout } from '../hooks/useMediaQuery'
 import {
   Viewer,
   Cesium3DTileset,
@@ -117,6 +118,18 @@ function colorToLinearCartesian3(color: Color): Cartesian3 {
 export const DEFAULT_BUILDING_COLOR = '#f4f1ea'
 const WHITE_MODEL_AMBIENT_BOOST = 0.2
 
+/** 3Dビューのプリセット。heading/pitch(度) と真上表示フラグ。 */
+const VIEW_PRESETS = [
+  ['top', '真上', 0, -90, true],
+  ['iso', '斜め', 35, -45, false],
+  ['south', '南', 0, -45, false],
+  ['north', '北', 180, -45, false],
+  ['east', '東', 90, -45, false],
+  ['west', '西', 270, -45, false],
+  ['side', '真横', 0, 0, false],
+  ['bottom', '下から', 0, 90, false],
+] as const
+
 // 白模型の直射光スケール。1.0だと日向面が純白(255)に張り付いて屋上の階調が消えるため、
 // トーンマッピング後にクリップが残らない値まで落とす(実測: 飽和14.2%→0.04%、平均輝度ほぼ不変)。
 const WHITE_MODEL_LIGHT_COLOR = 0.7
@@ -196,6 +209,8 @@ function attachOrthographicZoom(viewer: Viewer): () => void {
   const controller = viewer.scene.screenSpaceCameraController
   controller.enableZoom = false
   const canvas = viewer.scene.canvas
+  const clampWidth = (width: number): number =>
+    Math.min(Math.max(width, ORTHO_ZOOM_MIN_WIDTH), ORTHO_ZOOM_MAX_WIDTH)
   const onWheel = (e: WheelEvent): void => {
     if (viewer.isDestroyed()) return
     const frustum = viewer.camera.frustum
@@ -206,12 +221,53 @@ function attachOrthographicZoom(viewer: Viewer): () => void {
     // Firefox等の line 単位ホイールをピクセル相当へ揃える
     const delta = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 40 : e.deltaY
     const factor = Math.exp(delta * ORTHO_ZOOM_PER_NOTCH)
-    frustum.width = Math.min(Math.max(width * factor, ORTHO_ZOOM_MIN_WIDTH), ORTHO_ZOOM_MAX_WIDTH)
+    frustum.width = clampWidth(width * factor)
     viewer.scene.requestRender()
   }
+
+  // 平行投影では Cesium 標準のピンチズームも無効になるため、2本指の距離で代替する。
+  let pinchStartDistance: number | null = null
+  let pinchStartWidth = 0
+  const touchDistance = (touches: TouchList): number =>
+    Math.hypot(
+      touches[0].clientX - touches[1].clientX,
+      touches[0].clientY - touches[1].clientY,
+    )
+  const onTouchStart = (e: TouchEvent): void => {
+    if (viewer.isDestroyed() || e.touches.length !== 2) return
+    const frustum = viewer.camera.frustum
+    if (!(frustum instanceof OrthographicFrustum)) return
+    const width = frustum.width
+    if (typeof width !== 'number' || !Number.isFinite(width)) return
+    pinchStartDistance = touchDistance(e.touches)
+    pinchStartWidth = width
+    e.preventDefault()
+  }
+  const onTouchMove = (e: TouchEvent): void => {
+    if (viewer.isDestroyed() || e.touches.length !== 2 || pinchStartDistance === null) return
+    const frustum = viewer.camera.frustum
+    if (!(frustum instanceof OrthographicFrustum)) return
+    const distance = touchDistance(e.touches)
+    if (distance <= 0 || pinchStartDistance <= 0) return
+    frustum.width = clampWidth(pinchStartWidth * (pinchStartDistance / distance))
+    e.preventDefault()
+    viewer.scene.requestRender()
+  }
+  const onTouchEnd = (e: TouchEvent): void => {
+    if (e.touches.length < 2) pinchStartDistance = null
+  }
+
   canvas.addEventListener('wheel', onWheel, { passive: false })
+  canvas.addEventListener('touchstart', onTouchStart, { passive: false })
+  canvas.addEventListener('touchmove', onTouchMove, { passive: false })
+  canvas.addEventListener('touchend', onTouchEnd)
+  canvas.addEventListener('touchcancel', onTouchEnd)
   return () => {
     canvas.removeEventListener('wheel', onWheel)
+    canvas.removeEventListener('touchstart', onTouchStart)
+    canvas.removeEventListener('touchmove', onTouchMove)
+    canvas.removeEventListener('touchend', onTouchEnd)
+    canvas.removeEventListener('touchcancel', onTouchEnd)
     if (!viewer.isDestroyed()) {
       controller.enableZoom = true
     }
@@ -743,6 +799,8 @@ export default function Preview3D({
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetsRef = useRef<Cesium3DTileset[]>([])
+  const hasCoarsePointer = useHasCoarsePointer()
+  const isCompact = useIsCompactLayout()
   const solidTerrainPrimitiveRef = useRef<Primitive[] | null>(null)
   // 最終形状プレビュー（エクスポートと同一の完成メッシュ）の表示状態。
   const finalShapePrimitiveRef = useRef<Primitive | null>(null)
@@ -3623,6 +3681,15 @@ export default function Preview3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionBounds])
 
+  // タッチ用の取り消し。キーボード（Ctrl+Z）と同じ処理を共有する。
+  const undoLastExclusion = (): void => {
+    const last = undoStackRef.current.pop()
+    if (!last) return
+    excludedIdsRef.current.delete(last)
+    restoreFiltersAndColors()
+    commitExclusions()
+  }
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return
@@ -3749,8 +3816,11 @@ export default function Preview3D({
           right: '16px',
           zIndex: 20,
           display: 'flex',
+          flexWrap: 'wrap',
+          justifyContent: 'flex-end',
           gap: '6px',
           alignItems: 'center',
+          maxWidth: 'calc(100% - 32px)',
         }}
       >
         <select
@@ -3807,36 +3877,54 @@ export default function Preview3D({
             backdropFilter: 'blur(4px)',
           }}
         >
-          {(
-            [
-              ['top', '真上', 0, -90, true],
-              ['iso', '斜め', 35, -45, false],
-              ['south', '南', 0, -45, false],
-              ['north', '北', 180, -45, false],
-              ['east', '東', 90, -45, false],
-              ['west', '西', 270, -45, false],
-              ['side', '真横', 0, 0, false],
-              ['bottom', '下から', 0, 90, false],
-            ] as const
-          ).map(([id, label, h, p, top]) => (
-            <button
-              key={id}
-              data-testid={`view-preset-${id}`}
-              onClick={() => applyPresetView(h, p, { useTop: !!top })}
+          {isCompact ? (
+            <select
+              data-testid="view-preset-select"
+              defaultValue="iso"
+              onChange={(e) => {
+                const preset = VIEW_PRESETS.find(([id]) => id === e.target.value)
+                if (!preset) return
+                const [, , h, p, top] = preset
+                applyPresetView(h, p, { useTop: !!top })
+              }}
               style={{
                 background: 'var(--surface)',
                 color: 'var(--text)',
                 border: '1px solid var(--border-strong)',
                 borderRadius: '4px',
-                padding: '4px 8px',
-                fontSize: '11px',
+                padding: '6px 8px',
+                fontSize: '12px',
                 cursor: 'pointer',
-                lineHeight: 1,
+                minHeight: 32,
               }}
             >
-              {label}
-            </button>
-          ))}
+              {VIEW_PRESETS.map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            VIEW_PRESETS.map(([id, label, h, p, top]) => (
+              <button
+                key={id}
+                data-testid={`view-preset-${id}`}
+                onClick={() => applyPresetView(h, p, { useTop: !!top })}
+                style={{
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  border: '1px solid var(--border-strong)',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  lineHeight: 1,
+                }}
+              >
+                {label}
+              </button>
+            ))
+          )}
           <button
             data-testid="reset-view"
             onClick={resetView}
@@ -3851,6 +3939,7 @@ export default function Preview3D({
               cursor: 'pointer',
               lineHeight: 1,
               whiteSpace: 'nowrap',
+              minHeight: 32,
             }}
           >
             表示リセット
@@ -3867,8 +3956,11 @@ export default function Preview3D({
             right: '16px',
             zIndex: 20,
             display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'flex-end',
             gap: '6px',
             alignItems: 'center',
+            maxWidth: 'calc(100% - 32px)',
             background: 'var(--surface)',
             border: '1px solid var(--border-strong)',
             borderRadius: '6px',
@@ -3940,7 +4032,7 @@ export default function Preview3D({
           </button>
         </div>
       )}
-      {isDevMode && debugInfo && (
+      {isDevMode && debugInfo && !isCompact && (
         <div
           data-testid="terrain-debug-info"
           style={{
@@ -3961,7 +4053,7 @@ export default function Preview3D({
           {`地形: ${debugInfo.isFallback ? 'フォールバック(平坦)' : '正常'} | minZ ${debugInfo.minTopHeight.toFixed(2)}m | ばらつき ${debugInfo.variance.toFixed(4)} | 建物最下 ${debugInfo.buildingMinY?.toFixed(2) ?? '--'}m | 補正 ${debugInfo.delta?.toFixed(2) ?? '0'}m | ${debugInfo.terrainPrimitive ? '表示中' : '非表示'}`}
         </div>
       )}
-      {isDevMode && (
+      {isDevMode && !isCompact && (
         <ContourDebugPanel
           info={contourDebug}
           collapsed={contourDebugCollapsed}
@@ -4069,20 +4161,52 @@ export default function Preview3D({
         <div
           style={{
             position: 'absolute',
-            top: '16px',
+            top: isCompact ? 'auto' : '16px',
+            bottom: isCompact ? 'calc(124px + env(safe-area-inset-bottom))' : undefined,
             left: '16px',
+            right: isCompact ? '16px' : undefined,
             zIndex: 10,
             pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '8px',
             background: 'var(--surface)',
             color: 'var(--text-dim)',
             padding: '6px 12px',
             borderRadius: '4px',
             fontSize: '11px',
             backdropFilter: 'blur(4px)',
+            maxWidth: 'calc(100% - 32px)',
           }}
         >
-          建物にカーソルを合わせてクリックで削除 / Ctrl+Zで取り消し
-          {excludedCount > 0 && `（削除済み ${excludedCount}件）`}
+          <span>
+            {hasCoarsePointer
+              ? '建物をタップで削除'
+              : '建物にカーソルを合わせてクリックで削除 / Ctrl+Zで取り消し'}
+            {excludedCount > 0 && `（削除済み ${excludedCount}件）`}
+          </span>
+          {hasCoarsePointer && (
+            <button
+              type="button"
+              data-testid="undo-exclusion"
+              onClick={undoLastExclusion}
+              style={{
+                pointerEvents: 'auto',
+                minHeight: 32,
+                padding: '4px 10px',
+                borderRadius: 4,
+                border: '1px solid var(--accent)',
+                background: 'var(--accent)',
+                color: 'var(--text)',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              元に戻す
+            </button>
+          )}
         </div>
       )}
       {selectionBounds && (

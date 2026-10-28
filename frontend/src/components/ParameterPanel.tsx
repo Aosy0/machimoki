@@ -29,6 +29,9 @@ interface ParameterPanelProps {
   autoTerrainGridSize?: number
   buildingsVisible: boolean
   onBuildingsVisibleChange: (visible: boolean) => void
+  /** スマホではサイドパネルではなくボトムシートとして表示する。 */
+  mobile?: boolean
+  onClose?: () => void
 }
 
 function ParameterPanel({
@@ -39,6 +42,8 @@ function ParameterPanel({
   autoTerrainGridSize = 128,
   buildingsVisible,
   onBuildingsVisibleChange,
+  mobile = false,
+  onClose,
 }: ParameterPanelProps) {
   const handleChange = <K extends keyof Parameters>(key: K, value: Parameters[K]) => {
     onChange({ ...parameters, [key]: value })
@@ -58,27 +63,77 @@ function ParameterPanel({
   return (
     <div
       style={{
-        width: '280px',
-        minWidth: '280px',
+        width: mobile ? '100%' : '280px',
+        minWidth: mobile ? 0 : '280px',
+        maxHeight: mobile ? '74dvh' : undefined,
+        position: mobile ? 'absolute' : undefined,
+        left: mobile ? 0 : undefined,
+        right: mobile ? 0 : undefined,
+        bottom: mobile ? 0 : undefined,
+        zIndex: mobile ? 300 : undefined,
         background: 'var(--bg)',
-        borderLeft: '1px solid var(--border)',
+        borderLeft: mobile ? 'none' : '1px solid var(--border)',
+        borderTop: mobile ? '1px solid var(--border-strong)' : undefined,
+        borderRadius: mobile ? '16px 16px 0 0' : undefined,
+        boxShadow: mobile ? '0 -12px 32px rgba(0, 0, 0, 0.45)' : undefined,
+        paddingBottom: mobile ? 'env(safe-area-inset-bottom)' : undefined,
         color: 'var(--text)',
         display: 'flex',
         flexDirection: 'column',
         overflowY: 'auto',
       }}
     >
-      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <h3
+      {mobile && (
+        <div
+          aria-hidden
           style={{
-            margin: 0,
-            fontSize: '16px',
+            display: 'flex',
+            justifyContent: 'center',
+            padding: '8px 0 2px',
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              width: 40,
+              height: 4,
+              borderRadius: 999,
+              background: 'var(--border-strong)',
+            }}
+          />
+        </div>
+      )}
+      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px',
             borderBottom: '1px solid var(--border)',
             paddingBottom: '8px',
           }}
         >
-          設定
-        </h3>
+          <h3 style={{ margin: 0, fontSize: '16px' }}>設定</h3>
+          {mobile && onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                minWidth: 64,
+                minHeight: 36,
+                borderRadius: 6,
+                border: '1px solid var(--border-strong)',
+                background: 'transparent',
+                color: 'var(--text-dim)',
+                cursor: 'pointer',
+                fontSize: 13,
+              }}
+            >
+              閉じる
+            </button>
+          )}
+        </div>
 
         {/* Display Colors */}
         <div>

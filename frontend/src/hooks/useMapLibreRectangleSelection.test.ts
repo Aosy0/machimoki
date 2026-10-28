@@ -5,12 +5,13 @@
  * 実行方法:
  *   npx tsx --test frontend/src/hooks/useMapLibreRectangleSelection.test.ts
  */
-import { describe, it } from 'vitest'
+import { afterEach, describe, it, vi } from 'vitest'
 import assert from 'node:assert/strict'
 import {
   shouldStartSelection,
   isTinyRectangle,
   createMapLibreSelectionController,
+  LONG_PRESS_MS,
   MIN_SELECTION_PIXELS,
   type SelectionMapLike,
   type SelectionBounds,
@@ -41,10 +42,14 @@ function createMockMap(): {
   canvas: FakeTarget
   boxZoomEnabled: { value: boolean }
   dragPanEnabled: { value: boolean }
+  panCalls: Array<[number, number]>
+  panOptions: Array<{ animate?: boolean } | undefined>
 } {
   const canvas = new FakeTarget()
   const boxZoomEnabled = { value: true }
   const dragPanEnabled = { value: true }
+  const panCalls: Array<[number, number]> = []
+  const panOptions: Array<{ animate?: boolean } | undefined> = []
   const map: SelectionMapLike = {
     boxZoom: {
       disable(): void {
@@ -61,6 +66,10 @@ function createMockMap(): {
       enable(): void {
         dragPanEnabled.value = true
       },
+    },
+    panBy(offset: [number, number], options?: { animate?: boolean }): void {
+      panCalls.push(offset)
+      panOptions.push(options)
     },
     getCanvas: (): HTMLCanvasElement => canvas as unknown as HTMLCanvasElement,
     unproject(point: [number, number]): { lng: number; lat: number } {
@@ -80,7 +89,7 @@ function createMockMap(): {
       }
     },
   }
-  return { map, canvas, boxZoomEnabled, dragPanEnabled }
+  return { map, canvas, boxZoomEnabled, dragPanEnabled, panCalls, panOptions }
 }
 
 function mouseDown(x: number, y: number, shift: boolean, button = 0): unknown {
@@ -90,6 +99,17 @@ function mouseDown(x: number, y: number, shift: boolean, button = 0): unknown {
     clientX: x,
     clientY: y,
     pointerType: 'mouse',
+    preventDefault: (): void => {},
+  }
+}
+
+function touchEvent(
+  touches: Array<{ clientX: number; clientY: number }>,
+  changedTouches = touches,
+): unknown {
+  return {
+    touches,
+    changedTouches,
     preventDefault: (): void => {},
   }
 }
@@ -113,6 +133,20 @@ describe('shouldStartSelection', () => {
 
   it('タッチでは開始しない', () => {
     assert.equal(shouldStartSelection({ button: 0, shiftKey: true, pointerType: 'touch' }), false)
+  })
+
+  it('範囲選択モードではShiftなしの左で開始する', () => {
+    assert.equal(
+      shouldStartSelection({ button: 0, shiftKey: false, pointerType: 'mouse', mode: 'select' }),
+      true,
+    )
+  })
+
+  it('範囲選択モードのShift+左はパン（開始しない）', () => {
+    assert.equal(
+      shouldStartSelection({ button: 0, shiftKey: true, pointerType: 'mouse', mode: 'select' }),
+      false,
+    )
   })
 })
 
@@ -752,6 +786,185 @@ describe('作成ドラッグ中の onDrawPreview', () => {
     globalTarget.dispatch('keydown', { key: 'Escape' })
     assert.ok(draws.length >= 2)
     assert.equal(draws[draws.length - 1], null)
+    controller.destroy()
+  })
+})
+
+describe('範囲選択モードのマウス操作', () => {
+  it('Shiftなしの左ドラッグで選択できる', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let selected: SelectionBounds | null = null
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      mode: 'select',
+      onSelection: (bounds: SelectionBounds): void => {
+        selected = bounds
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, false))
+    canvas.dispatch('mousemove', { clientX: 110, clientY: 90 })
+    globalTarget.dispatch('mouseup', { clientX: 110, clientY: 90 })
+    assert.ok(selected)
+    controller.destroy()
+  })
+
+  it('Shift+左ドラッグはパンに任せる（dragPanを止めない）', () => {
+    const { map, canvas, dragPanEnabled } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let selected = 0
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      mode: 'select',
+      onSelection: (): void => {
+        selected += 1
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    assert.equal(dragPanEnabled.value, true)
+    canvas.dispatch('mousemove', { clientX: 110, clientY: 90 })
+    globalTarget.dispatch('mouseup', { clientX: 110, clientY: 90 })
+    assert.equal(selected, 0)
+    controller.destroy()
+  })
+})
+
+describe('右/中ドラッグのパン', () => {
+  it('右ドラッグでpanByが呼ばれ、ドラッグ後のcontextmenuを抑止する', () => {
+    const { map, canvas, panCalls, panOptions } = createMockMap()
+    const globalTarget = new FakeTarget()
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (): void => {},
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, false, 2))
+    canvas.dispatch('mousemove', { clientX: 30, clientY: 20 })
+    assert.deepEqual(panCalls, [[-20, -10]])
+    assert.deepEqual(panOptions, [{ animate: false }])
+    globalTarget.dispatch('mouseup', { button: 2 })
+
+    let prevented = false
+    canvas.dispatch('contextmenu', {
+      preventDefault: (): void => {
+        prevented = true
+      },
+    })
+    assert.equal(prevented, true)
+    controller.destroy()
+  })
+
+  it('中ドラッグはオートスクロールを抑止してパンする', () => {
+    const { map, canvas, panCalls, panOptions } = createMockMap()
+    const globalTarget = new FakeTarget()
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (): void => {},
+    })
+    let prevented = false
+    canvas.dispatch('mousedown', {
+      button: 1,
+      shiftKey: false,
+      clientX: 10,
+      clientY: 10,
+      pointerType: 'mouse',
+      preventDefault: (): void => {
+        prevented = true
+      },
+    })
+    assert.equal(prevented, true)
+    canvas.dispatch('mousemove', { clientX: 30, clientY: 20 })
+    globalTarget.dispatch('mouseup', { button: 1 })
+    assert.deepEqual(panCalls, [[-20, -10]])
+    assert.deepEqual(panOptions, [{ animate: false }])
+    controller.destroy()
+  })
+})
+
+describe('タッチ操作', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('移動モードは長押し→ドラッグで選択できる', () => {
+    vi.useFakeTimers()
+    const { map, canvas, dragPanEnabled } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let selected: SelectionBounds | null = null
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (bounds: SelectionBounds): void => {
+        selected = bounds
+      },
+    })
+    canvas.dispatch('touchstart', touchEvent([{ clientX: 10, clientY: 10 }]))
+    // 長押し待ちの間はMapLibre標準のパンを妨げない
+    assert.equal(dragPanEnabled.value, true)
+    vi.advanceTimersByTime(LONG_PRESS_MS)
+    assert.equal(dragPanEnabled.value, false)
+    globalTarget.dispatch('touchmove', touchEvent([{ clientX: 110, clientY: 90 }]))
+    globalTarget.dispatch('touchend', touchEvent([], [{ clientX: 110, clientY: 90 }]))
+    assert.ok(selected)
+    assert.equal(dragPanEnabled.value, true)
+    controller.destroy()
+  })
+
+  it('範囲選択モードは1本指ドラッグで選択できる', () => {
+    const { map, canvas, dragPanEnabled } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let selected: SelectionBounds | null = null
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      mode: 'select',
+      onSelection: (bounds: SelectionBounds): void => {
+        selected = bounds
+      },
+    })
+    canvas.dispatch('touchstart', touchEvent([{ clientX: 10, clientY: 10 }]))
+    assert.equal(dragPanEnabled.value, false)
+    globalTarget.dispatch('touchmove', touchEvent([{ clientX: 110, clientY: 90 }]))
+    globalTarget.dispatch('touchend', touchEvent([], [{ clientX: 110, clientY: 90 }]))
+    assert.ok(selected)
+    assert.equal(dragPanEnabled.value, true)
+    controller.destroy()
+  })
+
+  it('2本目の指が触れたら描画を中止し、dragPanを戻す', () => {
+    const { map, canvas, dragPanEnabled } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let selectedCount = 0
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      mode: 'select',
+      onSelection: (): void => {
+        selectedCount += 1
+      },
+    })
+    canvas.dispatch('touchstart', touchEvent([{ clientX: 10, clientY: 10 }]))
+    assert.equal(dragPanEnabled.value, false)
+    canvas.dispatch(
+      'touchstart',
+      touchEvent([
+        { clientX: 10, clientY: 10 },
+        { clientX: 200, clientY: 200 },
+      ]),
+    )
+    assert.equal(dragPanEnabled.value, true)
+    globalTarget.dispatch(
+      'touchmove',
+      touchEvent([
+        { clientX: 20, clientY: 20 },
+        { clientX: 220, clientY: 220 },
+      ]),
+    )
+    globalTarget.dispatch('touchend', touchEvent([], [{ clientX: 20, clientY: 20 }]))
+    assert.equal(selectedCount, 0)
     controller.destroy()
   })
 })

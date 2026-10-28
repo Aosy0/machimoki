@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
 import { Marker } from 'maplibre-gl'
 import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl'
+import { useIsCompactLayout } from '../hooks/useMediaQuery'
 import {
   computeModelDimensions,
   computeNaturalDimensions,
@@ -95,6 +96,7 @@ export default function MapSelectionInfoOverlay({
   const elementRef = useRef<HTMLDivElement | null>(null)
   // move/resize 時に再配置するための「最後に適用した bounds」。
   const lastAppliedBoundsRef = useRef<SelectionBounds | null>(null)
+  const isCompact = useIsCompactLayout()
 
   /**
    * 基本位置は矩形の北辺の外側 12px（パネル下端基準）。上にスペースが無ければ
@@ -110,17 +112,19 @@ export default function MapSelectionInfoOverlay({
         const nw = map.project([target.west, target.north])
         const container = map.getContainer()
         const pad = 12
+        // スマホでは検索ボックスの下へ逃がす（検索ボックスは地図上部に重なる）。
+        const padTop = isCompact ? 72 : pad
         const gap = 12
         const maxX = Math.max(pad, container.clientWidth - element.offsetWidth - pad)
         const maxY = Math.max(pad, container.clientHeight - element.offsetHeight - pad)
         const x = Math.min(Math.max(nw.x, pad), maxX)
-        const y = Math.min(Math.max(nw.y - gap - element.offsetHeight, pad), maxY)
+        const y = Math.min(Math.max(nw.y - gap - element.offsetHeight, padTop), maxY)
         marker.setLngLat(map.unproject([x, y]))
       } catch {
         /* 位置更新の失敗は無視（次回更新で再試行） */
       }
     },
-    [map],
+    [map, isCompact],
   )
 
   /**

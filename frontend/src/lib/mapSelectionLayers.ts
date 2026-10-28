@@ -8,8 +8,10 @@
  */
 import type { SelectionBounds } from './selectionBounds'
 import {
+  FINE_HANDLE_METRICS,
   handleVisibility,
   selectionHandleScreenPoints,
+  type HandleMetrics,
   type HandleVisibility,
   type ResizeHandle,
 } from './mapSelectionResize'
@@ -261,12 +263,14 @@ function hoverPoint(
 function selectionVisibility(
   map: OverlayMapLike,
   bounds: SelectionBounds,
+  metrics: HandleMetrics = FINE_HANDLE_METRICS,
 ): HandleVisibility | undefined {
   try {
     const project = map.project
     if (typeof project !== 'function') return undefined
     return handleVisibility(
       selectionHandleScreenPoints(bounds, (lngLat) => project.call(map, lngLat)),
+      metrics,
     )
   } catch {
     return undefined
@@ -296,7 +300,11 @@ function allSelectionLayersExist(map: OverlayMapLike): boolean {
  * ソースと6レイヤーが揃い、JSONが直近適用と同一ならsetDataをスキップする。
  * ソース存在時もレイヤー欠損を補う（setStyle後の復元を確実にするため）。
  */
-function applySelectionData(map: OverlayMapLike, data: Record<string, unknown>): void {
+function applySelectionData(
+  map: OverlayMapLike,
+  data: Record<string, unknown>,
+  metrics: HandleMetrics = FINE_HANDLE_METRICS,
+): void {
   const dataJson = JSON.stringify(data)
   const source = map.getSource(SELECTION_SOURCE_ID)
   const sourcePresent = source !== undefined && source !== null
@@ -309,9 +317,9 @@ function applySelectionData(map: OverlayMapLike, data: Record<string, unknown>):
   } else {
     map.addSource(SELECTION_SOURCE_ID, { type: 'geojson', data })
   }
-  ensureHandleImages(map)
-  ensureHoverImages(map)
-  addSelectionLayers(map)
+  ensureHandleImages(map, metrics)
+  ensureHoverImages(map, metrics)
+  addSelectionLayers(map, metrics)
   appliedSelectionJson.set(map, dataJson)
 }
 
@@ -323,6 +331,7 @@ export function ensureSelectionOverlay(
   map: OverlayMapLike,
   bounds: SelectionBounds | null,
   hoverHandle: ResizeHandle | null = null,
+  metrics: HandleMetrics = FINE_HANDLE_METRICS,
 ): void {
   try {
     if (bounds === null) {
@@ -331,7 +340,12 @@ export function ensureSelectionOverlay(
     }
     applySelectionData(
       map,
-      selectionOverlayToFeatureCollection(bounds, hoverHandle, selectionVisibility(map, bounds)),
+      selectionOverlayToFeatureCollection(
+        bounds,
+        hoverHandle,
+        selectionVisibility(map, bounds, metrics),
+      ),
+      metrics,
     )
   } catch {
     /* 表示失敗は無視 */
@@ -339,7 +353,7 @@ export function ensureSelectionOverlay(
 }
 
 /** 選択系レイヤーを重なり順（fill→line→角→辺→ホバー辺→ホバー角）で作る。 */
-function addSelectionLayers(map: OverlayMapLike): void {
+function addSelectionLayers(map: OverlayMapLike, metrics: HandleMetrics): void {
   if (!layerExists(map, SELECTION_FILL_LAYER_ID)) {
     map.addLayer({
       id: SELECTION_FILL_LAYER_ID,
@@ -369,7 +383,7 @@ function addSelectionLayers(map: OverlayMapLike): void {
       filter: ['all', ['==', ['get', 'role'], 'handle'], ['==', ['get', 'corner'], true]],
       paint: {
         'circle-color': SELECTION_HANDLE_FILL_COLOR,
-        'circle-radius': SELECTION_CORNER_RADIUS,
+        'circle-radius': metrics.cornerRadius,
         'circle-stroke-color': SELECTION_HANDLE_STROKE_COLOR,
         'circle-stroke-width': 2,
       },
@@ -416,7 +430,7 @@ function addSelectionLayers(map: OverlayMapLike): void {
           SELECTION_HANDLE_HOVER_IMAGE_H_ID,
           SELECTION_HANDLE_HOVER_IMAGE_V_ID,
         ],
-        'icon-size': SELECTION_HOVER_ICON_SIZE,
+        'icon-size': metrics.hoverIconSize,
         'icon-rotation-alignment': 'map',
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
@@ -432,9 +446,9 @@ function addSelectionLayers(map: OverlayMapLike): void {
       paint: {
         // 角もカプセルと同じルール（反転＋拡大）。通常=白fill＋シアン枠・r6。
         'circle-color': SELECTION_HANDLE_HOVER_FILL_COLOR,
-        'circle-radius': SELECTION_HOVER_CORNER_RADIUS,
+        'circle-radius': metrics.hoverCornerRadius,
         'circle-stroke-color': SELECTION_HANDLE_HOVER_STROKE_COLOR,
-        'circle-stroke-width': SELECTION_HOVER_CORNER_STROKE_WIDTH,
+        'circle-stroke-width': metrics.hoverCornerStrokeWidth,
       },
     })
   }
@@ -473,13 +487,19 @@ export function ensureSelectionHover(
   map: OverlayMapLike,
   bounds: SelectionBounds | null,
   handle: ResizeHandle | null,
+  metrics: HandleMetrics = FINE_HANDLE_METRICS,
 ): void {
   try {
     if (bounds === null) return
     if (asSettableSource(map.getSource(SELECTION_SOURCE_ID)) === null) return
     applySelectionData(
       map,
-      selectionOverlayToFeatureCollection(bounds, handle, selectionVisibility(map, bounds)),
+      selectionOverlayToFeatureCollection(
+        bounds,
+        handle,
+        selectionVisibility(map, bounds, metrics),
+      ),
+      metrics,
     )
   } catch {
     /* 表示失敗は無視 */
@@ -495,23 +515,20 @@ function paintCapsule(
   horizontal: boolean,
   fillColor: string,
   strokeColor: string,
+  metrics: HandleMetrics,
 ): void {
   const scale = SELECTION_CAPSULE_PIXEL_RATIO
+  const length = metrics.capsuleLengthPx
+  const width = metrics.capsuleWidthPx
   if (!horizontal) {
     // キャンバス自体は縦長。回転して水平カプセルと同じ座標系で描く。
-    ctx.translate(
-      (SELECTION_CAPSULE_WIDTH_PX * scale) / 2,
-      (SELECTION_CAPSULE_LENGTH_PX * scale) / 2,
-    )
+    ctx.translate((width * scale) / 2, (length * scale) / 2)
     ctx.rotate(Math.PI / 2)
-    ctx.translate(
-      -(SELECTION_CAPSULE_LENGTH_PX * scale) / 2,
-      -(SELECTION_CAPSULE_WIDTH_PX * scale) / 2,
-    )
+    ctx.translate(-(length * scale) / 2, -(width * scale) / 2)
   }
-  const w = SELECTION_CAPSULE_LENGTH_PX * scale
-  const h = SELECTION_CAPSULE_WIDTH_PX * scale
-  const lineWidth = SELECTION_CAPSULE_STROKE_PX * scale
+  const w = length * scale
+  const h = width * scale
+  const lineWidth = metrics.capsuleStrokePx * scale
   const cx = w / 2
   const cy = h / 2
   // ストロークが外形からはみ出さないよう半分内側に寄せたパス
@@ -579,18 +596,21 @@ interface CapsuleImageData {
 }
 
 /** カプセル画像を描いて返す。document無し・失敗時はnull。 */
-function createCapsuleImage(spec: CapsuleImageSpec): CapsuleImageData | null {
+function createCapsuleImage(
+  spec: CapsuleImageSpec,
+  metrics: HandleMetrics,
+): CapsuleImageData | null {
   try {
     if (typeof document === 'undefined') return null
     const scale = SELECTION_CAPSULE_PIXEL_RATIO
     const canvas = document.createElement('canvas')
     canvas.width =
-      (spec.horizontal ? SELECTION_CAPSULE_LENGTH_PX : SELECTION_CAPSULE_WIDTH_PX) * scale
+      (spec.horizontal ? metrics.capsuleLengthPx : metrics.capsuleWidthPx) * scale
     canvas.height =
-      (spec.horizontal ? SELECTION_CAPSULE_WIDTH_PX : SELECTION_CAPSULE_LENGTH_PX) * scale
+      (spec.horizontal ? metrics.capsuleWidthPx : metrics.capsuleLengthPx) * scale
     const ctx = canvas.getContext('2d')
     if (ctx === null) return null
-    paintCapsule(ctx, spec.horizontal, spec.fill, spec.stroke)
+    paintCapsule(ctx, spec.horizontal, spec.fill, spec.stroke, metrics)
     // MapLibreのaddImageはcanvas要素を直接受け付けないため
     // ImageData相当（width/height/data）で渡す。
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height)
@@ -601,14 +621,18 @@ function createCapsuleImage(spec: CapsuleImageSpec): CapsuleImageData | null {
 }
 
 /** カプセル画像群を登録する（2回目以降はhasImageでスキップ）。 */
-function ensureImages(map: OverlayMapLike, specs: CapsuleImageSpec[]): void {
+function ensureImages(
+  map: OverlayMapLike,
+  specs: CapsuleImageSpec[],
+  metrics: HandleMetrics,
+): void {
   try {
     const hasImage = map.hasImage
     const addImage = map.addImage
     if (typeof hasImage !== 'function' || typeof addImage !== 'function') return
     for (const spec of specs) {
       if (hasImage.call(map, spec.id)) continue
-      const image = createCapsuleImage(spec)
+      const image = createCapsuleImage(spec, metrics)
       if (image === null) return
       addImage.call(map, spec.id, image, { pixelRatio: SELECTION_CAPSULE_PIXEL_RATIO })
     }
@@ -618,13 +642,13 @@ function ensureImages(map: OverlayMapLike, specs: CapsuleImageSpec[]): void {
 }
 
 /** 通常ハンドルのカプセル画像2枚を登録する。 */
-function ensureHandleImages(map: OverlayMapLike): void {
-  ensureImages(map, HANDLE_IMAGE_SPECS)
+function ensureHandleImages(map: OverlayMapLike, metrics: HandleMetrics): void {
+  ensureImages(map, HANDLE_IMAGE_SPECS, metrics)
 }
 
 /** ホバー強調のカプセル画像2枚を登録する。 */
-function ensureHoverImages(map: OverlayMapLike): void {
-  ensureImages(map, HOVER_IMAGE_SPECS)
+function ensureHoverImages(map: OverlayMapLike, metrics: HandleMetrics): void {
+  ensureImages(map, HOVER_IMAGE_SPECS, metrics)
 }
 
 /**

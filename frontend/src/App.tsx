@@ -8,12 +8,19 @@ import ErrorToast from './components/ErrorToast'
 import HelpPanel from './components/HelpPanel'
 import Map2D from './components/Map2D'
 import MapSelectionInfoOverlay from './components/MapSelectionInfoOverlay'
+import MapModeControl from './components/MapModeControl'
+import CoordinateSelectionPanel from './components/CoordinateSelectionPanel'
+import CoverageLegendPanel from './components/CoverageLegendPanel'
 import { exportModel } from './lib/apiClient'
 import { runWorkerExport, runWorkerSerialize, triggerDownload } from './lib/workerExport'
 import { finalShapeGeometryKey } from './lib/finalShapeKey'
 import { loadFinalShapeCache } from './lib/finalShapeCache'
 import { loadBuildingMeshes, loadTerrainMesh } from './lib/meshDataCache'
-import { useMapLibreRectangleSelection } from './hooks/useMapLibreRectangleSelection'
+import {
+  useMapLibreRectangleSelection,
+  type MapInteractionMode,
+} from './hooks/useMapLibreRectangleSelection'
+import { useHasCoarsePointer, useIsCompactLayout } from './hooks/useMediaQuery'
 import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
@@ -24,7 +31,6 @@ import {
   isLargeRange,
   resolveTerrainGridSize,
 } from './lib/previewBudget'
-import { LOD_CATEGORY_ORDER, LOD_CATEGORY_STYLES } from './lib/coverageCategories'
 import {
   ensureCoverageLayer,
   setCoverageLayerVisible,
@@ -35,12 +41,12 @@ import {
   ensureSelectionOverlay,
   type PickPoint,
 } from './lib/mapSelectionLayers'
-import type { ResizeHandle } from './lib/mapSelectionResize'
 import {
-  coerceCurrentViewBounds,
-  coercePresetBounds,
-  parseManualCoords,
-} from './lib/mapSelectionInput'
+  COARSE_HANDLE_METRICS,
+  FINE_HANDLE_METRICS,
+  type ResizeHandle,
+} from './lib/mapSelectionResize'
+import { coercePresetBounds, parseManualCoords } from './lib/mapSelectionInput'
 
 type Tab = 'map' | 'preview'
 
@@ -148,6 +154,12 @@ function App() {
   const [coverageLoading, setCoverageLoading] = useState(false)
   const [mapLibreMap, setMapLibreMap] = useState<MapLibreMap | null>(null)
   const [mapFailed, setMapFailed] = useState(false)
+  const isCompact = useIsCompactLayout()
+  const hasCoarsePointer = useHasCoarsePointer()
+  const [mapMode, setMapMode] = useState<MapInteractionMode>('move')
+  const [mapSheet, setMapSheet] = useState<'coords' | 'legend' | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const handleMetrics = hasCoarsePointer ? COARSE_HANDLE_METRICS : FINE_HANDLE_METRICS
 
   const [parameters, setParameters] = useState<Parameters>(loadStoredParameters)
 
@@ -214,18 +226,23 @@ function App() {
       selectionBoundsRef.current = bounds
       selectionInfoPreviewRef.current?.(bounds)
       if (!mapLibreMap) return
-      ensureSelectionOverlay(mapLibreMap, bounds, hoverHandleRef.current)
+      ensureSelectionOverlay(mapLibreMap, bounds, hoverHandleRef.current, handleMetrics)
     },
-    [mapLibreMap],
+    [mapLibreMap, handleMetrics],
   )
 
   const handleSelectionHover = useCallback(
     (handle: ResizeHandle | null) => {
       hoverHandleRef.current = handle
       if (!mapLibreMap) return
-      ensureSelectionHover(mapLibreMap, selectionBoundsRef.current, handle)
+      ensureSelectionHover(
+        mapLibreMap,
+        selectionBoundsRef.current,
+        handle,
+        handleMetrics,
+      )
     },
-    [mapLibreMap],
+    [mapLibreMap, handleMetrics],
   )
 
   // 作成ドラッグ中の寸法ラベル用プレビュー（GeoJSONオーバーレイには触れない）。
@@ -239,11 +256,13 @@ function App() {
     setSelectionBounds,
     errorMessage: selectionErrorMessage,
     clearError: clearSelectionError,
+    selectCurrentView,
   } = useMapLibreRectangleSelection(
     mapLibreMap,
     handleSelectionPreview,
     handleSelectionHover,
     handleSelectionDrawPreview,
+    mapMode,
   )
 
   // リロード後も選択範囲を復元する（プレビューが空に見えるのを防ぐ）。
@@ -346,19 +365,6 @@ function App() {
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : 'プリセットの適用に失敗しました')
       }
-    },
-    [setSelectionBounds],
-  )
-
-  const handleSelectCurrentBounds = useCallback(
-    (bounds: { west: number; south: number; east: number; north: number }) => {
-      const result = coerceCurrentViewBounds(bounds)
-      if (!result.ok) {
-        setErrorMessage(result.error)
-        return
-      }
-      setSelectionBounds(result.bounds)
-      setErrorMessage(null)
     },
     [setSelectionBounds],
   )
@@ -748,26 +754,30 @@ function App() {
   }, [mapLibreMap, activeTab, selectionBounds, coverageVisible])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="app-root">
       {/* Tab bar with app name */}
       <div
+        className="app-header"
         style={{
           display: 'flex',
           alignItems: 'center',
           borderBottom: '1px solid var(--border)',
           background: 'var(--bg)',
+          flexShrink: 0,
         }}
       >
         <div
           style={{
-            padding: '12px 20px',
-            fontSize: '14px',
+            padding: isCompact ? '10px 12px' : '12px 20px',
+            fontSize: isCompact ? 13 : 14,
             fontWeight: 700,
             color: 'var(--accent)',
             letterSpacing: '0.04em',
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
+            flexShrink: 0,
+            whiteSpace: 'nowrap',
           }}
         >
           Machimoki
@@ -790,7 +800,7 @@ function App() {
             </span>
           )}
         </div>
-        <div style={{ display: 'flex' }}>
+        <div style={{ display: 'flex', flexShrink: 0 }}>
           {(
             [
               ['map', '範囲選択'],
@@ -801,16 +811,18 @@ function App() {
               key={tab}
               onClick={() => setActiveTab(tab)}
               style={{
-                padding: '12px 20px',
+                padding: isCompact ? '10px 12px' : '12px 20px',
                 background: 'transparent',
                 color: activeTab === tab ? 'var(--text)' : 'var(--text-dim)',
                 border: 'none',
                 borderBottom:
                   activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
                 cursor: 'pointer',
-                fontSize: '13px',
+                fontSize: isCompact ? 12 : 13,
                 fontWeight: activeTab === tab ? 600 : 400,
                 transition: 'color 150ms ease, border-color 150ms ease',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
               }}
             >
               {label}
@@ -822,20 +834,21 @@ function App() {
           title={helpOpen ? '操作方法を閉じる' : '操作方法'}
           style={{
             marginLeft: 'auto',
-            marginRight: '12px',
-            width: '24px',
-            height: '24px',
+            marginRight: isCompact ? 8 : 12,
+            width: isCompact ? 36 : 24,
+            height: isCompact ? 36 : 24,
             borderRadius: '50%',
             background: helpOpen ? 'var(--accent)' : 'transparent',
             color: helpOpen ? 'var(--text)' : 'var(--text-dim)',
             border: helpOpen ? 'none' : '1px solid var(--border-strong)',
             cursor: 'pointer',
-            fontSize: '12px',
+            fontSize: isCompact ? 14 : 12,
             fontWeight: 600,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             padding: 0,
+            flexShrink: 0,
             transition: 'background 150ms ease, color 150ms ease',
           }}
         >
@@ -844,7 +857,7 @@ function App() {
       </div>
 
       {/* Selection bounds bar */}
-      {isDevMode && selectionBounds && activeTab === 'map' && (
+      {isDevMode && !isCompact && selectionBounds && activeTab === 'map' && (
         <div
           style={{
             padding: '8px 12px',
@@ -876,7 +889,6 @@ function App() {
             onMapReady={handleMapReady}
             onMapUnload={handleMapUnload}
             onWebGLFailure={handleWebGLFailure}
-            onSelectCurrentBounds={handleSelectCurrentBounds}
           />
           <MapSelectionInfoOverlay
             map={mapLibreMap}
@@ -902,250 +914,147 @@ function App() {
               地図描画に失敗しました。座標入力・プリセットで範囲を指定できます。
             </div>
           )}
-          {/* Coordinate panel */}
-          <div
-            data-testid="map2d-coord-panel"
-            style={{
-              position: 'absolute',
-              bottom: '44px',
-              right: '16px',
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              border: '1px solid var(--border)',
-              backdropFilter: 'blur(4px)',
-              padding: '10px',
-              borderRadius: '6px',
-              fontSize: '14px',
-              zIndex: 100,
-              width: '240px',
-            }}
-          >
-            <div style={{ marginBottom: '6px', fontWeight: 'bold' }}>座標で選択</div>
+          <MapModeControl
+            mode={mapMode}
+            onChange={setMapMode}
+            isCompact={isCompact}
+            hasCoarsePointer={hasCoarsePointer}
+            onSelectCurrentView={selectCurrentView}
+            coordsOpen={mapSheet === 'coords'}
+            legendOpen={mapSheet === 'legend'}
+            onToggleCoords={() =>
+              setMapSheet((prev) => (prev === 'coords' ? null : 'coords'))
+            }
+            onToggleLegend={() =>
+              setMapSheet((prev) => (prev === 'legend' ? null : 'legend'))
+            }
+          />
+          {!isCompact && (
             <div
+              data-testid="map2d-coord-panel"
               style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '6px',
-                marginBottom: '6px',
-              }}
-            >
-              {(
-                [
-                  ['west', '西'],
-                  ['east', '東'],
-                  ['south', '南'],
-                  ['north', '北'],
-                ] as const
-              ).map(([key, label]) => (
-                <div key={key}>
-                  <div
-                    style={{
-                      fontSize: '12px',
-                      color: 'var(--text-muted)',
-                      marginBottom: '2px',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    {label}
-                  </div>
-                  <input
-                    type="text"
-                    placeholder={
-                      key === 'west'
-                        ? '139.805'
-                        : key === 'east'
-                          ? '139.808'
-                          : key === 'south'
-                            ? '35.747'
-                            : '35.749'
-                    }
-                    value={manualCoords[key]}
-                    onChange={(e) =>
-                      setManualCoords((prev) => ({ ...prev, [key]: e.target.value }))
-                    }
-                    style={{
-                      width: '100%',
-                      padding: '4px',
-                      fontSize: '13px',
-                      background: 'var(--border)',
-                      color: 'var(--text)',
-                      border: '1px solid var(--border-strong)',
-                      borderRadius: '3px',
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-            {isDevMode && (
-              <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
-                <button
-                  data-testid="preset-adachi"
-                  onClick={() =>
-                    applyPreset({ west: 139.8053, south: 35.747, east: 139.808, north: 35.7495 })
-                  }
-                  style={{
-                    flex: 1,
-                    padding: '4px',
-                    fontSize: '12px',
-                    background: 'var(--border)',
-                    color: 'var(--text)',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  足立区
-                </button>
-                <button
-                  data-testid="preset-shinjuku"
-                  onClick={() =>
-                    applyPreset({ west: 139.6899, south: 35.7029, east: 139.6932, north: 35.707 })
-                  }
-                  style={{
-                    flex: 1,
-                    padding: '4px',
-                    fontSize: '12px',
-                    background: 'var(--border)',
-                    color: 'var(--text)',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  新宿
-                </button>
-                <button
-                  data-testid="preset-tokyo"
-                  onClick={() =>
-                    applyPreset({ west: 139.7639, south: 35.6764, east: 139.7708, north: 35.6855 })
-                  }
-                  style={{
-                    flex: 1,
-                    padding: '4px',
-                    fontSize: '12px',
-                    background: 'var(--border)',
-                    color: 'var(--text)',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  東京駅
-                </button>
-              </div>
-            )}
-            <button
-              onClick={handleManualSelect}
-              style={{
-                width: '100%',
-                padding: '6px',
-                fontSize: '13px',
-                background: 'var(--accent)',
+                position: 'absolute',
+                bottom: '44px',
+                right: '16px',
+                background: 'var(--surface)',
                 color: 'var(--text)',
-                border: 'none',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                fontWeight: 600,
+                border: '1px solid var(--border)',
+                backdropFilter: 'blur(4px)',
+                padding: '10px',
+                borderRadius: '6px',
+                fontSize: '14px',
+                zIndex: 100,
+                width: '240px',
               }}
             >
-              適用
-            </button>
-            <div
-              data-testid="map2d-drag-hint"
-              style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)' }}
-            >
-              Shift + ドラッグ で範囲選択
-            </div>
-          </div>
-          {/* Coverage overlay panel */}
-          <div
-            style={{
-              position: 'absolute',
-              top: '16px',
-              right: '16px',
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              border: '1px solid var(--border)',
-              backdropFilter: 'blur(4px)',
-              padding: '10px',
-              borderRadius: '6px',
-              fontSize: '14px',
-              zIndex: 100,
-              width: '220px',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '8px',
-              }}
-            >
-              <span style={{ fontWeight: 'bold' }}>カバレッジ表示</span>
-              <button
-                onClick={toggleCoverage}
-                title={
-                  coverageVisible ? 'カバレッジ表示をオフにする' : 'カバレッジ表示をオンにする'
+              <CoordinateSelectionPanel
+                manualCoords={manualCoords}
+                onCoordChange={(key, value) =>
+                  setManualCoords((prev) => ({ ...prev, [key]: value }))
                 }
-                style={{
-                  padding: '4px 10px',
-                  fontSize: '13px',
-                  cursor: 'pointer',
-                  background: coverageVisible ? 'var(--accent)' : 'var(--border)',
-                  color: 'var(--text)',
-                  border: coverageVisible
-                    ? '1px solid var(--accent)'
-                    : '1px solid var(--border-strong)',
-                  borderRadius: '3px',
-                  fontWeight: 600,
-                }}
-              >
-                {coverageVisible ? 'ON' : 'OFF'}
-              </button>
+                onApply={handleManualSelect}
+                applyPreset={applyPreset}
+                isDevMode={isDevMode}
+                hasCoarsePointer={hasCoarsePointer}
+              />
             </div>
-            {coverageLoading && (
-              <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '6px' }}>
-                カバレッジデータを読み込み中...
-              </div>
-            )}
-            {coverageVisible && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                {LOD_CATEGORY_ORDER.map((category) => {
-                  const style = LOD_CATEGORY_STYLES[category]
-                  return (
-                    <div
-                      key={category}
-                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                    >
-                      <div
-                        style={{
-                          width: '18px',
-                          height: '12px',
-                          background: style.fill,
-                          border: `2px solid ${style.outline}`,
-                          borderRadius: '2px',
-                          flexShrink: 0,
-                        }}
-                      />
-                      <span style={{ color: 'var(--text-dim)', fontSize: '13px' }}>
-                        {style.label}
-                      </span>
-                    </div>
-                  )
-                })}
-                <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                  整備状況をLoD別に色分けしています
-                </div>
-              </div>
-            )}
-          </div>
+          )}
+          {isCompact && mapSheet === 'coords' && (
+            <div
+              data-testid="map2d-coord-sheet"
+              style={{
+                position: 'absolute',
+                left: '8px',
+                right: '8px',
+                bottom: 'calc(104px + env(safe-area-inset-bottom))',
+                maxHeight: '52dvh',
+                overflowY: 'auto',
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--border-strong)',
+                backdropFilter: 'blur(8px)',
+                padding: '12px',
+                borderRadius: '12px',
+                fontSize: '14px',
+                zIndex: 220,
+                boxShadow: '0 -8px 24px rgba(0, 0, 0, 0.35)',
+              }}
+            >
+              <CoordinateSelectionPanel
+                manualCoords={manualCoords}
+                onCoordChange={(key, value) =>
+                  setManualCoords((prev) => ({ ...prev, [key]: value }))
+                }
+                onApply={handleManualSelect}
+                applyPreset={applyPreset}
+                isDevMode={isDevMode}
+                hasCoarsePointer={hasCoarsePointer}
+                onClose={() => setMapSheet(null)}
+              />
+            </div>
+          )}
+          {!isCompact && (
+            <div
+              data-testid="coverage-legend-panel"
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                backdropFilter: 'blur(4px)',
+                padding: '10px',
+                borderRadius: '6px',
+                fontSize: '14px',
+                zIndex: 100,
+                width: '220px',
+              }}
+            >
+              <CoverageLegendPanel
+                coverageVisible={coverageVisible}
+                onToggle={toggleCoverage}
+                coverageLoading={coverageLoading}
+              />
+            </div>
+          )}
+          {isCompact && mapSheet === 'legend' && (
+            <div
+              data-testid="coverage-legend-sheet"
+              style={{
+                position: 'absolute',
+                left: '8px',
+                right: '8px',
+                bottom: 'calc(104px + env(safe-area-inset-bottom))',
+                maxHeight: '52dvh',
+                overflowY: 'auto',
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--border-strong)',
+                backdropFilter: 'blur(8px)',
+                padding: '12px',
+                borderRadius: '12px',
+                fontSize: '14px',
+                zIndex: 220,
+                boxShadow: '0 -8px 24px rgba(0, 0, 0, 0.35)',
+              }}
+            >
+              <CoverageLegendPanel
+                coverageVisible={coverageVisible}
+                onToggle={toggleCoverage}
+                coverageLoading={coverageLoading}
+                onClose={() => setMapSheet(null)}
+              />
+            </div>
+          )}
         </div>
         <div
           style={{
             display: activeTab === 'preview' ? 'flex' : 'none',
             width: '100%',
             height: '100%',
+            position: 'relative',
+            flexDirection: isCompact ? 'column' : 'row',
           }}
         >
           <div style={{ flex: 1, position: 'relative' }}>
@@ -1287,21 +1196,77 @@ function App() {
               message="エクスポート中..."
               visible={isExporting && pipelineState.phase === 'idle'}
             />
+            {isCompact && !settingsOpen && (
+              <button
+                type="button"
+                data-testid="open-settings"
+                onClick={() => setSettingsOpen(true)}
+                style={{
+                  position: 'absolute',
+                  right: 16,
+                  bottom: 'calc(56px + env(safe-area-inset-bottom))',
+                  zIndex: 40,
+                  minWidth: 72,
+                  minHeight: 44,
+                  borderRadius: 999,
+                  background: 'var(--accent)',
+                  color: 'var(--text)',
+                  border: 'none',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.35)',
+                }}
+              >
+                設定
+              </button>
+            )}
           </div>
-          <ParameterPanel
-            parameters={parameters}
-            onChange={(params) => {
-              setParameters(params)
-              if (params.lod === 'lod2') {
-                // LOD2 warning is shown in the panel itself
-              }
-            }}
-            onExport={handleExport}
-            availableLods={availableLods}
-            autoTerrainGridSize={autoTerrainGridSize}
-            buildingsVisible={buildingsVisible}
-            onBuildingsVisibleChange={setBuildingsVisible}
-          />
+          {!isCompact && (
+            <ParameterPanel
+              parameters={parameters}
+              onChange={(params) => {
+                setParameters(params)
+                if (params.lod === 'lod2') {
+                  // LOD2 warning is shown in the panel itself
+                }
+              }}
+              onExport={handleExport}
+              availableLods={availableLods}
+              autoTerrainGridSize={autoTerrainGridSize}
+              buildingsVisible={buildingsVisible}
+              onBuildingsVisibleChange={setBuildingsVisible}
+            />
+          )}
+          {isCompact && settingsOpen && (
+            <>
+              <div
+                onClick={() => setSettingsOpen(false)}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'rgba(0, 0, 0, 0.45)',
+                  zIndex: 280,
+                }}
+              />
+              <ParameterPanel
+                mobile
+                onClose={() => setSettingsOpen(false)}
+                parameters={parameters}
+                onChange={(params) => {
+                  setParameters(params)
+                  if (params.lod === 'lod2') {
+                    // LOD2 warning is shown in the panel itself
+                  }
+                }}
+                onExport={handleExport}
+                availableLods={availableLods}
+                autoTerrainGridSize={autoTerrainGridSize}
+                buildingsVisible={buildingsVisible}
+                onBuildingsVisibleChange={setBuildingsVisible}
+              />
+            </>
+          )}
         </div>
         <HelpPanel mode={activeTab} isOpen={helpOpen} />
       </div>
