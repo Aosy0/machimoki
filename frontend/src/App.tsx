@@ -21,6 +21,7 @@ import {
   type MapInteractionMode,
 } from './hooks/useMapLibreRectangleSelection'
 import { useHasCoarsePointer, useIsCompactLayout } from './hooks/useMediaQuery'
+import { usePreviewQuality } from './hooks/usePreviewQuality'
 import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
@@ -146,6 +147,7 @@ function coverageApiBase(): string {
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>(loadStoredTab)
+  const [previewMounted, setPreviewMounted] = useState(activeTab === 'preview')
   const [isExporting, setIsExporting] = useState(false)
   // Preview3D の重い処理（最終形状・断面・中空シェル）が進行中か。
   const [previewBusy, setPreviewBusy] = useState(false)
@@ -157,6 +159,7 @@ function App() {
   const isCompact = useIsCompactLayout()
   const hasCoarsePointer = useHasCoarsePointer()
   const [mapMode, setMapMode] = useState<MapInteractionMode>('move')
+  const previewQuality = usePreviewQuality()
   const [mapSheet, setMapSheet] = useState<'coords' | 'legend' | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const handleMetrics = hasCoarsePointer ? COARSE_HANDLE_METRICS : FINE_HANDLE_METRICS
@@ -264,6 +267,13 @@ function App() {
     handleSelectionDrawPreview,
     mapMode,
   )
+
+  // 3Dプレビューは一度開いた後もマウントを維持するが、非アクティブ中の
+  // 選択変更では再読み込みしない（3Dタブに戻った時だけ最新範囲を反映する）。
+  const [previewBounds, setPreviewBounds] = useState<SelectionBounds | null>(null)
+  useEffect(() => {
+    if (activeTab === 'preview') setPreviewBounds(selectionBounds)
+  }, [activeTab, selectionBounds])
 
   // リロード後も選択範囲を復元する（プレビューが空に見えるのを防ぐ）。
   const restoredSelectionRef = useRef(false)
@@ -809,7 +819,10 @@ function App() {
           ).map(([tab, label]) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => {
+                setActiveTab(tab)
+                if (tab === 'preview') setPreviewMounted(true)
+              }}
               style={{
                 padding: isCompact ? '10px 12px' : '12px 20px',
                 background: 'transparent',
@@ -1110,56 +1123,57 @@ function App() {
                 </button>
               </div>
             )}
-            <Preview3D
-              selectionBounds={selectionBounds}
-              lod={parameters.lod}
-              onPipelineStateChange={setPipelineState}
-              showTerrainImagery={parameters.showTerrainImagery}
-              terrainThickness={parameters.terrainThickness}
-              flattenBottom={parameters.flattenBottom}
-              reflectActualElevation={parameters.reflectActualElevation}
-              openBottom={parameters.openBottom}
-              shellThickness={parameters.shellThickness}
-              hollowBuildings={parameters.hollowBuildings}
-              terrainGridSize={resolvedTerrainGridSize}
-              includeTerrain={parameters.includeTerrain}
-              buildingColor={parameters.buildingColor}
-              terrainColor={parameters.terrainColor}
-              whiteModel={parameters.whiteModel}
-              scale={scale}
-              onScaleChange={setScale}
-              includeSpanningBuildings={parameters.includeSpanningBuildings}
-              pickPoints={pickPoints}
-              excludedBuildingIds={excludedBuildingIds}
-              onExcludedBuildingIdsChange={setExcludedBuildingIds}
-              isDevMode={isDevMode}
-              onTerrainResolutionBoostChange={setTerrainResolutionBoost}
-              buildingsVisible={buildingsVisible}
-              onBuildingsVisibleChange={setBuildingsVisible}
-              onBusyChange={setPreviewBusy}
-            />
+            {previewMounted && (
+              <Preview3D
+                selectionBounds={previewBounds}
+                quality={previewQuality.profile}
+                lod={parameters.lod}
+                onPipelineStateChange={setPipelineState}
+                showTerrainImagery={parameters.showTerrainImagery}
+                terrainThickness={parameters.terrainThickness}
+                flattenBottom={parameters.flattenBottom}
+                reflectActualElevation={parameters.reflectActualElevation}
+                openBottom={parameters.openBottom}
+                shellThickness={parameters.shellThickness}
+                hollowBuildings={parameters.hollowBuildings}
+                terrainGridSize={resolvedTerrainGridSize}
+                includeTerrain={parameters.includeTerrain}
+                buildingColor={parameters.buildingColor}
+                terrainColor={parameters.terrainColor}
+                whiteModel={parameters.whiteModel}
+                scale={scale}
+                onScaleChange={setScale}
+                includeSpanningBuildings={parameters.includeSpanningBuildings}
+                pickPoints={pickPoints}
+                excludedBuildingIds={excludedBuildingIds}
+                onExcludedBuildingIdsChange={setExcludedBuildingIds}
+                isDevMode={isDevMode}
+                onTerrainResolutionBoostChange={setTerrainResolutionBoost}
+                buildingsVisible={buildingsVisible}
+                onBuildingsVisibleChange={setBuildingsVisible}
+                onBusyChange={setPreviewBusy}
+              />
+            )}
             <LoadingOverlay
-              message={previewBusyFallback ? '処理中...' : pipelineState.message}
-              visible={
-                previewBusyOverlay ||
-                (!pipelineState.background &&
-                  pipelineState.phase !== 'idle' &&
-                  pipelineState.phase !== 'complete')
-              }
+              message={previewBusyFallback ? '処理中...' : pipelineState.message || '処理中...'}
+              visible={previewBusyOverlay}
               progress={previewBusyFallback ? undefined : pipelineState.progress}
             />
-            {pipelineState.background &&
-              !previewBusy &&
-              pipelineState.phase !== 'idle' &&
-              pipelineState.phase !== 'complete' &&
-              pipelineState.phase !== 'error' && (
-                // パラメータ変更による再生成中は、画面を覆わず隅に小さく表示する。
+            {!previewBusy &&
+              (pipelineState.background ||
+                (!pipelineState.background &&
+                  pipelineState.phase !== 'idle' &&
+                  pipelineState.phase !== 'complete' &&
+                  pipelineState.phase !== 'error')) && (
+                // 初回のタイル読み込み・パラメータ変更の再生成中は、画面を覆わず
+                // 隅に小さく表示する（地形・到着済みの建物は操作可能なまま）。
                 <div
-                  data-testid="background-update-indicator"
+                  data-testid="preview-load-indicator"
                   style={{
                     position: 'absolute',
-                    left: '16px',
+                    left: '50%',
                     bottom: '16px',
+                    transform: 'translateX(-50%)',
                     zIndex: 30,
                     display: 'flex',
                     alignItems: 'center',
@@ -1171,6 +1185,10 @@ function App() {
                     color: 'var(--text-dim)',
                     fontSize: '12px',
                     pointerEvents: 'none',
+                    maxWidth: 'calc(100% - 32px)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
                   }}
                 >
                   <style>{`
@@ -1188,7 +1206,10 @@ function App() {
                   `}</style>
                   <span className="machimoki-update-dot" />
                   <span>
-                    更新中… {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
+                    {pipelineState.background
+                      ? '更新中…'
+                      : pipelineState.message || '読み込み中…'}{' '}
+                    {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
                   </span>
                 </div>
               )}
@@ -1236,6 +1257,9 @@ function App() {
               autoTerrainGridSize={autoTerrainGridSize}
               buildingsVisible={buildingsVisible}
               onBuildingsVisibleChange={setBuildingsVisible}
+              previewQuality={previewQuality.tier}
+              previewQualityOverride={previewQuality.override}
+              onPreviewQualityOverrideChange={previewQuality.setOverride}
             />
           )}
           {isCompact && settingsOpen && (
@@ -1264,6 +1288,9 @@ function App() {
                 autoTerrainGridSize={autoTerrainGridSize}
                 buildingsVisible={buildingsVisible}
                 onBuildingsVisibleChange={setBuildingsVisible}
+                previewQuality={previewQuality.tier}
+                previewQualityOverride={previewQuality.override}
+                onPreviewQualityOverrideChange={previewQuality.setOverride}
               />
             </>
           )}

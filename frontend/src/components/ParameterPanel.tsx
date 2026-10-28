@@ -1,6 +1,11 @@
 import React, { useRef } from 'react'
 import type { Lod } from '../lib/catalogApi'
 import { TERRAIN_GRID_PRESETS } from '../lib/previewBudget'
+import {
+  PREVIEW_QUALITY_PROFILES,
+  type PreviewQualityOverride,
+  type PreviewQualityTier,
+} from '../lib/previewQuality'
 
 export interface Parameters {
   terrainThickness: number
@@ -32,6 +37,11 @@ interface ParameterPanelProps {
   /** スマホではサイドパネルではなくボトムシートとして表示する。 */
   mobile?: boolean
   onClose?: () => void
+  /** 自動判定された現在の3Dプレビュー品質。 */
+  previewQuality: PreviewQualityTier
+  /** auto / high / medium / low の手動上書き。 */
+  previewQualityOverride: PreviewQualityOverride
+  onPreviewQualityOverrideChange: (value: PreviewQualityOverride) => void
 }
 
 function ParameterPanel({
@@ -44,6 +54,9 @@ function ParameterPanel({
   onBuildingsVisibleChange,
   mobile = false,
   onClose,
+  previewQuality,
+  previewQualityOverride,
+  onPreviewQualityOverrideChange,
 }: ParameterPanelProps) {
   const handleChange = <K extends keyof Parameters>(key: K, value: Parameters[K]) => {
     onChange({ ...parameters, [key]: value })
@@ -133,6 +146,46 @@ function ParameterPanel({
               閉じる
             </button>
           )}
+        </div>
+
+        {/* Preview quality */}
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '12px',
+              marginBottom: '6px',
+              color: 'var(--text-dim)',
+            }}
+          >
+            3Dプレビュー画質
+          </label>
+          <select
+            data-testid="preview-quality-select"
+            value={previewQualityOverride}
+            onChange={(e) =>
+              onPreviewQualityOverrideChange(e.target.value as PreviewQualityOverride)
+            }
+            style={{
+              width: '100%',
+              padding: '8px',
+              background: 'var(--border)',
+              border: '1px solid var(--border-strong)',
+              color: 'var(--text)',
+              borderRadius: '4px',
+              fontSize: '14px',
+            }}
+          >
+            <option value="auto">
+              端末に合わせる（{PREVIEW_QUALITY_PROFILES[previewQuality].label}）
+            </option>
+            <option value="high">高画質</option>
+            <option value="medium">標準</option>
+            <option value="low">軽量</option>
+          </select>
+          <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '6px 0 0' }}>
+            影・MSAA・AO・解像度のみ変更します。建物とエクスポート品質は変わりません。
+          </p>
         </div>
 
         {/* Display Colors */}

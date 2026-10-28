@@ -42,6 +42,7 @@ import '../lib/manifoldRuntime'
 CreditDisplay.cesiumCredit = new Credit('© Cesium', true)
 
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
+import type { PreviewQualityProfile } from '../lib/previewQuality'
 import type { PipelineState } from '../types/pipeline'
 import {
   resolveMuniCodes,
@@ -299,7 +300,7 @@ function saveTilesetOriginal(ts: Cesium3DTileset, saved: WhiteModelSaved | undef
 // 現行より弱い設定(intensity 0.4 / bias 0.5 / lengthCap 0.5)にすると、
 // 中距離で出ていた地形上面の水平縞・壁面の網目モアレが実用上消え、
 // 建物足元の薄い接地の締まりは残る(実測確認済み)。
-function applyPreviewAo(viewer: Viewer): void {
+function applyPreviewAo(viewer: Viewer, enabled = true): void {
   try {
     const ao = (
       viewer.scene.postProcessStages as unknown as {
@@ -310,7 +311,8 @@ function applyPreviewAo(viewer: Viewer): void {
       }
     ).ambientOcclusion
     if (!ao) return
-    ao.enabled = true
+    ao.enabled = enabled
+    if (!enabled) return
     ao.uniforms['intensity'] = 0.4
     ao.uniforms['bias'] = 0.5
     ao.uniforms['lengthCap'] = 0.5
@@ -376,17 +378,18 @@ function applyWhiteModelLook(
   enabled: boolean,
   imagery: { current: { brightness: number; saturation: number } | null },
   saved: WhiteModelSaved,
+  quality: PreviewQualityProfile,
 ): void {
   if (!enabled) {
-    // 白模型OFF時は常に影を有効化する（起動時点の値に依存させない）
+    // 白模型OFF時も軽量ティアでは影を無効化する。
     try {
-      viewer.shadows = true
+      viewer.shadows = quality.shadows
     } catch {
       void 0
     }
     // 白模型OFF時も接地の締まり(AO)を残す。無いと白い建物と地形の境界が
-    // 溶けて見えるため。
-    applyPreviewAo(viewer)
+    // 溶けて見えるため。ただし軽量ティアではAOを無効化する。
+    applyPreviewAo(viewer, quality.ambientOcclusion)
     try {
       const fog = viewer.scene.fog
       if (fog) {
@@ -725,6 +728,10 @@ interface TilesetStatsLike {
   numberOfTilesProcessing: number
   numberOfTrianglesSelected: number
   numberOfCommands: number
+  numberOfFeaturesSelected?: number
+  numberOfFeaturesLoaded?: number
+  numberOfTilesWithContentReady?: number
+  numberOfTilesTotal?: number
 }
 
 function tilesetStats(ts: Cesium3DTileset): TilesetStatsLike {
@@ -733,6 +740,8 @@ function tilesetStats(ts: Cesium3DTileset): TilesetStatsLike {
 
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
+  /** 端末に応じた描画品質（影・MSAA・AO・解像度）。 */
+  quality: PreviewQualityProfile
   lod: Lod
   onPipelineStateChange?: (state: PipelineState) => void
   showTerrainImagery?: boolean
@@ -770,6 +779,7 @@ interface Preview3DProps {
 
 export default function Preview3D({
   selectionBounds,
+  quality,
   lod,
   onPipelineStateChange,
   showTerrainImagery = false,
@@ -1426,6 +1436,11 @@ export default function Preview3D({
       shadows: !whiteModelRef.current,
     })
 
+    // 端末ティアに応じた描画解像度・MSAA。Cesiumは既定でCSSピクセル描画なので、
+    // ここではさらに負荷の高い端末だけ解像度を落とす。
+    ;(viewer as unknown as { resolutionScale: number }).resolutionScale = quality.resolutionScale
+    viewer.scene.msaaSamples = quality.msaaSamples
+
     viewer.scene.backgroundColor = Color.fromCssColorString('#0d1117')
     viewer.scene.globe.baseColor = Color.fromCssColorString('#5a7a9a')
     viewer.scene.globe.enableLighting = true
@@ -1532,14 +1547,14 @@ export default function Preview3D({
     // 同じ 0.7 にする。0.35 では日陰面が暗く沈み、浅い角度で壁面が多く見える
     // 向きだとモデル全体が灰色に見えていた（浅視点の暗画素 54% → 0.7で0.5%）。
     shadowMap.darkness = 0.7
-    shadowMap.maximumDistance = 20000.0
+    shadowMap.maximumDistance = quality.shadowMaximumDistance
 
     // 影のエッジを柔らかくする softShadows(PCF) はフラット面にモアレを生むため使えない。
     // 代わりに FXAA(1パスのポストプロセス)を有効化し、輪郭や影エッジのジャギーを
     // 低負荷で軽減する。シーンは単色のためテクスチャがぼける副作用は出にくい。
     viewer.scene.postProcessStages.fxaa.enabled = true
 
-    applyWhiteModelLook(viewer, whiteModelRef.current, gsiLayerRef, whiteModelSavedRef.current)
+    applyWhiteModelLook(viewer, whiteModelRef.current, gsiLayerRef, whiteModelSavedRef.current, quality)
 
     // 直接配信の quantized-mesh (Ion不要) のみ使用
     const directTerrainUrl =
@@ -1718,7 +1733,7 @@ export default function Preview3D({
       createGsiImageryProvider(gsiStyle),
     )
     if (whiteModelRef.current) {
-      applyWhiteModelLook(viewer, true, gsiLayerRef, whiteModelSavedRef.current)
+      applyWhiteModelLook(viewer, true, gsiLayerRef, whiteModelSavedRef.current, quality)
     }
     applyContour(viewer, gsiStyle)
     viewer.scene.requestRender()
@@ -1744,6 +1759,7 @@ export default function Preview3D({
       console.log('[Preview3D] No viewer yet, returning')
       return
     }
+    const baseLoadStartedAt = performance.now()
 
     // 最終形状が表示中/生成中はベースプレビューの再構築を後回しにする。
     // 初回ロード（ベース未構築）や選択範囲の変更（新しいデータセット）は
@@ -2643,6 +2659,27 @@ export default function Preview3D({
           message: '完了',
           error: null,
         })
+        const loadProfile = {
+          quality: quality.tier,
+          loadMs: Math.round(performance.now() - baseLoadStartedAt),
+          tilesets: loadedTilesets.length,
+          canvas: { width: viewer!.canvas.width, height: viewer!.canvas.height },
+          statistics: loadedTilesets.map((ts) => {
+            const st = tilesetStats(ts)
+            return {
+              triangles: st.numberOfTrianglesSelected,
+              commands: st.numberOfCommands,
+              features: st.numberOfFeaturesSelected,
+              featuresLoaded: st.numberOfFeaturesLoaded,
+              tilesReady: st.numberOfTilesWithContentReady,
+              tilesTotal: st.numberOfTilesTotal,
+              memoryBytes: ts.totalMemoryUsageInBytes,
+            }
+          }),
+        }
+        ;(window as unknown as { __previewLoadProfile?: unknown }).__previewLoadProfile =
+          loadProfile
+        console.log('[Preview3D] load profile', loadProfile)
         // ベースプレビューの準備完了。最終形状の自動生成を開始できる。
         baseReadyRef.current = true
       } catch (err) {
@@ -3613,7 +3650,7 @@ export default function Preview3D({
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer) return
-    applyWhiteModelLook(viewer, whiteModel, gsiLayerRef, whiteModelSavedRef.current)
+    applyWhiteModelLook(viewer, whiteModel, gsiLayerRef, whiteModelSavedRef.current, quality)
     for (const ts of tilesetsRef.current) {
       applyWhiteModelToTileset(ts, whiteModel, whiteModelSavedRef.current)
       if (ts.customShader) {
@@ -3627,7 +3664,22 @@ export default function Preview3D({
       }
     }
     viewer.scene.requestRender()
-  }, [whiteModel])
+  }, [whiteModel, quality])
+
+  // 自動/手動の品質ティア変更を、生成済みViewerへ反映する。
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    viewer.resolutionScale = quality.resolutionScale
+    viewer.scene.msaaSamples = quality.msaaSamples
+    viewer.shadows = quality.shadows
+    const shadowMap = viewer.scene.shadowMap
+    shadowMap.enabled = quality.shadows
+    shadowMap.size = quality.shadowMapSize
+    shadowMap.maximumDistance = quality.shadowMaximumDistance
+    applyPreviewAo(viewer, quality.ambientOcclusion)
+    viewer.scene.requestRender()
+  }, [quality])
 
   useEffect(() => {
     const viewer = viewerRef.current
