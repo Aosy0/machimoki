@@ -116,7 +116,7 @@ function colorToLinearCartesian3(color: Color): Cartesian3 {
   )
 }
 
-export const DEFAULT_BUILDING_COLOR = '#f4f1ea'
+export const DEFAULT_BUILDING_COLOR = '#ffffff'
 const WHITE_MODEL_AMBIENT_BOOST = 0.2
 
 /** 3Dビューのプリセット。heading/pitch(度) と真上表示フラグ。 */
