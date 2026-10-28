@@ -22,6 +22,8 @@ Options:
   --headed                        ブラウザを表示
   --viewport <WxH>                既定: 1280x720 (--device 指定時はデバイス値)
   --device <name>                 Playwrightデバイス名 (例: iPhone 15, Pixel 9)
+  --network <slow4g>              ネットワークをSlow 4G相当に制限
+  --profile                       3Dプレビューの読み込みプロファイルを出力
   --timeout <ms>                  既定: 30000
   --export                        preview 後にエクスポートを実行
   --export-out <path>             エクスポート先 (既定: .screenshots/export-<timestamp>)
@@ -84,6 +86,8 @@ async function main() {
         headed: { type: 'boolean', default: false },
         viewport: { type: 'string', default: '1280x720' },
         device: { type: 'string' },
+        network: { type: 'string' },
+        profile: { type: 'boolean', default: false },
         timeout: { type: 'string', default: '30000' },
         export: { type: 'boolean', default: false },
         'export-out': { type: 'string' },
@@ -105,6 +109,11 @@ async function main() {
     return
   }
 
+  if (values.network !== undefined && values.network !== 'slow4g') {
+    process.stderr.write(`不明な --network: ${values.network}（slow4g のみ対応）\n`)
+    process.exitCode = 1
+    return
+  }
   if (!['map', 'drag', 'preview', 'touch'].includes(values.scenario)) {
     process.stderr.write(`不明な scenario: ${values.scenario}\n${USAGE}`)
     process.exitCode = 1
@@ -138,7 +147,9 @@ async function main() {
     scenario: values.scenario,
     url: baseUrl,
     device: deviceName,
+    network: values.network ?? 'none',
     viewport: `${effectiveViewport.width}x${effectiveViewport.height}`,
+    previewProfile: null,
     selection: null,
     selectionInfo: null,
     pipeline: null,
@@ -197,6 +208,20 @@ async function main() {
       timeout,
     })
     webglError = (await page.locator('[data-testid="map2d-webgl-error"]').count()) > 0
+
+    // アプリ本体（Viteの開発用モジュール）は通常速度で読み込み、3Dタイル取得だけを
+    // モバイル回線相当にする。goto前に絞ると開発サーバー自体がタイムアウトするため。
+    if (values.network === 'slow4g') {
+      const networkCdp = await context.newCDPSession(page)
+      await networkCdp.send('Network.enable')
+      await networkCdp.send('Network.emulateNetworkConditions', {
+        offline: false,
+        latency: 150,
+        downloadThroughput: 200000,
+        uploadThroughput: 84480,
+        connectionType: 'cellular4g',
+      })
+    }
 
     const applyBounds = async () => {
       if (bounds.length !== 4) {
@@ -313,6 +338,12 @@ async function main() {
       } catch {
         cesiumReady = await page.evaluate(() => Boolean(window.__cesiumViewer))
         pipeline = 'timeout'
+      }
+
+      if (values.profile) {
+        result.previewProfile = await page.evaluate(
+          () => window.__previewLoadProfile ?? null,
+        )
       }
 
       if (values.export) {
