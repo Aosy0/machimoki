@@ -260,6 +260,7 @@ function App() {
     errorMessage: selectionErrorMessage,
     clearError: clearSelectionError,
     selectCurrentView,
+    reset: resetSelection,
   } = useMapLibreRectangleSelection(
     mapLibreMap,
     handleSelectionPreview,
@@ -908,6 +909,7 @@ function App() {
             bounds={selectionBounds}
             scale={scale}
             previewRef={selectionInfoPreviewRef}
+            onClear={resetSelection}
           />
           {mapFailed && (
             <div

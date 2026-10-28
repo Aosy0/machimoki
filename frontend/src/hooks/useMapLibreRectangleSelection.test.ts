@@ -237,6 +237,49 @@ describe('createMapLibreSelectionController', () => {
     controller.destroy()
   })
 
+  it('Escで確定済みの範囲を解除する', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let cleared = 0
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (): void => {},
+      onClearSelection: (): void => {
+        cleared += 1
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    canvas.dispatch('mousemove', { clientX: 110, clientY: 90 })
+    globalTarget.dispatch('mouseup', {})
+    globalTarget.dispatch('keydown', { key: 'Escape' })
+    assert.equal(cleared, 1)
+    // 解除済みなら2回目は呼ばない
+    globalTarget.dispatch('keydown', { key: 'Escape' })
+    assert.equal(cleared, 1)
+    controller.destroy()
+  })
+
+  it('入力欄の編集中はEscで解除しない', () => {
+    const { map, canvas } = createMockMap()
+    const globalTarget = new FakeTarget()
+    let cleared = 0
+    const controller = createMapLibreSelectionController({
+      map,
+      globalTarget: globalTarget as unknown as Window,
+      onSelection: (): void => {},
+      onClearSelection: (): void => {
+        cleared += 1
+      },
+    })
+    canvas.dispatch('mousedown', mouseDown(10, 10, true))
+    canvas.dispatch('mousemove', { clientX: 110, clientY: 90 })
+    globalTarget.dispatch('mouseup', {})
+    globalTarget.dispatch('keydown', { key: 'Escape', target: { tagName: 'INPUT' } })
+    assert.equal(cleared, 0)
+    controller.destroy()
+  })
+
   it('上限超過時は既存bounds保持＋エラーにする', () => {
     const { map, canvas } = createMockMap()
     const wideMap: SelectionMapLike = {

@@ -102,6 +102,8 @@ export interface SelectionControllerOptions {
   onHover?: (handle: ResizeHandle | null) => void
   onError?: (message: string) => void
   onDrawingChange?: (drawing: boolean) => void
+  /** 確定済み範囲の解除（Esc）。 */
+  onClearSelection?: () => void
   /** 初期モード。既定は移動モード。 */
   mode?: MapInteractionMode
 }
@@ -199,6 +201,7 @@ export function createMapLibreSelectionController(
   const onHover = options.onHover ?? ((): void => {})
   const onError = options.onError ?? ((): void => {})
   const onDrawingChange = options.onDrawingChange ?? ((): void => {})
+  const onClearSelection = options.onClearSelection ?? ((): void => {})
   let mode: MapInteractionMode = options.mode ?? 'move'
 
   map.boxZoom.disable()
@@ -243,6 +246,17 @@ export function createMapLibreSelectionController(
   }
 
   const canvas = map.getCanvas()
+
+  // display:none のタブ（3Dプレビュー等）では Esc で選択を消さない。
+  // テスト用モックには getBoundingClientRect が無いため、その場合は可視扱いにする。
+  const isCanvasVisible = (): boolean => {
+    const maybeCanvas = canvas as unknown as {
+      getBoundingClientRect?: () => { width: number; height: number }
+    }
+    if (typeof maybeCanvas.getBoundingClientRect !== 'function') return true
+    const rect = maybeCanvas.getBoundingClientRect()
+    return rect.width > 0 || rect.height > 0
+  }
 
   const toLocal = (clientX: number, clientY: number): SelectionPoint => {
     const maybeCanvas = canvas as unknown as {
@@ -721,6 +735,20 @@ export function createMapLibreSelectionController(
   const handleKeyDown = (e: unknown): void => {
     if (typeof e !== 'object' || e === null) return
     if ((e as Record<string, unknown>)['key'] !== 'Escape') return
+    // 座標入力などの編集中はEscを横取りしない。
+    const target = (e as Record<string, unknown>)['target']
+    if (typeof target === 'object' && target !== null) {
+      const record = target as Record<string, unknown>
+      const tag = record['tagName']
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        record['isContentEditable'] === true
+      ) {
+        return
+      }
+    }
     if (resizeHandle !== null) {
       if (resizeStartBounds !== null) {
         onPreview(resizeStartBounds)
@@ -730,7 +758,18 @@ export function createMapLibreSelectionController(
       onHover(null)
       return
     }
-    cancelDraw()
+    if (drawing) {
+      cancelDraw()
+      return
+    }
+    // 確定済み範囲があれば解除する（ドラッグ中は従来どおり中断のみ）。
+    if (currentBounds !== null && isCanvasVisible()) {
+      currentBounds = null
+      hoverHandle = null
+      setCursor(null)
+      onHover(null)
+      onClearSelection()
+    }
   }
 
   const cancelAll = (): void => {
@@ -857,6 +896,17 @@ export function useMapLibreRectangleSelection(
     controllerRef.current?.setMode(mode)
   }, [mode])
 
+  const clearError = useCallback((): void => {
+    setErrorMessage(null)
+  }, [])
+
+  const reset = useCallback((): void => {
+    controllerRef.current?.cancel()
+    setIsDrawing(false)
+    setSelectionBounds(null)
+    setErrorMessage(null)
+  }, [])
+
   useEffect(() => {
     if (!map || typeof window === 'undefined') return
     const controller = createMapLibreSelectionController({
@@ -880,6 +930,7 @@ export function useMapLibreRectangleSelection(
         setErrorMessage(message)
       },
       onDrawingChange: setIsDrawing,
+      onClearSelection: reset,
     })
     controllerRef.current = controller
     controller.setBounds(boundsRef.current)
@@ -887,23 +938,12 @@ export function useMapLibreRectangleSelection(
       controller.destroy()
       controllerRef.current = null
     }
-  }, [map])
+  }, [map, reset])
 
   useEffect(() => {
     boundsRef.current = selectionBounds
     controllerRef.current?.setBounds(selectionBounds)
   }, [selectionBounds])
-
-  const clearError = useCallback((): void => {
-    setErrorMessage(null)
-  }, [])
-
-  const reset = useCallback((): void => {
-    controllerRef.current?.cancel()
-    setIsDrawing(false)
-    setSelectionBounds(null)
-    setErrorMessage(null)
-  }, [])
 
   const selectCurrentView = useCallback((): void => {
     controllerRef.current?.selectCurrentView()
