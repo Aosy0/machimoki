@@ -5,14 +5,14 @@ import { mkdirSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright'
+import { chromium, devices } from 'playwright'
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 
 const USAGE = `Usage: node scripts/verify-ui.mjs [options]
 
 Options:
-  --scenario <map|drag|preview>   シナリオ (既定: map)
+  --scenario <map|drag|preview|touch> シナリオ (既定: map)
   --bounds <west,south,east,north>
   --drag <x1,y1,x2,y2>            0〜1 の相対座標 (scenario=drag)
   --shot                          スクリーンショットを保存
@@ -20,7 +20,8 @@ Options:
   --selector <css>                指定要素だけ撮影
   --clip <x,y,w,h>                指定矩形だけ撮影
   --headed                        ブラウザを表示
-  --viewport <WxH>                既定: 1280x720
+  --viewport <WxH>                既定: 1280x720 (--device 指定時はデバイス値)
+  --device <name>                 Playwrightデバイス名 (例: iPhone 15, Pixel 9)
   --timeout <ms>                  既定: 30000
   --export                        preview 後にエクスポートを実行
   --export-out <path>             エクスポート先 (既定: .screenshots/export-<timestamp>)
@@ -82,6 +83,7 @@ async function main() {
         clip: { type: 'string' },
         headed: { type: 'boolean', default: false },
         viewport: { type: 'string', default: '1280x720' },
+        device: { type: 'string' },
         timeout: { type: 'string', default: '30000' },
         export: { type: 'boolean', default: false },
         'export-out': { type: 'string' },
@@ -103,7 +105,7 @@ async function main() {
     return
   }
 
-  if (!['map', 'drag', 'preview'].includes(values.scenario)) {
+  if (!['map', 'drag', 'preview', 'touch'].includes(values.scenario)) {
     process.stderr.write(`不明な scenario: ${values.scenario}\n${USAGE}`)
     process.exitCode = 1
     return
@@ -118,17 +120,33 @@ async function main() {
   }
   const timeout = Number(values.timeout) || 30000
   const bounds = values.bounds ? parseNumbers(values.bounds) : []
+  const deviceName = values.device ?? (values.scenario === 'touch' ? 'iPhone 15' : null)
+  const device = deviceName ? devices[deviceName] : null
+  if (deviceName && !device) {
+    process.stderr.write(
+      `不明な --device: ${deviceName}\n利用可能: ${Object.keys(devices).join(', ')}\n`,
+    )
+    process.exitCode = 1
+    return
+  }
+  const effectiveViewport = device ? device.viewport : viewport
+  const contextOptions = device ? { ...device } : { viewport }
 
   const startedAt = Date.now()
   const result = {
     ok: false,
     scenario: values.scenario,
     url: baseUrl,
-    viewport: values.viewport,
+    device: deviceName,
+    viewport: `${effectiveViewport.width}x${effectiveViewport.height}`,
     selection: null,
     selectionInfo: null,
     pipeline: null,
     cesiumReady: false,
+    longPressSelection: null,
+    selectModeChanged: null,
+    twoFingerSelectionUnchanged: null,
+    modeHint: null,
     consoleErrors: [],
     pageErrors: [],
     shot: null,
@@ -154,7 +172,7 @@ async function main() {
   })
 
   try {
-    const context = await browser.newContext({ viewport })
+    const context = await browser.newContext(contextOptions)
     const page = await context.newPage()
     page.setDefaultTimeout(timeout)
 
@@ -174,7 +192,7 @@ async function main() {
     let exportBytes = null
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' })
-    await page.waitForSelector('[data-testid="map2d-coord-panel"]', {
+    await page.waitForSelector('[data-testid="map2d-container"]', {
       state: 'attached',
       timeout,
     })
@@ -220,6 +238,56 @@ async function main() {
       await page.mouse.up()
       await page.keyboard.up('Shift')
       selectionInfo = await readSelectionInfo()
+    } else if (values.scenario === 'touch') {
+      const cdp = await context.newCDPSession(page)
+      const canvas = page.locator('.maplibregl-canvas').first()
+      const box = await canvas.boundingBox()
+      if (!box) throw new Error('.maplibregl-canvas の boundingBox を取得できません')
+      const pt = (rx, ry) => ({ x: box.x + box.width * rx, y: box.y + box.height * ry })
+      const dispatch = async (type, points) => {
+        await cdp.send('Input.dispatchTouchEvent', {
+          type,
+          touchPoints: points.map((p, i) => ({
+            x: p.x,
+            y: p.y,
+            id: i,
+            radiusX: 8,
+            radiusY: 8,
+            force: 1,
+          })),
+        })
+      }
+      const readBounds = () =>
+        page.evaluate(() => localStorage.getItem('machimoki.selectionBounds'))
+
+      // 1) 移動モード: 1本指長押し→ドラッグで矩形選択
+      await dispatch('touchStart', [pt(0.2, 0.3)])
+      await page.waitForTimeout(420)
+      await dispatch('touchMove', [pt(0.55, 0.55)])
+      await dispatch('touchEnd', [])
+      result.longPressSelection = await readBounds()
+      selectionInfo = await readSelectionInfo()
+
+      // 2) 範囲選択モード: 1本指ドラッグで矩形選択
+      await page.locator('[data-testid="map-mode-select"]').click()
+      result.modeHint =
+        (await page.locator('[data-testid="map-mode-hint"]').textContent()) ?? null
+      const beforeSelect = await readBounds()
+      await dispatch('touchStart', [pt(0.3, 0.2)])
+      await dispatch('touchMove', [pt(0.7, 0.5)])
+      await dispatch('touchEnd', [])
+      const afterSelect = await readBounds()
+      result.selectModeChanged = beforeSelect !== afterSelect
+      selectionInfo = await readSelectionInfo()
+
+      // 3) 2本指はモードに関係なく移動＋拡大。選択は置き換わらない。
+      const beforeTwo = await readBounds()
+      await dispatch('touchStart', [pt(0.3, 0.4), pt(0.5, 0.4)])
+      await dispatch('touchMove', [pt(0.34, 0.44), pt(0.54, 0.44)])
+      await dispatch('touchEnd', [])
+      const afterTwo = await readBounds()
+      result.twoFingerSelectionUnchanged = beforeTwo === afterTwo
+      selectionInfo = await readSelectionInfo()
     } else {
       await applyBounds()
       await page.getByRole('button', { name: '3Dプレビュー' }).click()
@@ -248,6 +316,10 @@ async function main() {
       }
 
       if (values.export) {
+        // スマホでは設定がボトムシート内にあるため、先に開く。
+        if (await page.locator('[data-testid="open-settings"]').isVisible().catch(() => false)) {
+          await page.locator('[data-testid="open-settings"]').click()
+        }
         await page.click('[data-testid="export-button"]')
         const download = await page.waitForEvent('download', { timeout })
         const suggested = download.suggestedFilename() ?? 'export.glb'
@@ -287,14 +359,21 @@ async function main() {
       values.scenario === 'preview'
         ? cesiumReady && pipeline === 'complete'
         : selectionInfo !== null
+    const touchOk =
+      values.scenario !== 'touch' ||
+      (result.longPressSelection !== null &&
+        result.selectModeChanged === true &&
+        result.twoFingerSelectionUnchanged === true)
 
     result.ok =
       !webglError &&
       result.pageErrors.length === 0 &&
       scenarioOk &&
+      touchOk &&
       (!values['fail-on-console'] || result.consoleErrors.length === 0)
     if (webglError) result.error = 'webgl-error'
     else if (!scenarioOk) result.error = `scenario-${values.scenario}-failed`
+    else if (!touchOk) result.error = 'scenario-touch-assertion-failed'
     else if (values['fail-on-console'] && result.consoleErrors.length > 0)
       result.error = 'console-errors'
   } catch (err) {
