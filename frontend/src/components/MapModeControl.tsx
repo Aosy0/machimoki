@@ -11,23 +11,28 @@ export interface MapModeControlProps {
   legendOpen: boolean
   onToggleCoords: () => void
   onToggleLegend: () => void
+  /** 初回ヒントを拡大表示中か。 */
+  attention: boolean
+  /** ヘルプ詳細が開いているか。 */
+  helpOpen: boolean
+  onToggleHelp: () => void
+  /** 初回ヒントを既読にする（操作開始時に呼ぶ）。 */
+  onDismissHint: () => void
 }
 
-function hintText(mode: MapInteractionMode, hasCoarsePointer: boolean): string {
-  if (mode === 'move') {
-    return hasCoarsePointer
-      ? '1本指で移動 / 長押し→ドラッグで範囲選択'
-      : '左ドラッグで移動 / Shift+左ドラッグで範囲選択'
-  }
+function hintText(hasCoarsePointer: boolean): string {
   return hasCoarsePointer
-    ? '1本指で範囲選択 / 2本指で移動・拡大'
-    : '左ドラッグで範囲選択 / Shift+左ドラッグで移動'
+    ? '下の「移動」「範囲選択」でモード切替'
+    : '下の「移動」「範囲選択」ボタンでモード切替'
 }
 
 /**
  * 地図下のモード切替と補助操作。モードが変えるのは主入力
  * （PC=左クリック / タッチ=1本指）だけで、右/中ドラッグ・2本指・
  * ホイール・ハンドルはモード非依存。
+ *
+ * 上部のヒントはヘルプ詳細を開くボタンでもある。初回だけ同じ文言のまま
+ * 少し拡大し、操作開始または2.5秒で通常サイズに戻る。
  */
 export default function MapModeControl({
   mode,
@@ -39,6 +44,10 @@ export default function MapModeControl({
   legendOpen,
   onToggleCoords,
   onToggleLegend,
+  attention,
+  helpOpen,
+  onToggleHelp,
+  onDismissHint,
 }: MapModeControlProps) {
   const buttonHeight = isCompact ? 40 : 32
   const modeButtonStyle = (active: boolean): React.CSSProperties => ({
@@ -68,6 +77,27 @@ export default function MapModeControl({
     whiteSpace: 'nowrap',
   })
 
+  const handleModeChange = (next: MapInteractionMode): void => {
+    onDismissHint()
+    onChange(next)
+  }
+  const handleSelectCurrentView = (): void => {
+    onDismissHint()
+    onSelectCurrentView()
+  }
+  const handleToggleCoords = (): void => {
+    onDismissHint()
+    onToggleCoords()
+  }
+  const handleToggleLegend = (): void => {
+    onDismissHint()
+    onToggleLegend()
+  }
+  const handleToggleHelp = (): void => {
+    onDismissHint()
+    onToggleHelp()
+  }
+
   return (
     <div
       data-testid="map-mode-control"
@@ -85,23 +115,66 @@ export default function MapModeControl({
         pointerEvents: 'none',
       }}
     >
-      <div
-        data-testid="map-mode-hint"
+      <button
+        type="button"
+        className="map-mode-hint"
+        data-testid="map-mode-help"
+        data-state={attention ? 'attention' : 'compact'}
+        aria-expanded={helpOpen}
+        aria-controls="help-detail"
+        aria-label="操作方法を開く"
+        title={helpOpen ? '操作方法を閉じる' : '操作方法を開く'}
+        onClick={handleToggleHelp}
         style={{
-          padding: '4px 10px',
+          display: helpOpen ? 'none' : 'inline-flex',
+          alignItems: 'center',
+          gap: attention ? (isCompact ? 8 : 10) : isCompact ? 6 : 8,
+          minHeight: isCompact ? 44 : 34,
+          maxWidth: '100%',
+          padding: attention
+            ? isCompact
+              ? '10px 14px'
+              : '10px 18px'
+            : isCompact
+              ? '7px 12px'
+              : '5px 12px',
           borderRadius: 999,
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          color: 'var(--text-dim)',
-          fontSize: isCompact ? 11 : 11,
-          lineHeight: 1.5,
-          textAlign: 'center',
-          backdropFilter: 'blur(8px)',
-          pointerEvents: 'none',
+          fontFamily: 'inherit',
+          pointerEvents: 'auto',
         }}
       >
-        {hintText(mode, hasCoarsePointer)}
-      </div>
+        <span className="map-mode-hint__badge" aria-hidden="true">
+          ?
+        </span>
+        <span
+          className="map-mode-hint__text"
+          data-testid="map-mode-hint"
+          style={{
+            fontSize: attention ? (isCompact ? 16 : 18) : isCompact ? 11 : 12,
+            lineHeight: 1.5,
+            textAlign: 'center',
+            minWidth: 0,
+          }}
+        >
+          {hintText(hasCoarsePointer)}
+        </span>
+        <svg
+          className="map-mode-hint__chevron"
+          width="16"
+          height="16"
+          viewBox="0 0 12 12"
+          aria-hidden="true"
+        >
+          <path
+            d="M2 8l4-4 4 4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
       <div
         style={{
           display: 'flex',
@@ -122,7 +195,7 @@ export default function MapModeControl({
           type="button"
           aria-pressed={mode === 'move'}
           data-testid="map-mode-move"
-          onClick={() => onChange('move')}
+          onClick={() => handleModeChange('move')}
           style={modeButtonStyle(mode === 'move')}
         >
           移動
@@ -131,7 +204,7 @@ export default function MapModeControl({
           type="button"
           aria-pressed={mode === 'select'}
           data-testid="map-mode-select"
-          onClick={() => onChange('select')}
+          onClick={() => handleModeChange('select')}
           style={modeButtonStyle(mode === 'select')}
         >
           範囲選択
@@ -140,7 +213,7 @@ export default function MapModeControl({
           aria-hidden
           style={{ width: 1, height: 24, background: 'var(--border)', flexShrink: 0 }}
         />
-        <button type="button" onClick={onSelectCurrentView} style={actionStyle()}>
+        <button type="button" onClick={handleSelectCurrentView} style={actionStyle()}>
           現在表示
         </button>
         {isCompact && (
@@ -148,7 +221,7 @@ export default function MapModeControl({
             <button
               type="button"
               aria-pressed={coordsOpen}
-              onClick={onToggleCoords}
+              onClick={handleToggleCoords}
               style={actionStyle(coordsOpen)}
             >
               座標
@@ -156,7 +229,7 @@ export default function MapModeControl({
             <button
               type="button"
               aria-pressed={legendOpen}
-              onClick={onToggleLegend}
+              onClick={handleToggleLegend}
               style={actionStyle(legendOpen)}
             >
               凡例

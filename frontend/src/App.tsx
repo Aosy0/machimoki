@@ -5,7 +5,7 @@ import ParameterPanel from './components/ParameterPanel'
 import type { Parameters } from './components/ParameterPanel'
 import LoadingOverlay from './components/LoadingOverlay'
 import ErrorToast from './components/ErrorToast'
-import HelpPanel from './components/HelpPanel'
+import HelpDetail from './components/HelpDetail'
 import Map2D from './components/Map2D'
 import MapSelectionInfoOverlay from './components/MapSelectionInfoOverlay'
 import MapModeControl from './components/MapModeControl'
@@ -22,6 +22,7 @@ import {
 } from './hooks/useMapLibreRectangleSelection'
 import { useHasCoarsePointer, useIsCompactLayout } from './hooks/useMediaQuery'
 import { usePreviewQuality } from './hooks/usePreviewQuality'
+import { useFirstRunHint } from './hooks/useFirstRunHint'
 import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
@@ -188,6 +189,11 @@ function App() {
   const [pickPoints] = useState<PickPoint[]>([])
   const [excludedBuildingIds, setExcludedBuildingIds] = useState<string[]>([])
   const [helpOpen, setHelpOpen] = useState(false)
+  const [mapInteracted, setMapInteracted] = useState(false)
+  const { attention: hintAttention, dismiss: dismissHint } = useFirstRunHint({
+    active: activeTab === 'map',
+    interacted: mapInteracted,
+  })
   const [pipelineState, setPipelineState] = useState<PipelineState>({
     phase: 'idle',
     progress: 0,
@@ -240,12 +246,7 @@ function App() {
     (handle: ResizeHandle | null) => {
       hoverHandleRef.current = handle
       if (!mapLibreMap) return
-      ensureSelectionHover(
-        mapLibreMap,
-        selectionBoundsRef.current,
-        handle,
-        handleMetrics,
-      )
+      ensureSelectionHover(mapLibreMap, selectionBoundsRef.current, handle, handleMetrics)
     },
     [mapLibreMap, handleMetrics],
   )
@@ -647,6 +648,30 @@ function App() {
     setMapFailed(true)
   }, [])
 
+  // 地図を触ったら初回ヒントを縮小する（タイマー待ちにしない）。
+  useEffect(() => {
+    if (!mapLibreMap) return
+    const handleInteract = (): void => setMapInteracted(true)
+    mapLibreMap.on('mousedown', handleInteract)
+    mapLibreMap.on('touchstart', handleInteract)
+    return () => {
+      mapLibreMap.off('mousedown', handleInteract)
+      mapLibreMap.off('touchstart', handleInteract)
+    }
+  }, [mapLibreMap])
+
+  const closeHelp = useCallback(() => setHelpOpen(false), [])
+  const toggleHelp = useCallback(() => {
+    setMapSheet(null)
+    setHelpOpen((prev) => !prev)
+  }, [])
+  // タブ切替時にヘルプを閉じる（別画面の内容が一瞬出ないように）。
+  const handleTabChange = useCallback((tab: Tab) => {
+    setHelpOpen(false)
+    setActiveTab(tab)
+    if (tab === 'preview') setPreviewMounted(true)
+  }, [])
+
   // タブ復帰時に hidden だった地図・3Dビューをリサイズする。
   // Preview3D / Map2D はマウント維持＋display切替のため、再表示直後は
   // コンテナサイズが 0 のままになり得る。ここで resize して復元する。
@@ -822,10 +847,7 @@ function App() {
           ).map(([tab, label]) => (
             <button
               key={tab}
-              onClick={() => {
-                setActiveTab(tab)
-                if (tab === 'preview') setPreviewMounted(true)
-              }}
+              onClick={() => handleTabChange(tab)}
               style={{
                 padding: isCompact ? '10px 12px' : '12px 20px',
                 background: 'transparent',
@@ -846,7 +868,14 @@ function App() {
           ))}
         </div>
         <button
-          onClick={() => setHelpOpen((v) => !v)}
+          type="button"
+          data-testid="help-trigger"
+          aria-expanded={helpOpen}
+          aria-controls="help-detail"
+          onClick={() => {
+            dismissHint()
+            toggleHelp()
+          }}
           title={helpOpen ? '操作方法を閉じる' : '操作方法'}
           style={{
             marginLeft: 'auto',
@@ -939,12 +968,12 @@ function App() {
             onSelectCurrentView={selectCurrentView}
             coordsOpen={mapSheet === 'coords'}
             legendOpen={mapSheet === 'legend'}
-            onToggleCoords={() =>
-              setMapSheet((prev) => (prev === 'coords' ? null : 'coords'))
-            }
-            onToggleLegend={() =>
-              setMapSheet((prev) => (prev === 'legend' ? null : 'legend'))
-            }
+            onToggleCoords={() => setMapSheet((prev) => (prev === 'coords' ? null : 'coords'))}
+            onToggleLegend={() => setMapSheet((prev) => (prev === 'legend' ? null : 'legend'))}
+            attention={hintAttention}
+            helpOpen={helpOpen}
+            onToggleHelp={toggleHelp}
+            onDismissHint={dismissHint}
           />
           {!isCompact && (
             <div
@@ -1064,6 +1093,7 @@ function App() {
               />
             </div>
           )}
+          <HelpDetail mode="map" isOpen={helpOpen && activeTab === 'map'} onClose={closeHelp} />
         </div>
         <div
           style={{
@@ -1110,7 +1140,7 @@ function App() {
                   </p>
                 </div>
                 <button
-                  onClick={() => setActiveTab('map')}
+                  onClick={() => handleTabChange('map')}
                   style={{
                     marginTop: '4px',
                     padding: '8px 20px',
@@ -1211,9 +1241,7 @@ function App() {
                   `}</style>
                   <span className="machimoki-update-dot" />
                   <span>
-                    {pipelineState.background
-                      ? '更新中…'
-                      : pipelineState.message || '読み込み中…'}{' '}
+                    {pipelineState.background ? '更新中…' : pipelineState.message || '読み込み中…'}{' '}
                     {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
                   </span>
                 </div>
@@ -1247,6 +1275,11 @@ function App() {
                 設定
               </button>
             )}
+            <HelpDetail
+              mode="preview"
+              isOpen={helpOpen && activeTab === 'preview'}
+              onClose={closeHelp}
+            />
           </div>
           {!isCompact && (
             <ParameterPanel
@@ -1304,7 +1337,6 @@ function App() {
             </>
           )}
         </div>
-        <HelpPanel mode={activeTab} isOpen={helpOpen} />
       </div>
 
       <ErrorToast
