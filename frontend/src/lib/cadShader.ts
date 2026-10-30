@@ -1,11 +1,18 @@
 /**
- * CAD調のフラットシェーディング用シェーダー。
+ * CAD調の明るさ計算。地形・最終形状・建物で共通利用する。
  *
  * 面法線をスクリーン空間の微分から求め、環境光0.61＋直射光で陰影を付ける。
- * 地形プレビュー(solidTerrain)と最終形状プレビューで共通利用する。
- * 既定のPBRライティングだと白模型の上面が白飛びし、スムーズ法線だと
- * 壁面に不要なハイライトが出るため、この質感に統一する。
+ * positionEC は視線座標系の位置。
  */
+export const CAD_LIGHTING_GLSL = `
+float cadLightFactor(vec3 positionEC)
+{
+    vec3 flatNormal = normalize(cross(dFdx(positionEC), dFdy(positionEC)));
+    float light = max(dot(flatNormal, normalize(czm_lightDirectionEC)), 0.0);
+    return clamp(0.61 + 0.95 * light, 0.0, 1.0);
+}
+`
+
 export const CAD_VERTEX_SHADER = `
 in vec3 position3DHigh;
 in vec3 position3DLow;
@@ -31,15 +38,12 @@ export const CAD_FRAGMENT_SHADER = `
 in vec3 v_positionEC;
 in vec4 v_color;
 
+${CAD_LIGHTING_GLSL}
+
 void main()
 {
-    // Flat normal from screen-space derivatives — CAD-style per-face shading
-    vec3 flatNormal = normalize(cross(dFdx(v_positionEC), dFdy(v_positionEC)));
-
-    // 建物と同じ光源方向で照らす。明るさバランスは建物(フラットな環境光≈0.61 +
-    // 直射光)に合わせ、影側の面でも建物の環境光面と同じ明度(≈156/255)になるようにする。
-    float light = max(dot(flatNormal, normalize(czm_lightDirectionEC)), 0.0);
-    float lightFactor = clamp(0.61 + 0.95 * light, 0.0, 1.0);
+    // 地形・最終形状・建物で同じ明るさ式を使う（建物はカスタムシェーダーから利用）。
+    float lightFactor = cadLightFactor(v_positionEC);
 
     out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * lightFactor, v_color.a));
 }

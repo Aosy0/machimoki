@@ -207,6 +207,8 @@ function App() {
   const [terrainResolutionBoost, setTerrainResolutionBoost] = useState(false)
   // 3Dプレビューの建物表示ON/OFF（サイドパネルのトグル）。
   const [buildingsVisible, setBuildingsVisible] = useState(true)
+  // 3Dプレビューの影表示ON/OFF（サイドパネルのトグル）。
+  const [shadowsVisible, setShadowsVisible] = useState(true)
   const { isDevMode } = useDeveloperMode()
 
   const [manualCoords, setManualCoords] = useState({
@@ -1153,6 +1155,7 @@ function App() {
                 onTerrainResolutionBoostChange={setTerrainResolutionBoost}
                 buildingsVisible={buildingsVisible}
                 onBuildingsVisibleChange={setBuildingsVisible}
+                shadowsVisible={shadowsVisible}
                 onBusyChange={setPreviewBusy}
               />
             )}
@@ -1259,6 +1262,8 @@ function App() {
               autoTerrainGridSize={autoTerrainGridSize}
               buildingsVisible={buildingsVisible}
               onBuildingsVisibleChange={setBuildingsVisible}
+              shadowsVisible={shadowsVisible}
+              onShadowsVisibleChange={setShadowsVisible}
               previewQuality={previewQuality.tier}
               previewQualityOverride={previewQuality.override}
               onPreviewQualityOverrideChange={previewQuality.setOverride}
@@ -1290,6 +1295,8 @@ function App() {
                 autoTerrainGridSize={autoTerrainGridSize}
                 buildingsVisible={buildingsVisible}
                 onBuildingsVisibleChange={setBuildingsVisible}
+                shadowsVisible={shadowsVisible}
+                onShadowsVisibleChange={setShadowsVisible}
                 previewQuality={previewQuality.tier}
                 previewQualityOverride={previewQuality.override}
                 onPreviewQualityOverrideChange={previewQuality.setOverride}

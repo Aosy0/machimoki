@@ -30,7 +30,6 @@ import {
   Cesium3DTileFeature,
   Material,
   Transforms,
-  srgbToLinear,
   UniformType,
 } from 'cesium'
 import type { BoundingSphere, Cesium3DTile, Primitive, TerrainProvider } from 'cesium'
@@ -43,6 +42,8 @@ CreditDisplay.cesiumCredit = new Credit('© Cesium', true)
 
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PreviewQualityProfile } from '../lib/previewQuality'
+import { sunLightDirection } from '../lib/previewLighting'
+import { CAD_LIGHTING_GLSL } from '../lib/cadShader'
 import type { PipelineState } from '../types/pipeline'
 import {
   resolveMuniCodes,
@@ -108,12 +109,8 @@ import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
 // feature.color に設定して棟単位で乗算させる（ダミー色は白固定）。
 const HOVER_COLOR = Color.fromCssColorString('#ff9800')
 
-function colorToLinearCartesian3(color: Color): Cartesian3 {
-  return new Cartesian3(
-    srgbToLinear(color.red),
-    srgbToLinear(color.green),
-    srgbToLinear(color.blue),
-  )
+function colorToSrgbCartesian3(color: Color): Cartesian3 {
+  return new Cartesian3(color.red, color.green, color.blue)
 }
 
 export const DEFAULT_BUILDING_COLOR = '#ffffff'
@@ -131,10 +128,6 @@ const VIEW_PRESETS = [
   ['bottom', '下から', 0, 90, false],
 ] as const
 
-// 白模型の直射光スケール。1.0だと日向面が純白(255)に張り付いて屋上の階調が消えるため、
-// トーンマッピング後にクリップが残らない値まで落とす(実測: 飽和14.2%→0.04%、平均輝度ほぼ不変)。
-const WHITE_MODEL_LIGHT_COLOR = 0.7
-
 // 地面クランプの余裕(m)。includeTerrain=true では Cesium の地面衝突判定が無効なため、
 // ズームで地形メッシュの裏へ抜けて見えるのを防ぐ(preRender で地表+この値まで戻す)。
 const CAMERA_GROUND_CLEARANCE = 2
@@ -143,32 +136,18 @@ const CAMERA_GROUND_CLEARANCE = 2
 // 下から覗けるよう、地表クランプを底面厚み+この値だけ緩める。
 const CAMERA_UNDER_CLEARANCE = 0.5
 
-// 建物の環境光(IBL拡散)に使う球面調和係数。全方位で一定のL0成分のみにする。
-// 指向性成分(L1/L2)を持つ係数セットでは法線の向きにより環境光が負になる領域が
-// 生まれ、真横＋特定方角から見た壁面が黒く沈む(実測: 真横の建物平均輝度 46/255
-// → L0のみで154)。L0=1.5 は PLATEAU公式チュートリアル tpc06-2 の先頭係数と同じ値。
-// 陰影は直射光(scene.light)のみが作る。
-const FLAT_SH_COEFFICIENTS = [
-  new Cartesian3(1.5, 1.5, 1.5),
-  new Cartesian3(0, 0, 0),
-  new Cartesian3(0, 0, 0),
-  new Cartesian3(0, 0, 0),
-  new Cartesian3(0, 0, 0),
-  new Cartesian3(0, 0, 0),
-  new Cartesian3(0, 0, 0),
-  new Cartesian3(0, 0, 0),
-  new Cartesian3(0, 0, 0),
-]
-
 function createBuildingCustomShader(color: Color): CustomShader {
   return new CustomShader({
     mode: CustomShaderMode.REPLACE_MATERIAL,
-    lightingModel: LightingModel.PBR,
+    // 地形・最終形状と同じCAD調の明るさ計算にする。PBRのままだと
+    // PBR Neutralトーンマップ+linear→sRGBで白が255にならず、
+    // 地形(自作CADシェーダー)と色がズレる。
+    lightingModel: LightingModel.UNLIT,
     translucencyMode: CustomShaderTranslucencyMode.OPAQUE,
     uniforms: {
       u_buildingColor: {
         type: UniformType.VEC3,
-        value: colorToLinearCartesian3(color),
+        value: colorToSrgbCartesian3(color),
       },
       u_ambientBoost: {
         type: UniformType.FLOAT,
@@ -176,17 +155,18 @@ function createBuildingCustomShader(color: Color): CustomShader {
       },
     },
     fragmentShaderText: `
+      ${CAD_LIGHTING_GLSL}
+
       void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
-        // REPLACE_MATERIAL では czm_modelMaterial.specular が既定 vec3(1.0) のまま残る。
-        // PBR の拡散項は (1.0 - F) * diffuse（F は specular から算出）のため、
-        // F0=1 だと diffuse が消えて建物色・ホバー色が描画に反映されない。
-        // 非金属の標準 F0(0.04) を設定して拡散反射を有効にする。
-        material.specular = vec3(0.04);
-        vec3 base = u_buildingColor;
-        material.diffuse = base;
-        if (u_ambientBoost > 0.0) {
-          material.emissive = base * u_ambientBoost;
-        }
+        float lightFactor = clamp(
+          cadLightFactor(fsInput.attributes.positionEC) + u_ambientBoost,
+          0.0,
+          1.0
+        );
+        // UNLITでは material.diffuse(linear) が最後に linear→sRGB される。
+        // 地形のCADシェーダーと同じ表示色になるよう、sRGB側で明るさを掛けてから
+        // linearへ戻す（地形は sRGB のまま v_color * lightFactor を出力している）。
+        material.diffuse = czm_srgbToLinear(u_buildingColor * lightFactor);
         material.alpha = 1.0;
       }
     `,
@@ -230,10 +210,7 @@ function attachOrthographicZoom(viewer: Viewer): () => void {
   let pinchStartDistance: number | null = null
   let pinchStartWidth = 0
   const touchDistance = (touches: TouchList): number =>
-    Math.hypot(
-      touches[0].clientX - touches[1].clientX,
-      touches[0].clientY - touches[1].clientY,
-    )
+    Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
   const onTouchStart = (e: TouchEvent): void => {
     if (viewer.isDestroyed() || e.touches.length !== 2) return
     const frustum = viewer.camera.frustum
@@ -280,20 +257,6 @@ interface WhiteModelSaved {
   fogEnabled: boolean | null
   imageryBrightness: number | null
   imagerySaturation: number | null
-  tilesetOriginals: WeakMap<object, { lightColor?: Cartesian3 }>
-}
-
-function saveTilesetOriginal(ts: Cesium3DTileset, saved: WhiteModelSaved | undefined): void {
-  if (!saved) return
-  if (saved.tilesetOriginals.has(ts as object)) return
-  try {
-    const t = ts as unknown as { lightColor?: Cartesian3 }
-    saved.tilesetOriginals.set(ts as object, {
-      lightColor: t.lightColor?.clone?.() ?? t.lightColor,
-    })
-  } catch {
-    void 0
-  }
 }
 
 // 建物の接地感を出すためのAO。白模型のON/OFFに関わらず両モードで使う。
@@ -322,57 +285,6 @@ function applyPreviewAo(viewer: Viewer, enabled = true): void {
   }
 }
 
-function applyWhiteModelToTileset(
-  ts: Cesium3DTileset,
-  enabled: boolean,
-  saved?: WhiteModelSaved,
-): void {
-  try {
-    const t = ts as unknown as {
-      imageBasedLighting?: {
-        imageBasedLightingFactor?: Cartesian2
-        sphericalHarmonicCoefficients?: Cartesian3[]
-      }
-      lightColor?: Cartesian3
-    }
-    const ibl = t.imageBasedLighting
-    if (enabled) {
-      saveTilesetOriginal(ts, saved)
-      if (ibl) {
-        // 鏡面(specular)=0 で空由来の青い反射を遮断し、拡散光はニュートラルな
-        // 球面調和係数で与える。IBL既定値のままだと白が青く濁って灰色に見える。
-        ibl.imageBasedLightingFactor = new Cartesian2(1.0, 0.0)
-        ibl.sphericalHarmonicCoefficients = FLAT_SH_COEFFICIENTS
-      }
-      if ('lightColor' in ts) {
-        t.lightColor = new Cartesian3(
-          WHITE_MODEL_LIGHT_COLOR,
-          WHITE_MODEL_LIGHT_COLOR,
-          WHITE_MODEL_LIGHT_COLOR,
-        )
-      }
-      return
-    }
-    // OFF時もONと同じ「鏡面IBL無効 + ニュートラルな拡散IBL」にする。Cesium既定の
-    // 環境IBL(暗く青い)のままでは壁面が暗く沈み、視点角度で建物の色が変わる
-    // (実測: 建物平均輝度 俯瞰102.9/低角58.6 → 安定化後 俯瞰166.9/低角161.6)。
-    // 直射光の色(lightColor)だけON時に保存した元の値へ戻す。
-    if (saved) {
-      const original = saved.tilesetOriginals.get(ts as object)
-      if (original && 'lightColor' in ts) {
-        t.lightColor = original.lightColor
-      }
-      saved.tilesetOriginals.delete(ts as object)
-    }
-    if (ibl) {
-      ibl.imageBasedLightingFactor = new Cartesian2(1.0, 0.0)
-      ibl.sphericalHarmonicCoefficients = FLAT_SH_COEFFICIENTS
-    }
-  } catch {
-    void 0
-  }
-}
-
 function applyWhiteModelLook(
   viewer: Viewer,
   enabled: boolean,
@@ -381,12 +293,7 @@ function applyWhiteModelLook(
   quality: PreviewQualityProfile,
 ): void {
   if (!enabled) {
-    // 白模型OFF時も軽量ティアでは影を無効化する。
-    try {
-      viewer.shadows = quality.shadows
-    } catch {
-      void 0
-    }
+    // 影のON/OFFは品質設定と影トグルをまとめて扱う effect が担当する。
     // 白模型OFF時も接地の締まり(AO)を残す。無いと白い建物と地形の境界が
     // 溶けて見えるため。ただし軽量ティアではAOを無効化する。
     applyPreviewAo(viewer, quality.ambientOcclusion)
@@ -425,12 +332,8 @@ function applyWhiteModelLook(
     }
     return
   }
-  // 白模型ON時も建物の落影を描画する（影なしだと平坦で浮いて見えるため）
-  try {
-    viewer.shadows = true
-  } catch {
-    void 0
-  }
+  // 白模型ON時も建物の落影を描画する（影なしだと平坦で浮いて見えるため）。
+  // 実際の影のON/OFFは品質設定と影トグルをまとめて扱う effect が担当する。
   applyPreviewAo(viewer)
   try {
     const fog = viewer.scene.fog
@@ -770,6 +673,8 @@ interface Preview3DProps {
   buildingsVisible?: boolean
   /** 建物表示のON/OFF変更をAppへ通知する（バナーの切替ボタン用）。 */
   onBuildingsVisibleChange?: (visible: boolean) => void
+  /** 影の表示ON/OFF（サイドパネルのトグル）。 */
+  shadowsVisible?: boolean
   /**
    * 重い処理（最終形状生成・断面派生・中空シェル生成）の進行中フラグ。
    * すべて終わるまで true のまま App 側でオーバーレイを維持する。
@@ -804,6 +709,7 @@ export default function Preview3D({
   onTerrainResolutionBoostChange,
   buildingsVisible = true,
   onBuildingsVisibleChange,
+  shadowsVisible = true,
   onBusyChange,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -964,7 +870,6 @@ export default function Preview3D({
     fogEnabled: null,
     imageryBrightness: null,
     imagerySaturation: null,
-    tilesetOriginals: new WeakMap(),
   })
   const registryRef = useRef<Map<string, BuildingListItem>>(new Map())
   const [excludedCount, setExcludedCount] = useState(0)
@@ -1432,8 +1337,8 @@ export default function Preview3D({
       skyBox: false,
       skyAtmosphere: false,
       baseLayer: false,
-      // 白模型ON時は影なしで起動する（OFF時にapplyWhiteModelLookで有効化される）
-      shadows: !whiteModelRef.current,
+      // 影の実効状態(品質×トグル)はマウント後の effect で揃える。
+      shadows: quality.shadows,
     })
 
     // 端末ティアに応じた描画解像度・MSAA。Cesiumは既定でCSSピクセル描画なので、
@@ -1525,8 +1430,14 @@ export default function Preview3D({
     // scene.requestRender() を呼ぶ（カメラ移動・タイル読込はCesiumが自動で再描画する）。
     viewer.scene.requestRenderMode = true
 
+    // 平行光源は選択範囲のローカルENU基準で置く。固定のECEFベクトルだと
+    // 日本付近では太陽高度が70°超になり、地形に落ちる影がほぼ見えなくなる。
+    const lightDirection = sunLightDirection(
+      selectionBounds ? (selectionBounds.west + selectionBounds.east) / 2 : 139.6917,
+      selectionBounds ? (selectionBounds.south + selectionBounds.north) / 2 : 35.6895,
+    )
     const directionalLight = new DirectionalLight({
-      direction: new Cartesian3(0.5, -0.5, -1.0),
+      direction: lightDirection,
     })
     viewer.scene.light = directionalLight
 
@@ -1538,15 +1449,15 @@ export default function Preview3D({
     // softShadows(PCF) はフラット面にモアレ模様が出る既知の不具合があるため無効にする
     // (https://community.cesium.com/t/moire-pattern-when-turning-on-soft-shadows/16011)。
     const shadowMap = viewer.scene.shadowMap
-    shadowMap.enabled = true
+    shadowMap.enabled = quality.shadows
     shadowMap.size = 4096
     shadowMap.softShadows = false
     shadowMap.normalOffset = true
     shadowMap.fadingEnabled = true
-    // 影の暗さ(shadowMap.darkness)を PLATEAU View 5.0 (Map環境) の実運用値と
-    // 同じ 0.7 にする。0.35 では日陰面が暗く沈み、浅い角度で壁面が多く見える
-    // 向きだとモデル全体が灰色に見えていた（浅視点の暗画素 54% → 0.7で0.5%）。
-    shadowMap.darkness = 0.7
+    // 影の暗さを 0.55 にする。0.7(PLATEAU View相当)では地形も建物も白い本アプリで
+    // 落影がほぼ見えず、0.35 では日陰面が暗く沈みモデル全体が灰色に見えていた。
+    // 白い地形の上でも建物の落影が読める中間値として 0.55 を採用する。
+    shadowMap.darkness = 0.55
     shadowMap.maximumDistance = quality.shadowMaximumDistance
 
     // 影のエッジを柔らかくする softShadows(PCF) はフラット面にモアレを生むため使えない。
@@ -1554,7 +1465,13 @@ export default function Preview3D({
     // 低負荷で軽減する。シーンは単色のためテクスチャがぼける副作用は出にくい。
     viewer.scene.postProcessStages.fxaa.enabled = true
 
-    applyWhiteModelLook(viewer, whiteModelRef.current, gsiLayerRef, whiteModelSavedRef.current, quality)
+    applyWhiteModelLook(
+      viewer,
+      whiteModelRef.current,
+      gsiLayerRef,
+      whiteModelSavedRef.current,
+      quality,
+    )
 
     // 直接配信の quantized-mesh (Ion不要) のみ使用
     const directTerrainUrl =
@@ -1886,6 +1803,16 @@ export default function Preview3D({
     }
 
     const bounds = selectionBounds
+    // 選択範囲が変わったら光源の向きも合わせ直す。ローカルENU基準の高度45°で
+    // 一定に保ち、地域による影の見え方の差をなくす。
+    const sceneLight = viewer.scene.light
+    if (sceneLight instanceof DirectionalLight) {
+      sceneLight.direction = sunLightDirection(
+        (bounds.west + bounds.east) / 2,
+        (bounds.south + bounds.north) / 2,
+      )
+      viewer.scene.requestRender()
+    }
     const forceBuildings = !!forceBuildingsBounds && sameBounds(forceBuildingsBounds, bounds)
     let cancelled = false
     const estimateAbort = new AbortController()
@@ -2157,7 +2084,6 @@ export default function Preview3D({
                 'u_ambientBoost',
                 whiteModelRef.current ? WHITE_MODEL_AMBIENT_BOOST : 0.0,
               )
-              applyWhiteModelToTileset(tileset, whiteModelRef.current, whiteModelSavedRef.current)
 
               const progressFn = (pending: number, processing: number): void => {
                 pendingMapRef.current.set(tileset, pending + processing)
@@ -3636,12 +3562,12 @@ export default function Preview3D({
   }, [])
 
   useEffect(() => {
-    const linear = whiteModelRef.current
-      ? colorToLinearCartesian3(Color.WHITE)
-      : colorToLinearCartesian3(baseBuildingColor())
+    const srgb = whiteModelRef.current
+      ? colorToSrgbCartesian3(Color.WHITE)
+      : colorToSrgbCartesian3(baseBuildingColor())
     for (const ts of tilesetsRef.current) {
       if (ts.customShader) {
-        ts.customShader.setUniform('u_buildingColor', linear)
+        ts.customShader.setUniform('u_buildingColor', srgb)
       }
     }
     viewerRef.current?.scene.requestRender()
@@ -3652,34 +3578,35 @@ export default function Preview3D({
     if (!viewer) return
     applyWhiteModelLook(viewer, whiteModel, gsiLayerRef, whiteModelSavedRef.current, quality)
     for (const ts of tilesetsRef.current) {
-      applyWhiteModelToTileset(ts, whiteModel, whiteModelSavedRef.current)
       if (ts.customShader) {
         ts.customShader.setUniform('u_ambientBoost', whiteModel ? WHITE_MODEL_AMBIENT_BOOST : 0.0)
         ts.customShader.setUniform(
           'u_buildingColor',
           whiteModel
-            ? colorToLinearCartesian3(Color.WHITE)
-            : colorToLinearCartesian3(baseBuildingColor()),
+            ? colorToSrgbCartesian3(Color.WHITE)
+            : colorToSrgbCartesian3(baseBuildingColor()),
         )
       }
     }
     viewer.scene.requestRender()
   }, [whiteModel, quality])
 
-  // 自動/手動の品質ティア変更を、生成済みViewerへ反映する。
+  // 自動/手動の品質ティア変更と影トグルを、生成済みViewerへ反映する。
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer) return
+    // 軽量画質では影の仕組み自体を無効にする（ボタンも押せない）。
+    const shadowsEnabled = quality.shadows && shadowsVisible
     viewer.resolutionScale = quality.resolutionScale
     viewer.scene.msaaSamples = quality.msaaSamples
-    viewer.shadows = quality.shadows
+    viewer.shadows = shadowsEnabled
     const shadowMap = viewer.scene.shadowMap
-    shadowMap.enabled = quality.shadows
+    shadowMap.enabled = shadowsEnabled
     shadowMap.size = quality.shadowMapSize
     shadowMap.maximumDistance = quality.shadowMaximumDistance
     applyPreviewAo(viewer, quality.ambientOcclusion)
     viewer.scene.requestRender()
-  }, [quality])
+  }, [quality, shadowsVisible])
 
   useEffect(() => {
     const viewer = viewerRef.current

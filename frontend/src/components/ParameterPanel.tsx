@@ -34,6 +34,9 @@ interface ParameterPanelProps {
   autoTerrainGridSize?: number
   buildingsVisible: boolean
   onBuildingsVisibleChange: (visible: boolean) => void
+  /** 影の表示ON/OFF。 */
+  shadowsVisible: boolean
+  onShadowsVisibleChange: (visible: boolean) => void
   /** スマホではサイドパネルではなくボトムシートとして表示する。 */
   mobile?: boolean
   onClose?: () => void
@@ -52,6 +55,8 @@ function ParameterPanel({
   autoTerrainGridSize = 128,
   buildingsVisible,
   onBuildingsVisibleChange,
+  shadowsVisible,
+  onShadowsVisibleChange,
   mobile = false,
   onClose,
   previewQuality,
@@ -69,6 +74,10 @@ function ParameterPanel({
     lod4: 'LOD4（最高詳細）',
   }
   const LOD_ORDER: Lod[] = ['lod1', 'lod2', 'lod3', 'lod4']
+
+  // 軽量画質では影そのものを描画しないため、トグルは無効（OFF表示）にする。
+  const shadowsAvailable = PREVIEW_QUALITY_PROFILES[previewQuality].shadows
+  const shadowsOn = shadowsAvailable && shadowsVisible
 
   const buildingColorRef = useRef<HTMLInputElement>(null)
   const terrainColorRef = useRef<HTMLInputElement>(null)
@@ -320,6 +329,68 @@ function ParameterPanel({
             </div>
             <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '0 0 0 44px' }}>
               オフにすると地形のみ表示になり、動作が軽くなります
+            </p>
+          </div>
+          <div style={{ marginBottom: '12px' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                marginBottom: '4px',
+              }}
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={shadowsOn}
+                data-testid="shadows-toggle"
+                disabled={!shadowsAvailable}
+                onClick={() => onShadowsVisibleChange(!shadowsVisible)}
+                title={shadowsAvailable ? undefined : '軽量画質では影を表示できません'}
+                style={{
+                  width: '36px',
+                  height: '20px',
+                  borderRadius: '999px',
+                  border: '1px solid var(--border-strong)',
+                  background: shadowsOn ? 'var(--accent)' : 'var(--border)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '2px',
+                  cursor: shadowsAvailable ? 'pointer' : 'not-allowed',
+                  opacity: shadowsAvailable ? 1 : 0.45,
+                  flexShrink: 0,
+                  transition: 'background-color 150ms ease',
+                }}
+              >
+                <span
+                  style={{
+                    width: '14px',
+                    height: '14px',
+                    borderRadius: '50%',
+                    background: '#fff',
+                    transform: shadowsOn ? 'translateX(16px)' : 'translateX(0)',
+                    transition: 'transform 150ms ease',
+                  }}
+                />
+              </button>
+              <span
+                onClick={() => {
+                  if (shadowsAvailable) onShadowsVisibleChange(!shadowsVisible)
+                }}
+                style={{
+                  fontSize: '14px',
+                  cursor: shadowsAvailable ? 'pointer' : 'not-allowed',
+                  opacity: shadowsAvailable ? 1 : 0.45,
+                }}
+              >
+                影を表示
+              </span>
+            </div>
+            <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '0 0 0 44px' }}>
+              {shadowsAvailable
+                ? 'オフにすると建物の落影を描画しません'
+                : '軽量画質では影を表示できません'}
             </p>
           </div>
           <label
