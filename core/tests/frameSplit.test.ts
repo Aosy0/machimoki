@@ -16,7 +16,7 @@ import {
 import {
   BASE_CLEARANCE_MM,
   BASE_EXTENSION_MM,
-  FRAME_STEP_MM,
+  FRAME_MITER_DEPTH_RATIO,
 } from '../src/frameSplitConstants.js'
 import { createManifoldFromMesh, importFrom3MF } from '../src/manifoldOps.js'
 import { validateMesh } from '../src/validate.js'
@@ -173,15 +173,29 @@ describe('frame split', () => {
     expect(closed.status).toBe('warning')
   })
 
-  it('builds the frame cutter as one closed L-shaped shell', async () => {
-    for (const slab of [
-      createTerrainSlab(8, 20, 0, -10),
-      createSlopedSlab(8, 20, -5, 5, -10),
-    ]) {
-      const scaled = scaleRawMesh(slab, 0.001)
-      const cavity = buildTerrainCavityMesh(scaled, 0.002)
+  it('builds the frame cutter as one closed 45-degree miter ring', async () => {
+    const t = 0.002
+    const flat = scaleRawMesh(createTerrainSlab(8, 20, 0, -10), 0.001)
+    const flatCavity = buildTerrainCavityMesh(flat, t)
+    expect(flatCavity).not.toBeNull()
+    const flatMesh = buildFrameCutterMesh(flat, flatCavity!, t)
+    expect(flatMesh).not.toBeNull()
+    // buildRingMesh の頂点順: 各 i に O top / O bottom / C top / C bottom。
+    // 平坦地形では O 上端 = -0.9t、C 上端 = -1.9t（高低差 t = 45°）。
+    const p = flatMesh!.positions
+    const outerTop = p[1]
+    const innerTop = p[7]
+    const innerBottom = p[10]
+    expect(outerTop).toBeCloseTo(-0.9 * t, 6)
+    expect(innerTop).toBeCloseTo(-1.9 * t, 6)
+    expect(outerTop - innerTop).toBeCloseTo(t, 6)
+    // C 側の壁高 = terrainThickness - 1.9t（この地形は 0.01 厚）。
+    expect(innerTop - innerBottom).toBeCloseTo(0.01 - FRAME_MITER_DEPTH_RATIO * t, 6)
+
+    for (const slab of [flat, scaleRawMesh(createSlopedSlab(8, 20, -5, 5, -10), 0.001)]) {
+      const cavity = buildTerrainCavityMesh(slab, t)
       expect(cavity).not.toBeNull()
-      const mesh = buildFrameCutterMesh(scaled, cavity!, 0.002, FRAME_STEP_MM * 0.001)
+      const mesh = buildFrameCutterMesh(slab, cavity!, t)
       expect(mesh).not.toBeNull()
 
       const manifold = await createManifoldFromMesh(mesh!)
@@ -218,7 +232,11 @@ describe('frame split', () => {
       maxZ = Math.max(maxZ, p[i + 2])
       minY = Math.min(minY, p[i + 1])
       maxY = Math.max(maxY, p[i + 1])
-      if (Math.abs(p[i + 1] - (0 - 2 - BASE_EXTENSION_MM)) < 1e-6) atBottom++
+      if (
+        Math.abs(p[i + 1] - (0 - FRAME_MITER_DEPTH_RATIO * 2 - BASE_EXTENSION_MM)) < 1e-6
+      ) {
+        atBottom++
+      }
     }
 
     // 空洞境界（スラブ外形から t=2 内側 = ±8）よりさらに c 内側。
@@ -226,8 +244,8 @@ describe('frame split', () => {
     expect(maxX).toBeCloseTo(10 - 2 - BASE_CLEARANCE_MM, 6)
     expect(minZ).toBeCloseTo(-10 + 2 + BASE_CLEARANCE_MM, 6)
     expect(maxZ).toBeCloseTo(10 - 2 - BASE_CLEARANCE_MM, 6)
-    // 底面は地形最低点 - t - e の水平面、上面は地表 - t + 0.1t。
-    expect(minY).toBeCloseTo(0 - 2 - BASE_EXTENSION_MM, 6)
+    // 底面は45°楔の先端 (0 - 1.9t) より e 下の水平面、上面は地表 - t + 0.1t。
+    expect(minY).toBeCloseTo(0 - FRAME_MITER_DEPTH_RATIO * 2 - BASE_EXTENSION_MM, 6)
     expect(maxY).toBeCloseTo(0 - 2 + 0.2, 6)
     // 底面グリッドの全頂点が平らな底面に載る。
     expect(atBottom).toBe(8 * 8)
@@ -270,6 +288,40 @@ describe('frame split', () => {
     ).rejects.toThrow(/2mm/)
   })
 
+  it('enforces the 45-degree miter wall height for split', async () => {
+    const slab = createTerrainSlab(8, 20, 0, -10)
+    const building = await createBoxBuilding(0, 0, 8, 8, -0.3, 10)
+
+    // T - t >= 2 は満たすが、C 側の壁高 T - 1.9t が 0 になる境界。
+    await expect(
+      buildPrintableModelFromMeshes(
+        [building],
+        slab,
+        bounds,
+        baseOptions({ terrainThickness: 5.7, shellThickness: 3 }),
+      ),
+    ).rejects.toThrow(/1\.9/)
+
+    // 壁高は正でも、パッド底面 T - 1.9t - e が底面に届く境界。
+    await expect(
+      buildPrintableModelFromMeshes(
+        [building],
+        slab,
+        bounds,
+        baseOptions({ terrainThickness: 5.8, shellThickness: 3 }),
+      ),
+    ).rejects.toThrow(/0\.2mm/)
+
+    await expect(
+      buildPrintableModelFromMeshes(
+        [building],
+        slab,
+        bounds,
+        baseOptions({ terrainThickness: 5.91, shellThickness: 3 }),
+      ),
+    ).resolves.toHaveProperty('split')
+  })
+
   it('keeps multiple buildings connected through the ground plate', async () => {
     const slab = createTerrainSlab(8, 20, 0, -10)
     const left = await createBoxBuilding(-3, 0, 4, 4, -0.3, 8)
@@ -309,44 +361,52 @@ describe('frame split', () => {
       const baseBox = baseManifold.boundingBox()
       const buildingsBox = buildingsManifold.boundingBox()
       // スケール 1/1000: 地形は -0.005..0.005、底面 -0.01、シェル t=0.002、
-      // 段差 s=0.0004、クリアランス c=0.00015。
+      // クリアランス c=0.00015。
       const halfO = 0.01
       const t = 0.002
-      const s = FRAME_STEP_MM * 0.001
       const c = BASE_CLEARANCE_MM * 0.001
-      // 枠は外形 O のまま。フランジ上面が地表なので最高点は地形最高点 0.005。
+      // 枠は外形 O のまま。O 側の上端 = 地形 - 0.9t なので最高点は
+      // 地形最高点 0.005 - 0.0018 = 0.0032。
       expect(baseBox.min[0]).toBeCloseTo(-halfO, 6)
       expect(baseBox.max[0]).toBeCloseTo(halfO, 6)
       expect(baseBox.min[2]).toBeCloseTo(-halfO, 6)
       expect(baseBox.max[2]).toBeCloseTo(halfO, 6)
       expect(baseBox.min[1]).toBeCloseTo(-0.01, 6)
-      expect(baseBox.max[1]).toBeCloseTo(0.005, 6)
-      // 建物部分の最低点はベース底面（地形最低点 - t - e = -0.005 - 0.002 - 0.0002）。
-      expect(buildingsBox.min[1]).toBeCloseTo(-0.0072, 6)
-      // 建物側プレートの外周は S = O - (t - s) で切り取られる。
-      const halfS = halfO - (t - s)
-      expect(buildingsBox.min[0]).toBeCloseTo(-halfS, 6)
-      expect(buildingsBox.max[0]).toBeCloseTo(halfS, 6)
-      expect(buildingsBox.min[2]).toBeCloseTo(-halfS, 6)
-      expect(buildingsBox.max[2]).toBeCloseTo(halfS, 6)
+      expect(baseBox.max[1]).toBeCloseTo(0.0032, 6)
+      // ベース（パッド）底面 = 地形最低点 - 1.9t - e の水平面。
+      // これが建物パーツの最下点になる。
+      const padBottomY = -0.005 - FRAME_MITER_DEPTH_RATIO * t - BASE_EXTENSION_MM * 0.001
+      expect(buildingsBox.min[1]).toBeCloseTo(padBottomY, 6)
+      // 建物側プレートの外周は外形 O のまま（壁の上端と 45°で嵌合）。
+      expect(buildingsBox.min[0]).toBeCloseTo(-halfO, 6)
+      expect(buildingsBox.max[0]).toBeCloseTo(halfO, 6)
+      expect(buildingsBox.min[2]).toBeCloseTo(-halfO, 6)
+      expect(buildingsBox.max[2]).toBeCloseTo(halfO, 6)
 
-      // 斜面でもベース底面は水平: 最低点の頂点が底面グリッド分だけ並ぶ。
       const mesh = buildingsManifold.getMesh()
-      let bottomVertices = 0
-      let bottomMinX = Infinity
-      let bottomMaxX = -Infinity
+      let padVertices = 0
+      let padMinX = Infinity
+      let padMaxX = -Infinity
+      let wedgeVertices = 0
+      // この斜面の内側（C）での楔先端 = terrain(C) - 1.9t = -0.004 - 0.0038。
+      const wedgeTipY = -0.004 - FRAME_MITER_DEPTH_RATIO * t
       for (let i = 0; i < mesh.vertProperties.length; i += 3) {
         const y = mesh.vertProperties[i + 1]
-        if (Math.abs(y - buildingsBox.min[1]) >= 1e-9) continue
-        bottomVertices++
-        bottomMinX = Math.min(bottomMinX, mesh.vertProperties[i])
-        bottomMaxX = Math.max(bottomMaxX, mesh.vertProperties[i])
+        if (Math.abs(y - wedgeTipY) < 5e-5) wedgeVertices++
+        if (Math.abs(y - padBottomY) >= 1e-9) continue
+        padVertices++
+        padMinX = Math.min(padMinX, mesh.vertProperties[i])
+        padMaxX = Math.max(padMaxX, mesh.vertProperties[i])
       }
-      expect(bottomVertices).toBeGreaterThanOrEqual(3)
-      // パッド側 P と外周 S の差が s + c（= 張り出し 0.55mm）。
-      expect(bottomMinX).toBeCloseTo(-(halfO - t - c), 6)
-      expect(bottomMaxX).toBeCloseTo(halfO - t - c, 6)
-      expect(halfS - (halfO - t - c)).toBeCloseTo(s + c, 9)
+      expect(padVertices).toBeGreaterThanOrEqual(3)
+      // パッド側 P = O - t - c。外周 O との差は t + c、枠の内周 C との差は c。
+      expect(padMinX).toBeCloseTo(-(halfO - t - c), 6)
+      expect(padMaxX).toBeCloseTo(halfO - t - c, 6)
+      expect(halfO - (halfO - t - c)).toBeCloseTo(t + c, 9)
+      expect(halfO - t - (halfO - t - c)).toBeCloseTo(c, 9)
+      // 45°楔の先端はパッド底面より上にある（斜面では e 以上）。
+      expect(wedgeVertices).toBeGreaterThan(0)
+      expect(wedgeTipY).toBeGreaterThan(padBottomY)
 
       const intersection = baseManifold.intersect(buildingsManifold)
       try {
@@ -455,9 +515,19 @@ describe('frame split', () => {
         [building],
         slab,
         bounds,
-        baseOptions({ terrainThickness: 4, shellThickness: 2 }),
+        baseOptions({ terrainThickness: 4.01, shellThickness: 2 }),
       ),
     ).resolves.toHaveProperty('split')
+
+    // T - t = 2 は満たすが、パッド底面 T - 1.9t - e がちょうど 0 になる境界。
+    await expect(
+      buildPrintableModelFromMeshes(
+        [building],
+        slab,
+        bounds,
+        baseOptions({ terrainThickness: 4, shellThickness: 2 }),
+      ),
+    ).rejects.toThrow(/0\.2mm/)
 
     await expect(
       buildPrintableModelFromMeshes(

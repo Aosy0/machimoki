@@ -14,5 +14,19 @@ export const BASE_CLEARANCE_MM = 0.15
 /** 地形の最低点からベース底面を延長する量（印刷mm）。 */
 export const BASE_EXTENSION_MM = 0.2
 
-/** 地形枠の内側上端に作る段差（棚）の幅（印刷mm）。建物側プレート外周が乗る。 */
-export const FRAME_STEP_MM = 0.4
+/**
+ * 45°マイター内側（C側）上端の深さ。シェル厚み t に対する倍率で、
+ * C側の枠壁高 = terrainThickness - 1.9t が正である必要がある。
+ */
+export const FRAME_MITER_DEPTH_RATIO = 1.9
+
+/** C側の枠壁高が確保できるか（45°斜面がスラブ底面に届かないか）。 */
+export function hasMiterWall(terrainThickness: number, shellThickness: number): boolean {
+  // 5.7 - 1.9 * 3 のような境界を浮動小数の誤差で誤判定しないよう許容する。
+  return terrainThickness - FRAME_MITER_DEPTH_RATIO * shellThickness > 1e-6
+}
+
+/** パッド底面（45°楔の先端 - BASE_EXTENSION_MM）がスラブ底面より上にあるか。 */
+export function hasMiterBase(terrainThickness: number, shellThickness: number): boolean {
+  return terrainThickness - FRAME_MITER_DEPTH_RATIO * shellThickness - BASE_EXTENSION_MM > 1e-6
+}

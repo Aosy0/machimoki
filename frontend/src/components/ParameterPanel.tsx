@@ -1,5 +1,10 @@
 import React, { useRef } from 'react'
-import { MIN_FRAME_HEIGHT_MM } from '../../../core/src/frameSplitConstants.ts'
+import {
+  BASE_EXTENSION_MM,
+  FRAME_MITER_DEPTH_RATIO,
+  hasMiterBase,
+  MIN_FRAME_HEIGHT_MM,
+} from '../../../core/src/frameSplitConstants.ts'
 import type { Lod } from '../lib/catalogApi'
 import { TERRAIN_GRID_PRESETS } from '../lib/previewBudget'
 import {
@@ -709,6 +714,10 @@ function ParameterPanel({
                   max={Math.min(
                     5,
                     Math.max(0.8, parameters.terrainThickness - MIN_FRAME_HEIGHT_MM),
+                    Math.max(
+                      0.8,
+                      (parameters.terrainThickness - BASE_EXTENSION_MM) / FRAME_MITER_DEPTH_RATIO,
+                    ),
                   )}
                   step={0.1}
                   value={parameters.shellThickness}
@@ -716,9 +725,11 @@ function ParameterPanel({
                   disabled={!parameters.includeTerrain}
                   style={{ width: '100%' }}
                 />
-                {parameters.terrainThickness - parameters.shellThickness < MIN_FRAME_HEIGHT_MM && (
+                {(parameters.terrainThickness - parameters.shellThickness < MIN_FRAME_HEIGHT_MM ||
+                  !hasMiterBase(parameters.terrainThickness, parameters.shellThickness)) && (
                   <p style={{ fontSize: '11px', color: 'var(--warn)', margin: '6px 0 0' }}>
-                    地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)}mm 以上必要です
+                    地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)}
+                    mm 以上、かつシェル厚み×{FRAME_MITER_DEPTH_RATIO} より大きい必要があります
                   </p>
                 )}
               </div>
@@ -784,7 +795,9 @@ function ParameterPanel({
               opacity: !parameters.includeTerrain ? 0.5 : 1,
             }}
           >
-            地形を枠、建物側を地表プレート＋建物＋印刷用の平らなベースに分けます。枠の内側上端の段差（0.4mm）に建物側の外周を乗せ、外周の張り出しを約0.55mmに抑えます。ベースが枠に嵌まり、底面の凹凸によるサポートを減らします。ベースは中実ですが、建物内部の空洞の開口はベースを貫通して開いたままになります。地上部は切り口を下・屋根を上にして印刷でき、天面にプレート痕が付きません。オンにすると底面開口も自動でオンになります。建物内部の空洞が不要な場合は「建物内部も中空化」をOFFにしてください。
+            地形を枠、建物側を地表プレート＋建物＋印刷用の平らなベースに分けます。外周を45°で合わせ、枠の壁の上端と建物側プレートの下面を同じ45°面にします。段差はなく、外周の張り出しはクリアランス約0.15mmだけです。枠の内側は壁高が「地形厚み
+            −
+            シェル厚み×1.9」になります。ベースの平らな底面は45°楔の先端より0.2mm下にあり、印刷時の最下点になります（ベースはその分深くなります）。ベースが枠に嵌まり、底面の凹凸によるサポートを減らします。ベースは中実ですが、建物内部の空洞の開口はベースを貫通して開いたままになります。地上部は切り口を下・屋根を上にして印刷でき、天面にプレート痕が付きません。オンにすると底面開口も自動でオンになります。建物内部の空洞が不要な場合は「建物内部も中空化」をOFFにしてください。
           </p>
 
           <div style={{ marginTop: '12px', opacity: parameters.includeTerrain ? 1 : 0.5 }}>

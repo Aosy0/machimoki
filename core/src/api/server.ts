@@ -14,6 +14,7 @@ import { buildPrintableModel, exportMachimoki } from '../pipeline.js'
 import { validateMesh } from '../validate.js'
 import { DEFAULT_SHELL_THICKNESS_MM } from '../pipelineUtils.js'
 import { MIN_FRAME_HEIGHT_MM } from '../frameSplit.js'
+import { hasMiterBase, hasMiterWall } from '../frameSplitConstants.js'
 import { Bounds, ExportOptions, Lod } from '../types.js'
 
 const app = new Hono()
@@ -228,6 +229,20 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
         error:
           `Invalid thickness: terrainThickness must be at least shellThickness + ` +
           `${MIN_FRAME_HEIGHT_MM}mm`,
+      }
+    }
+    if (!hasMiterWall(terrainThickness, resolvedShell)) {
+      return {
+        ok: false,
+        error: 'Invalid thickness: terrainThickness must be greater than shellThickness * 1.9',
+      }
+    }
+    if (!hasMiterBase(terrainThickness, resolvedShell)) {
+      return {
+        ok: false,
+        error:
+          'Invalid thickness: terrainThickness must be greater than ' +
+          'shellThickness * 1.9 + 0.2mm',
       }
     }
   }

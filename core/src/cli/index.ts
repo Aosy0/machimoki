@@ -20,6 +20,7 @@ import { buildPrintableModel } from '../pipeline.js'
 import { validateMesh } from '../validate.js'
 import { DEFAULT_SHELL_THICKNESS_MM } from '../pipelineUtils.js'
 import { MIN_FRAME_HEIGHT_MM } from '../frameSplit.js'
+import { hasMiterBase, hasMiterWall } from '../frameSplitConstants.js'
 import { Bounds, ExportOptions, Lod } from '../types.js'
 
 export const program = new Command()
@@ -197,6 +198,18 @@ program
       throw new Error(
         `Invalid shell thickness: ${shellThickness}. Terrain thickness must be at least ` +
           `shell thickness + ${MIN_FRAME_HEIGHT_MM}mm (${options.terrainThickness}mm)`,
+      )
+    }
+    if (options.splitAtGround && !hasMiterWall(options.terrainThickness, shellThickness)) {
+      throw new Error(
+        `Invalid shell thickness: ${shellThickness}. Terrain thickness must be greater than ` +
+          `shell thickness * 1.9 (${options.terrainThickness}mm)`,
+      )
+    }
+    if (options.splitAtGround && !hasMiterBase(options.terrainThickness, shellThickness)) {
+      throw new Error(
+        `Invalid shell thickness: ${shellThickness}. Terrain thickness must be greater than ` +
+          `shell thickness * 1.9 + 0.2mm (${options.terrainThickness}mm)`,
       )
     }
     if (options.splitAtGround) {

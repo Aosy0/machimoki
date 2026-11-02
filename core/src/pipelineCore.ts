@@ -3,6 +3,7 @@
  * Safe to import in Web Workers and browsers.
  */
 
+import { FRAME_MITER_DEPTH_RATIO } from './frameSplitConstants.js'
 import { Bounds, RawMesh } from './types.js'
 
 /** Convert user-facing printed thickness (mm) to model-space meters for a given export scale. */
@@ -447,8 +448,9 @@ const BASE_TOP_OVERLAP_RATIO = 0.1
  * 足跡は空洞境界から `clearance` 内側（= スラブ外形から shellThickness +
  * clearance 内側）なので、枠の内壁とは交差せずクリアランス分だけ嵌まる。
  * 上面は地表から `shellThickness - overlap` 下（プレート下面へ少し食い込む）、
- * 底面は地形の最低点から `shellThickness + extension` 下の水平面。
- * プレート下の凹凸を埋めるため中実（リングではない）。
+ * 底面は45°楔の先端（地形最低点 - 1.9t）よりさらに `extension` 下の水平面。
+ * これでパッドの平らな底面が建物パーツの最下点になり、楔先端は底面から
+ * `extension` 上に浮く。プレート下の凹凸を埋めるため中実（リングではない）。
  *
  * `shellThickness` / `clearance` / `extension` は同じ座標空間の値で渡す。
  *
@@ -469,7 +471,7 @@ export function buildBaseSlabMesh(
     terrainMesh,
     t + clearance,
     -t + t * BASE_TOP_OVERLAP_RATIO,
-    (minTopY) => minTopY - t - extension,
+    (minTopY) => minTopY - t * FRAME_MITER_DEPTH_RATIO - extension,
   )
 }
 
@@ -477,27 +479,71 @@ export function buildBaseSlabMesh(
 const FRAME_TOP_OVERLAP_RATIO = 0.1
 
 /**
- * 地形枠カッター（L 字断面）メッシュを構築する。
+ * 矩形リング（外周・内周）を、指定した上下面高で閉じたソリッドとして構築する。
+ * 外周壁・内周壁・上面リング・底面リングを持つ。
+ */
+function buildRingMesh(
+  outer: Array<[number, number]>,
+  inner: Array<[number, number]>,
+  topOuter: number[],
+  topInner: number[],
+  bottomOuter: number[],
+  bottomInner: number[],
+): RawMesh {
+  const count = outer.length
+  // 各 i に outerTop / outerBottom / innerTop / innerBottom
+  const positions: number[] = []
+  for (let i = 0; i < count; i++) {
+    const [ox, oz] = outer[i]
+    const [ix, iz] = inner[i]
+    positions.push(ox, topOuter[i], oz)
+    positions.push(ox, bottomOuter[i], oz)
+    positions.push(ix, topInner[i], iz)
+    positions.push(ix, bottomInner[i], iz)
+  }
+
+  const indices: number[] = []
+  const at = (i: number, kind: 0 | 1 | 2 | 3): number => i * 4 + kind
+  for (let i = 0; i < count; i++) {
+    const j = (i + 1) % count
+    const oti = at(i, 0)
+    const obi = at(i, 1)
+    const iti = at(i, 2)
+    const ibi = at(i, 3)
+    const otj = at(j, 0)
+    const obj = at(j, 1)
+    const itj = at(j, 2)
+    const ibj = at(j, 3)
+    // 上面 (+Y)
+    indices.push(oti, iti, itj, oti, itj, otj)
+    // 底面 (-Y)
+    indices.push(obi, ibj, ibi, obi, obj, ibj)
+    // 外周壁（外側向き）
+    indices.push(oti, otj, obj, oti, obj, obi)
+    // 内周壁（内側向き）
+    indices.push(iti, ibj, itj, iti, ibi, ibj)
+  }
+
+  return { positions: new Float32Array(positions), indices: new Uint32Array(indices) }
+}
+
+/**
+ * 地形枠カッター（45°マイターのリング）メッシュを構築する。
  *
- * 3 ループの閉じた単一シェル:
- * - 外周 O: 上 = 地表、下 = 地形スラブ底面。
- * - ミッド S = C + step: 上 = 地表、下 = リング上端（terrain - 0.9t）。
- * - 内周 C（空洞壁とのゼロ厚を避けるため eps だけ内側）: 上 = リング上端、
- *   下 = 地形スラブ底面。
- * 面は上面 O..S、段差 S..C、底面 O..C、外周壁 O、S 内面、内周壁 C。
- * 1 メッシュなので union 不要（外周の union 残渣が出ない）。
+ * 外周 O の上端 = terrain - 0.9t、内周 C（空洞壁とのゼロ厚を避けるため eps
+ * だけ内側）の上端 = terrain - 1.9t。上面は水平距離 t・高低差 t の 45°面に
+ * なり、建物側プレートの下面が同じ面で嵌まる。底面は地形スラブ底面。
+ * 段差・フランジは持たない（外周に薄い帯ができない）。
  *
- * 枠の露出地形帯 O..S は地表まで、内側の段差 S..C はリング上端で建物側
- * プレートの外周を受ける。step はシェル厚み未満の正値であること。
+ * 枠の C 側の壁高は terrainThickness - 1.9t になる。
  */
 export function buildFrameCutterMesh(
   terrainMesh: RawMesh,
   cavityMesh: RawMesh,
   shellThickness: number,
-  step: number,
 ): RawMesh | null {
   const t = shellThickness
-  if (!(t > 0) || !(step > 0) || !(step < t)) return null
+  if (!(t > 0)) return null
 
   const tp = terrainMesh.positions
   const terrainVertexCount = tp.length / 3
@@ -537,82 +583,37 @@ export function buildFrameCutterMesh(
   }
   if (!(cMaxX > cMinX) || !(cMaxZ > cMinZ)) return null
 
-  // 内周を空洞壁と一致させるとブール演算がゼロ厚の面を残すため、わずかに
-  // 食い込ませる（印刷寸法では無視できる差）。S はその外側でなければならない。
+  // 枠の内壁を空洞壁と一致させると、ブール演算がゼロ厚の面を建物側に残す。
+  // 空洞内へごくわずかに食い込ませて一致を避ける（印刷寸法では無視できる差）。
   const eps = t * 0.01
-  if (!(step > eps)) return null
-  const iMinX = cMinX + eps
-  const iMaxX = cMaxX - eps
-  const iMinZ = cMinZ + eps
-  const iMaxZ = cMaxZ - eps
-  // S = C + step。step < t なので外形 O の内側に収まる。
-  const sMinX = cMinX - step
-  const sMaxX = cMaxX + step
-  const sMinZ = cMinZ - step
-  const sMaxZ = cMaxZ + step
-  if (!(sMinX > minX) || !(sMaxX < maxX) || !(sMinZ > minZ) || !(sMaxZ < maxZ)) return null
-
   const segments = Math.max(1, Math.min(256, n - 1))
   const outer = buildRectLoop(minX, maxX, minZ, maxZ, segments)
-  const mid = buildRectLoop(sMinX, sMaxX, sMinZ, sMaxZ, segments)
-  const inner = buildRectLoop(iMinX, iMaxX, iMinZ, iMaxZ, segments)
+  const inner = buildRectLoop(cMinX + eps, cMaxX - eps, cMinZ + eps, cMaxZ - eps, segments)
   const count = outer.length
-  if (count !== mid.length || count !== inner.length || count < 4) return null
+  if (count !== inner.length || count < 4) return null
 
-  const overlap = t * FRAME_TOP_OVERLAP_RATIO
+  const topOffset = t * (1 - FRAME_TOP_OVERLAP_RATIO)
+  const miterDepth = t * FRAME_MITER_DEPTH_RATIO
+  const topOuter: number[] = []
+  const topInner: number[] = []
+  const bottomOuter: number[] = []
+  const bottomInner: number[] = []
   const bottomOffset = n * n
-  // 1 頂点につき 6 種: O top / O bottom / S top / S bottom / C top / C bottom。
-  const positions: number[] = []
   for (let i = 0; i < count; i++) {
     const [ox, oz] = outer[i]
-    const [mx, mz] = mid[i]
     const [ix, iz] = inner[i]
-    const oTop = sampleGridHeightFromGrid(tp, n, gridBounds, ox, oz, 0)
-    const oBottom = sampleGridHeightFromGrid(tp, n, gridBounds, ox, oz, bottomOffset)
-    const sTop = sampleGridHeightFromGrid(tp, n, gridBounds, mx, mz, 0)
-    const cTop = sampleGridHeightFromGrid(tp, n, gridBounds, ix, iz, 0)
-    const cBottom = sampleGridHeightFromGrid(tp, n, gridBounds, ix, iz, bottomOffset)
-    if (oTop === null || oBottom === null || sTop === null || cTop === null) return null
-    if (cBottom === null) return null
-    positions.push(ox, oTop, oz)
-    positions.push(ox, oBottom, oz)
-    positions.push(mx, sTop, mz)
-    positions.push(mx, sTop - t + overlap, mz)
-    positions.push(ix, cTop - t + overlap, iz)
-    positions.push(ix, cBottom, iz)
+    const oh = sampleGridHeightFromGrid(tp, n, gridBounds, ox, oz, 0)
+    const ih = sampleGridHeightFromGrid(tp, n, gridBounds, ix, iz, 0)
+    const ob = sampleGridHeightFromGrid(tp, n, gridBounds, ox, oz, bottomOffset)
+    const ib = sampleGridHeightFromGrid(tp, n, gridBounds, ix, iz, bottomOffset)
+    if (oh === null || ih === null || ob === null || ib === null) return null
+    topOuter.push(oh - topOffset)
+    topInner.push(ih - miterDepth)
+    bottomOuter.push(ob)
+    bottomInner.push(ib)
   }
 
-  const indices: number[] = []
-  const at = (i: number, kind: 0 | 1 | 2 | 3 | 4 | 5): number => i * 6 + kind
-  for (let i = 0; i < count; i++) {
-    const j = (i + 1) % count
-    const oti = at(i, 0)
-    const obi = at(i, 1)
-    const mti = at(i, 2)
-    const mbi = at(i, 3)
-    const cti = at(i, 4)
-    const cbi = at(i, 5)
-    const otj = at(j, 0)
-    const obj = at(j, 1)
-    const mtj = at(j, 2)
-    const mbj = at(j, 3)
-    const ctj = at(j, 4)
-    const cbj = at(j, 5)
-    // 上面 O..S（+Y）
-    indices.push(oti, mti, mtj, oti, mtj, otj)
-    // 段差 S..C（+Y）
-    indices.push(mbi, cti, ctj, mbi, ctj, mbj)
-    // 底面 O..C（-Y）
-    indices.push(obi, cbj, cbi, obi, obj, cbj)
-    // 外周壁 O（外側向き）
-    indices.push(oti, otj, obj, oti, obj, obi)
-    // フランジ内面 S（内側向き）
-    indices.push(mti, mbj, mtj, mti, mbi, mbj)
-    // 内周壁 C（内側向き）
-    indices.push(cti, cbj, ctj, cti, cbi, cbj)
-  }
-
-  return { positions: new Float32Array(positions), indices: new Uint32Array(indices) }
+  return buildRingMesh(outer, inner, topOuter, topInner, bottomOuter, bottomInner)
 }
 
 /** 矩形ループ（x-z 平面・正の面積方向）を各辺 segments 分割で返す。始点は重複させない。 */

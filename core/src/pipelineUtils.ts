@@ -34,6 +34,12 @@ import {
 } from './manifoldOps.js'
 import { MIN_FRAME_HEIGHT_MM, splitFrameAndBuildings } from './frameSplit.js'
 import {
+  BASE_EXTENSION_MM,
+  FRAME_MITER_DEPTH_RATIO,
+  hasMiterBase,
+  hasMiterWall,
+} from './frameSplitConstants.js'
+import {
   buildTerrainCavityMesh,
   componentContainsPoint,
   componentIntersectsBounds,
@@ -700,6 +706,22 @@ async function buildPrintableGeometry(
         `（地形厚み ${options.terrainThickness}mm、シェル厚み ${shellThickness}mm）`,
     )
   }
+  // 分割の45°マイターは C 側上端が terrain - 1.9t なので、斜面が底面に
+  // 届かない高さが要る（非分割時は枠を作らないため対象外）。
+  if (splitAtGround && !hasMiterWall(options.terrainThickness, shellThickness)) {
+    throw new Error(
+      `地形厚みはシェル厚み×${FRAME_MITER_DEPTH_RATIO} より大きい必要があります` +
+        `（地形厚み ${options.terrainThickness}mm、シェル厚み ${shellThickness}mm）`,
+    )
+  }
+  // パッド底面 (T - 1.9t - e) もスラブ底面より上に必要（分割時のみ）。
+  if (splitAtGround && !hasMiterBase(options.terrainThickness, shellThickness)) {
+    throw new Error(
+      `地形厚みはシェル厚み×${FRAME_MITER_DEPTH_RATIO} + ${BASE_EXTENSION_MM}mm より` +
+        `大きい必要があります（地形厚み ${options.terrainThickness}mm、` +
+        `シェル厚み ${shellThickness}mm）`,
+    )
+  }
   // Wall thickness in the scaled model space. Geometry is scaled by `scale`
   // before hollowing (printed mm = scaled units × 1000), so the printed shell
   // thickness maps to shellThickness / 1000 units.
@@ -1064,6 +1086,19 @@ export async function buildSplitModelFromFinalMesh(
     throw new Error(
       `地形厚みはシェル厚み + ${MIN_FRAME_HEIGHT_MM}mm 以上必要です` +
         `（地形厚み ${options.terrainThickness}mm、シェル厚み ${shellThickness}mm）`,
+    )
+  }
+  if (!hasMiterWall(options.terrainThickness, shellThickness)) {
+    throw new Error(
+      `地形厚みはシェル厚み×${FRAME_MITER_DEPTH_RATIO} より大きい必要があります` +
+        `（地形厚み ${options.terrainThickness}mm、シェル厚み ${shellThickness}mm）`,
+    )
+  }
+  if (!hasMiterBase(options.terrainThickness, shellThickness)) {
+    throw new Error(
+      `地形厚みはシェル厚み×${FRAME_MITER_DEPTH_RATIO} + ${BASE_EXTENSION_MM}mm より` +
+        `大きい必要があります（地形厚み ${options.terrainThickness}mm、` +
+        `シェル厚み ${shellThickness}mm）`,
     )
   }
 

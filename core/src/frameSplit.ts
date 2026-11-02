@@ -2,38 +2,34 @@
  * 地形枠（frame）と建物部分（地表プレート＋建物＋印刷用ベース）への分割。
  *
  * 分割の考え方:
- * - 地形枠 = 外周 O・ミッド S・内周 C の 3 ループからなる L 字断面の単一
- *   メッシュ。外周帯 O..S は地表まで、内側の段差 C..S（幅 FRAME_STEP_MM）は
- *   リング上端（terrain - 0.9t）で、建物側プレートの外周が乗る。union を
- *   使わないため外周に微小スライバが残らない。
+ * - 地形枠 = 外周 O・内周 C の 2 ループからなる 45°マイターの単一メッシュ。
+ *   上端は O が terrain - 0.9t、C が terrain - 1.9t で、その間の上面が
+ *   水平距離 t・高低差 t の 45°面になる。建物側プレートの下面が同じ面で
+ *   嵌まり、外周 O の継ぎ目はフラッシュのまま。段差の薄い帯はない。
  * - 建物部分 = 完成モデルから地形枠を引いたもの（地表プレート＋建物）に、
- *   底面を平らにする「短い中実ベース」を union したもの。プレート外周は S で
- *   切り取られ、ベースは枠の空洞にクリアランス分だけ内側で嵌まる。地形の
- *   最低点から少し下まで届く。中空化ONのときは建物カッターでベースを
- *   貫通させ、建物空洞の開口を塞がない（ベース自体は中実のまま、底面に開口）。
+ *   底面を平らにする「短い中実ベース」を union したもの。プレート外周は
+ *   外形 O のままで、ベースは枠の空洞にクリアランス分だけ内側で嵌まる
+ *   （張り出しはクリアランス約 0.15mm だけ）。地形の最低点から少し下まで
+ *   届く。中空化ONのときは建物カッターでベースを貫通させ、建物空洞の
+ *   開口を塞がない（ベース自体は中実のまま、底面に開口）。
  *
  * このモジュールはブラウザ / Worker からも安全に使える（Cesium・I/O 非依存）。
  */
 
 import type { Manifold } from 'manifold-3d'
 
-import {
-  BASE_CLEARANCE_MM,
-  BASE_EXTENSION_MM,
-  FRAME_STEP_MM,
-  MIN_FRAME_HEIGHT_MM,
-} from './frameSplitConstants.js'
+import { BASE_CLEARANCE_MM, BASE_EXTENSION_MM, MIN_FRAME_HEIGHT_MM } from './frameSplitConstants.js'
 import { createManifoldFromMesh, removeTinyShells, unionManifolds } from './manifoldOps.js'
 import { buildBaseSlabMesh, buildFrameCutterMesh, buildTerrainCavityMesh } from './pipelineCore.js'
 import type { RawMesh } from './types.js'
 
-export { BASE_CLEARANCE_MM, BASE_EXTENSION_MM, FRAME_STEP_MM, MIN_FRAME_HEIGHT_MM }
+export { BASE_CLEARANCE_MM, BASE_EXTENSION_MM, MIN_FRAME_HEIGHT_MM }
 
 /** モデル空間 → 印刷mm の換算（エクスポートと同じ 1/1000）。 */
 const MODEL_UNITS_PER_MM = 0.001
 
 export interface FrameSplitParts {
-  /** 地形枠（側壁＋底面リム＋外周帯の地形表層。内側上端が段差） */
+  /** 地形枠（側壁＋底面リム。上端は外側から内側へ下る 45°マイター） */
   frame: Manifold
   /** 建物部分（地表プレート＋建物＋平らな底面を作る短い中実ベース） */
   buildings: Manifold
@@ -75,13 +71,8 @@ export async function splitFrameAndBuildings(
     throw new Error('分割できませんでした: 地形厚みに対してシェル厚みが大きすぎます')
   }
 
-  // L 字断面の単一メッシュ。union しないので外周に微小な残渣が出ない。
-  const frameMesh = buildFrameCutterMesh(
-    terrainMesh,
-    cavityMesh,
-    t,
-    FRAME_STEP_MM * MODEL_UNITS_PER_MM,
-  )
+  // 45°マイターの単一リング。union しないので外周に微小な残渣が出ない。
+  const frameMesh = buildFrameCutterMesh(terrainMesh, cavityMesh, t)
   if (!frameMesh) {
     throw new Error('分割できませんでした: 地形枠を生成できません')
   }

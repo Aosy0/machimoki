@@ -22,10 +22,14 @@ export type { PrintableGeometryResult } from './pipelineUtils.js'
 export {
   BASE_CLEARANCE_MM,
   BASE_EXTENSION_MM,
-  FRAME_STEP_MM,
   MIN_FRAME_HEIGHT_MM,
   splitFrameAndBuildings,
 } from './frameSplit.js'
+export {
+  FRAME_MITER_DEPTH_RATIO,
+  hasMiterBase,
+  hasMiterWall,
+} from './frameSplitConstants.js'
 export type { FrameSplitParts, FrameSplitPrebuilt } from './frameSplit.js'
 
 export { exportMachimoki, exportMachimokiFromMeshes } from './pipeline.js'
