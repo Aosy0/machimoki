@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createBox,
   createManifoldFromMesh,
+  removeTinyShells,
+  unionManifolds,
   unionMeshes,
   exportTo3MF,
   exportToSTL,
@@ -52,6 +55,62 @@ describe('manifoldOps', () => {
       expect(manifold.volume()).toBeCloseTo(1.5, 6);
     } finally {
       manifold.delete();
+      cleanupManifoldImports();
+    }
+  });
+
+  it('removes tiny shells relative to the total volume', async () => {
+    const big = await createBox(10);
+    const tiny = await createBox(1e-3);
+    const tinyPlaced = tiny.translate([20, 0, 0]);
+    tiny.delete();
+    const source = await unionManifolds([big, tinyPlaced]);
+    big.delete();
+    tinyPlaced.delete();
+
+    try {
+      const before = source.decompose();
+      expect(before.length).toBe(2);
+      for (const shell of before) shell.delete();
+
+      const cleaned = await removeTinyShells(source);
+      try {
+        const after = cleaned.decompose();
+        expect(after.length).toBe(1);
+        for (const shell of after) shell.delete();
+        // 微小シェル（1e-9）を捨てても体積はほぼ変わらない。
+        expect(cleaned.volume()).toBeCloseTo(1000, 6);
+      } finally {
+        cleaned.delete();
+      }
+    } finally {
+      source.delete();
+      cleanupManifoldImports();
+    }
+  });
+
+  it('keeps real shells above the relative threshold', async () => {
+    const big = await createBox(10);
+    const medium = await createBox(1);
+    const mediumPlaced = medium.translate([20, 0, 0]);
+    medium.delete();
+    const source = await unionManifolds([big, mediumPlaced]);
+    big.delete();
+    mediumPlaced.delete();
+
+    try {
+      const cleaned = await removeTinyShells(source);
+      try {
+        const shells = cleaned.decompose();
+        // 1.0 / 1001 は 1e-5 より大きいので残る（結合しても非接触なので2シェル）。
+        expect(shells.length).toBe(2);
+        for (const shell of shells) shell.delete();
+        expect(cleaned.volume()).toBeCloseTo(1001, 6);
+      } finally {
+        cleaned.delete();
+      }
+    } finally {
+      source.delete();
       cleanupManifoldImports();
     }
   });

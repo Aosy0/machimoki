@@ -13,6 +13,7 @@ import {
   HollowingRecord,
   HollowingReport,
   RawMesh,
+  SplitExportParts,
 } from './types.js'
 import {
   bottomBoundaryIsConvex,
@@ -25,10 +26,13 @@ import {
   createBox,
   createManifoldFromMesh,
   createSlicePrism,
+  createZipBuffer,
   exportMeshesToSTL,
   exportTo3MF,
+  exportToSTL,
   unionManifolds,
 } from './manifoldOps.js'
+import { MIN_FRAME_HEIGHT_MM, splitFrameAndBuildings } from './frameSplit.js'
 import {
   buildTerrainCavityMesh,
   componentContainsPoint,
@@ -37,7 +41,7 @@ import {
   scaleRawMesh,
 } from './pipelineCore.js'
 
-const DEFAULT_SHELL_THICKNESS_MM = 1.6
+export const DEFAULT_SHELL_THICKNESS_MM = 1.6
 
 /**
  * Build the hollowing cutter for one building.
@@ -577,14 +581,37 @@ export interface PrintableGeometryResult {
   hollowing?: HollowingReport
   /** 工程別の処理時間（ミリ秒・計測用。結果の形状には影響しない） */
   timings?: Record<string, number>
+  /**
+   * 分割時に使うスケール済み地形スラブ（2·n² 頂点）。地形なしは null。
+   * 完成形状キャッシュに保存し、エクスポート時の中空化再計算を避ける。
+   */
+  terrainMesh: RawMesh | null
+  /** 分割時の 2 パーツ（分割時のみ。プレビューの左右表示用） */
+  split?: { frame: RawMesh; buildings: RawMesh }
 }
 
-/** シリアライズ前の内部結果。完成 Manifold の所有権は呼び出し側に移る。 */
+/** シリアライズ前の内部結果。Manifold の所有権は呼び出し側に移る。 */
 interface PrintableGeometryBuild {
-  manifold: Manifold
+  /** 非分割時の完成 Manifold（分割時は undefined） */
+  manifold?: Manifold
+  /** 分割前の合体メッシュ（captureMergedMesh 時のみ） */
+  mesh?: RawMesh
+  /** splitAtGround 時の 2 パーツ（分割時のみ） */
+  split?: { frame: Manifold; buildings: Manifold }
+  /** 分割平面計算に使うスケール済み地形スラブ */
+  terrainMesh: RawMesh | null
   warnings: string[]
   hollowing?: HollowingReport
   timings: Record<string, number>
+}
+
+/** Manifold を所有権移譲なしで RawMesh 化する（複製する）。 */
+function rawMeshFromManifold(manifold: Manifold): RawMesh {
+  const raw = manifold.getMesh()
+  return {
+    positions: new Float32Array(raw.vertProperties),
+    indices: new Uint32Array(raw.triVerts),
+  }
 }
 
 /**
@@ -600,18 +627,25 @@ export async function buildPrintableGeometryFromMeshes(
   options: ExportOptions,
 ): Promise<PrintableGeometryResult> {
   const totalStart = performance.now()
-  const build = await buildPrintableGeometry(buildingMeshes, terrainMesh, bounds, options)
+  const build = await buildPrintableGeometry(buildingMeshes, terrainMesh, bounds, options, true)
   try {
     const getMeshStart = performance.now()
-    const rawMesh = build.manifold.getMesh()
+    // 分割時は合体メッシュを分割前に取得済みなので、残るのは 2 パーツのメッシュ化。
+    const mesh = build.manifold ? rawMeshFromManifold(build.manifold) : build.mesh
+    if (!mesh) throw new Error('プレビュー形状の生成に失敗しました')
+    const split = build.split
+      ? {
+          frame: rawMeshFromManifold(build.split.frame),
+          buildings: rawMeshFromManifold(build.split.buildings),
+        }
+      : undefined
     const getMesh = performance.now() - getMeshStart
     return {
-      mesh: {
-        positions: new Float32Array(rawMesh.vertProperties),
-        indices: new Uint32Array(rawMesh.triVerts),
-      },
+      mesh,
       warnings: build.warnings,
       hollowing: build.hollowing,
+      terrainMesh: build.terrainMesh,
+      split,
       timings: {
         ...build.timings,
         getMesh,
@@ -619,20 +653,24 @@ export async function buildPrintableGeometryFromMeshes(
       },
     }
   } finally {
-    // メッシュ化したら完成 Manifold は不要になる。
-    build.manifold.delete()
+    // メッシュ化したら完成 Manifold / 分割パーツは不要になる。
+    build.manifold?.delete()
+    build.split?.frame.delete()
+    build.split?.buildings.delete()
   }
 }
 
 /**
- * 完成形状の Manifold を生成する内部処理（プレビュー用メッシュ化はしない）。
- * 戻り値の `manifold` は呼び出し側が delete する。
+ * 完成形状の Manifold を生成する内部処理（メッシュ化は呼び出し側）。
+ * 戻り値の `manifold` / `split` は呼び出し側が delete する。
+ * 分割時は分割前の合体メッシュを `mesh` で返す（delete 不要）。
  */
 async function buildPrintableGeometry(
   buildingMeshes: RawMesh[],
   terrainMesh: RawMesh | null,
   bounds: Bounds,
   options: ExportOptions,
+  captureMergedMesh = false,
 ): Promise<PrintableGeometryBuild> {
   const scale = options.scale ?? 1
   const includeSpanning = options.includeSpanningBuildings ?? false
@@ -640,6 +678,7 @@ async function buildPrintableGeometry(
   const openBottom = options.openBottom ?? false
   const hollowBuildings = options.hollowBuildings ?? true
   const shellThickness = options.shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
+  const splitAtGround = options.splitAtGround ?? false
   const warnings: string[] = []
   // 工程別タイミング（計測専用。形状には影響しない）。
   const timings: Record<string, number> = {}
@@ -649,6 +688,17 @@ async function buildPrintableGeometry(
   const hollowActive = openBottom && terrainMesh !== null
   if (openBottom && !terrainMesh) {
     warnings.push('地形がないため中空シェルを適用できませんでした')
+  }
+  if (splitAtGround && !hollowActive) {
+    throw new Error('分割には「底面を開口」と地形が必要です')
+  }
+  // 地形枠を成立させるには、地形厚みからシェル厚みを引いた空洞高さが
+  // 最低限必要（枠の剛性）。
+  if (hollowActive && options.terrainThickness - shellThickness < MIN_FRAME_HEIGHT_MM) {
+    throw new Error(
+      `地形厚みはシェル厚み + ${MIN_FRAME_HEIGHT_MM}mm 以上必要です` +
+        `（地形厚み ${options.terrainThickness}mm、シェル厚み ${shellThickness}mm）`,
+    )
   }
   // Wall thickness in the scaled model space. Geometry is scaled by `scale`
   // before hollowing (printed mm = scaled units × 1000), so the printed shell
@@ -828,18 +878,23 @@ async function buildPrintableGeometry(
     union = await unionManifolds(
       terrainManifold ? [terrainManifold, ...buildingManifolds] : buildingManifolds,
     )
-  } finally {
-    // union の入力は消費されないため、地形の一時 Manifold はここで破棄する。
+  } catch (error) {
+    // union が失敗したら地形の一時 Manifold をここで破棄する。
     terrainManifold?.delete()
+    throw error
   }
   timings.union = performance.now() - unionStart
   let final: Manifold = union
-  // 完成 Manifold を呼び出し側へ返したか（true なら finally で破棄しない）。
+  // 完成 Manifold / 分割パーツを呼び出し側へ返したか（true なら finally で破棄しない）。
   let transferred = false
+  // 分割時のベース開口用。建物カッターのみの union（所有権はこの関数）。
+  let buildingCutterUnion: Manifold | null = null
   try {
     const hollowStart = performance.now()
+    // 分割（splitAtGround）でも空洞メッシュを使うためスコープを外に持つ。
+    let cavityMesh: RawMesh | null = null
     if (hollowActive && terrainMesh) {
-      const cavityMesh = buildTerrainCavityMesh(terrainMesh, wallThickness)
+      cavityMesh = buildTerrainCavityMesh(terrainMesh, wallThickness)
       if (!cavityMesh) {
         throw new Error(
           '中空シェルを生成できませんでした: 地形厚みに対してシェル厚みが大きすぎます',
@@ -848,9 +903,18 @@ async function buildPrintableGeometry(
       const cavity = await createManifoldFromMesh(cavityMesh)
       let cutterUnion: Manifold
       try {
-        cutterUnion = await unionManifolds([cavity, ...buildingCutters])
+        // 分割時は建物カッター単体も後で使うため、先に union しておく。
+        // 非分割時は余計な union を作らない。
+        if (splitAtGround && buildingCutters.length > 0) {
+          buildingCutterUnion = await unionManifolds(buildingCutters)
+        }
+        cutterUnion = await unionManifolds(
+          buildingCutterUnion ? [cavity, buildingCutterUnion] : [cavity, ...buildingCutters],
+        )
       } catch (error) {
         cavity.delete()
+        buildingCutterUnion?.delete()
+        buildingCutterUnion = null
         throw error
       }
       cavity.delete()
@@ -890,10 +954,43 @@ async function buildPrintableGeometry(
     }
     timings.sealedCavityCheck = performance.now() - sealedStart
 
+    // 地形枠＋建物部分への分割。中空化後に分割するため、空洞は両パーツで
+    // 開いたまま（枠は底面開口、建物部分は地表プレートの下面が開口）になる。
+    // 建物カッターを渡し、中実ベースにも同じ開口を貫通させる。
+    if (splitAtGround) {
+      if (!terrainMesh || !terrainManifold || !cavityMesh) {
+        throw new Error('分割できませんでした: 地形または空洞がありません')
+      }
+      let mesh: RawMesh | undefined
+      if (captureMergedMesh) {
+        const mergedStart = performance.now()
+        // 分割前の合体メッシュ（プレビュー用）。分割自体は final を消費しない。
+        mesh = rawMeshFromManifold(final)
+        timings.mergedMesh = performance.now() - mergedStart
+      }
+      const splitStart = performance.now()
+      const split = await splitFrameAndBuildings(final, terrainMesh, wallThickness, {
+        cavityMesh,
+        buildingCutter: buildingCutterUnion ?? undefined,
+      })
+      timings.split = performance.now() - splitStart
+      transferred = true
+      final.delete()
+      return {
+        mesh,
+        split,
+        terrainMesh,
+        warnings,
+        hollowing: hollowingReport,
+        timings,
+      }
+    }
+
     // メッシュ化（getMesh）は呼び出し側が最後に1回だけ行う。
     transferred = true
     return {
       manifold: final,
+      terrainMesh,
       warnings,
       hollowing: hollowingReport,
       timings,
@@ -901,8 +998,10 @@ async function buildPrintableGeometry(
   } finally {
     // 失敗時は完成 Manifold も破棄する（成功時は所有権が呼び出し側へ移る）。
     if (!transferred) final.delete()
+    terrainManifold?.delete()
     for (const manifold of buildingManifolds) manifold.delete()
     for (const cutter of buildingCutters) cutter.delete()
+    buildingCutterUnion?.delete()
   }
 }
 
@@ -911,6 +1010,83 @@ async function buildPrintableGeometry(
  *
  * `buildPrintableGeometryFromMeshes` が返す完成メッシュを、指定の up-axis と
  * mm 単位（1回だけ変換）で出力する。プレビューと同じ形状になる。
+ */
+function splitPartFileNames(format: '3mf' | 'stl'): { base: string; buildings: string } {
+  const ext = format === 'stl' ? 'stl' : '3mf'
+  return { base: `model_base.${ext}`, buildings: `model_buildings.${ext}` }
+}
+
+/**
+ * 分割パーツをシリアライズし、2 ファイルを格納した ZIP を返す。
+ * パーツの所有権は呼び出し側に残る（ここでは delete しない）。
+ */
+export async function serializeSplitParts(
+  frame: Manifold,
+  buildings: Manifold,
+  options: ExportOptions,
+): Promise<{ buffer: Uint8Array; split: SplitExportParts }> {
+  const upAxis = options.upAxis ?? 'z-up'
+  const format = options.format === 'stl' ? 'stl' : '3mf'
+  const serialize = async (manifold: Manifold, color: string): Promise<Uint8Array> =>
+    format === 'stl' ? exportToSTL(manifold, upAxis) : exportTo3MF(manifold, color, upAxis)
+
+  const base = await serialize(frame, options.terrainColor ?? '#ffffff')
+  const above = await serialize(buildings, options.buildingColor ?? '#ffffff')
+  const names = splitPartFileNames(format)
+  return {
+    buffer: createZipBuffer({
+      [names.base]: base,
+      [names.buildings]: above,
+    }),
+    split: { base, buildings: above },
+  }
+}
+
+/**
+ * 完成メッシュ（キャッシュ）と地形メッシュから分割モデルを生成する。
+ *
+ * エクスポート Worker が完成形状キャッシュを再利用するための入口。
+ * 中空化の再計算は行わず、枠／建物部分のブール演算とシリアライズだけを行う。
+ */
+export async function buildSplitModelFromFinalMesh(
+  finalMesh: RawMesh,
+  terrainMesh: RawMesh,
+  options: ExportOptions,
+): Promise<{ buffer: Uint8Array; split: SplitExportParts }> {
+  if (options.format === 'machimoki') {
+    throw new Error('分割は .machimoki 形式では未対応です')
+  }
+  if (!(options.openBottom ?? false)) {
+    throw new Error('分割には「底面を開口」が必要です')
+  }
+  const shellThickness = options.shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
+  if (options.terrainThickness - shellThickness < MIN_FRAME_HEIGHT_MM) {
+    throw new Error(
+      `地形厚みはシェル厚み + ${MIN_FRAME_HEIGHT_MM}mm 以上必要です` +
+        `（地形厚み ${options.terrainThickness}mm、シェル厚み ${shellThickness}mm）`,
+    )
+  }
+
+  const final = await createManifoldFromMesh(finalMesh)
+  try {
+    const parts = await splitFrameAndBuildings(final, terrainMesh, shellThickness / 1000)
+    try {
+      return await serializeSplitParts(parts.frame, parts.buildings, options)
+    } finally {
+      parts.frame.delete()
+      parts.buildings.delete()
+    }
+  } finally {
+    final.delete()
+  }
+}
+
+/**
+ * 取得済みメッシュから印刷用モデルを生成し、STL/3MF にシリアライズする。
+ *
+ * `buildPrintableGeometryFromMeshes` が返す完成メッシュを、指定の up-axis と
+ * mm 単位（1回だけ変換）で出力する。プレビューと同じ形状になる。
+ * `splitAtGround` 時は地形枠と建物部分の 2 ファイルを格納した ZIP を返す。
  */
 export async function buildPrintableModelFromMeshes(
   buildingMeshes: RawMesh[],
@@ -928,6 +1104,22 @@ export async function buildPrintableModelFromMeshes(
   const { warnings, hollowing } = build
   const upAxis = options.upAxis ?? 'z-up'
   try {
+    if (options.splitAtGround) {
+      if (!build.split) {
+        throw new Error('分割できませんでした: パーツが生成されませんでした')
+      }
+      const result = await serializeSplitParts(build.split.frame, build.split.buildings, options)
+      return {
+        buffer: result.buffer,
+        split: result.split,
+        warnings,
+        hollowing,
+      }
+    }
+
+    if (!build.manifold) {
+      throw new Error('完成モデルが生成されませんでした')
+    }
     if (options.format === 'stl') {
       // STL はメッシュが必要なので、ここで1回だけ getMesh する。
       const rawMesh = build.manifold.getMesh()
@@ -944,8 +1136,10 @@ export async function buildPrintableModelFromMeshes(
       : (options.buildingColor ?? '#ffffff')
     return { buffer: await exportTo3MF(build.manifold, modelColor, upAxis), warnings, hollowing }
   } finally {
-    // 完成 Manifold はここで所有権を終える。
-    build.manifold.delete()
+    // 完成 Manifold / 分割パーツはここで所有権を終える。
+    build.manifold?.delete()
+    build.split?.frame.delete()
+    build.split?.buildings.delete()
   }
 }
 

@@ -99,6 +99,9 @@ async function exportMachimokiUnsafe(
   bounds: Bounds,
   options: ExportOptions,
 ): Promise<MachimokiExportResult> {
+  if (options.splitAtGround) {
+    throw new Error('分割は .machimoki 形式では未対応です')
+  }
   const modelFormat = options.machimokiModelFormat ?? '3mf'
   const modelOptions: ExportOptions = { ...options, format: modelFormat }
   const { buffer, warnings } = await buildPrintableModel(bounds, modelOptions)
@@ -123,6 +126,9 @@ export async function exportMachimokiFromMeshes(
   bounds: Bounds,
   options: ExportOptions,
 ): Promise<MachimokiExportResult> {
+  if (options.splitAtGround) {
+    throw new Error('分割は .machimoki 形式では未対応です')
+  }
   const modelFormat = options.machimokiModelFormat ?? '3mf'
   const modelOptions: ExportOptions = { ...options, format: modelFormat }
   const { buffer, warnings } = await buildPrintableModelFromMeshes(

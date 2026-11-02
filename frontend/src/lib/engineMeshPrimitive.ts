@@ -29,6 +29,10 @@ export interface EngineMeshPrimitiveOptions {
   flat?: boolean
   /** CAD調（面法線＋環境光ベース）で描画する。地形プレビューと同じ質感。 */
   cadShaded?: boolean
+  /** モデル単位（positionScale 適用前）のXオフセット。分割表示の左右配置用。 */
+  offsetX?: number
+  /** モデル単位（positionScale 適用前）のYオフセット。分割表示の接地合わせ用。 */
+  offsetY?: number
 }
 
 // 三角形法線を頂点に累積して正規化する（solidTerrain と同様の処理）。
@@ -96,10 +100,12 @@ export function buildEngineMeshPrimitive(
   const positionValues = new Float64Array(count * 3)
   const localScratch = new Cartesian3()
   const ecefScratch = new Cartesian3()
+  const offsetX = options.offsetX ?? 0
+  const offsetY = options.offsetY ?? 0
   for (let i = 0; i < count; i++) {
-    localScratch.x = mesh.positions[i * 3] * s
+    localScratch.x = (mesh.positions[i * 3] + offsetX) * s
     localScratch.y = -mesh.positions[i * 3 + 2] * s
-    localScratch.z = mesh.positions[i * 3 + 1] * s
+    localScratch.z = (mesh.positions[i * 3 + 1] + offsetY) * s
     const ecef = Matrix4.multiplyByPoint(options.centerMatrix, localScratch, ecefScratch)
     positionValues[i * 3] = ecef.x
     positionValues[i * 3 + 1] = ecef.y

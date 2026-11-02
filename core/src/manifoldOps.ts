@@ -111,6 +111,63 @@ export async function unionManifolds(manifolds: Manifold[]): Promise<Manifold> {
 }
 
 /**
+ * Remove negligible shell fragments left by boolean operations on the outer
+ * perimeter (near-zero volume slivers that make validation report many shells).
+ *
+ * The threshold is relative to the total volume, so real parts of any size are
+ * kept. The returned Manifold is new; the input is not modified. If more than
+ * one shell survives they are unioned (still disjoint if they do not touch).
+ * Sealed voids (negative-volume shells) are left untouched: unioning them would
+ * fill the cavities, so an unmodified copy is returned. Throws when no shell
+ * survives.
+ */
+export async function removeTinyShells(manifold: Manifold, ratio = 1e-5): Promise<Manifold> {
+  const shells = manifold.decompose()
+  if (shells.length === 0) {
+    throw new Error('Shell cleanup failed: no shells')
+  }
+  const signedVolumes: number[] = []
+  let totalVolume = 0
+  for (const shell of shells) {
+    const volume = shell.volume()
+    signedVolumes.push(volume)
+    totalVolume += Math.abs(volume)
+  }
+  if (!(totalVolume > 0)) {
+    for (const shell of shells) shell.delete()
+    throw new Error('Shell cleanup failed: zero total volume')
+  }
+
+  const threshold = totalVolume * ratio
+  const kept: Manifold[] = []
+  const keptVolumes: number[] = []
+  for (let i = 0; i < shells.length; i++) {
+    if (Math.abs(signedVolumes[i]) >= threshold) {
+      kept.push(shells[i])
+      keptVolumes.push(signedVolumes[i])
+    } else {
+      shells[i].delete()
+    }
+  }
+  if (kept.length === 0) {
+    throw new Error('Shell cleanup failed: all shells below threshold')
+  }
+  if (kept.length === 1) return kept[0]
+
+  // 負の体積シェル（密閉空洞）を union すると空洞が埋まるため、
+  // その場合はクリーニングせず元の形状のコピーを返す。
+  if (keptVolumes.some((volume) => volume < 0)) {
+    for (const shell of kept) shell.delete()
+    return manifold.translate([0, 0, 0])
+  }
+  try {
+    return await unionManifolds(kept)
+  } finally {
+    for (const shell of kept) shell.delete()
+  }
+}
+
+/**
  * Create a cube of the given edge length centered at the origin.
  * Used as the structuring element for morphological erosion when hollowing
  * buildings (shell thickness = size / 2).
@@ -311,6 +368,14 @@ function buildColored3mfXml(
  *   `application/vnd.ms-package.3dmanufacturing-3dmodel+xml`
  * - _rels/.rels targets `3D/3dmodel.model` without a leading slash
  */
+/**
+ * Build a ZIP archive from named files (e.g. split model parts).
+ * Used for split exports so the browser/API can return both parts in one file.
+ */
+export function createZipBuffer(files: Record<string, Uint8Array>): Uint8Array {
+  return zipSync(files)
+}
+
 function createColored3mfZip(xml: string): Uint8Array {
   const contentTypes = `<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">

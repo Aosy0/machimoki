@@ -5,7 +5,7 @@ import type { Lod } from './catalogApi'
  * 完成メッシュキャッシュのバージョン。形状生成ロジックが変わったら上げる。
  * バージョンが違うキーは一致しないため、古いキャッシュを誤って使わない。
  */
-export const FINAL_SHAPE_CACHE_VERSION = 1
+export const FINAL_SHAPE_CACHE_VERSION = 9
 
 /** 完成メッシュのジオメトリに影響するパラメータのみ（色は含めない）。 */
 export interface FinalShapeGeometryParams {
@@ -22,6 +22,7 @@ export interface FinalShapeGeometryParams {
   openBottom?: boolean
   shellThickness?: number
   hollowBuildings?: boolean
+  splitAtGround?: boolean
 }
 
 /**
@@ -48,5 +49,6 @@ export function finalShapeGeometryKey(params: FinalShapeGeometryParams): string 
     openBottom: params.openBottom ?? false,
     shellThickness: params.shellThickness ?? null,
     hollowBuildings: params.hollowBuildings ?? true,
+    splitAtGround: params.splitAtGround ?? false,
   })
 }

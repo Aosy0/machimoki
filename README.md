@@ -98,6 +98,17 @@ npx tsx core/src/cli/index.ts export \
   --format 3mf \
   --output shell.3mf
 
+# 土台（地形枠）と建物部分に分割
+npx tsx core/src/cli/index.ts export \
+  --bounds 139.6903,35.6997,139.6906,35.7000 \
+  --terrain-thickness 10 \
+  --open-bottom \
+  --shell-thickness 1.6 \
+  --split-at-ground \
+  --format 3mf \
+  --output model.3mf
+# => model_base.3mf（地形枠）/ model_buildings.3mf（地表プレート＋建物＋平らなベース）
+
 # メッシュの検証
 npx tsx core/src/cli/index.ts validate --file model.3mf --json
 ```
@@ -107,11 +118,37 @@ npx tsx core/src/cli/index.ts validate --file model.3mf --json
 （印刷mm）を、`--no-hollow-buildings` で建物内部の中空化の無効化を指定できます。
 建物内部の空洞は底面まで貫通するため、逆さにして水を入れると建物内部まで到達します。
 
+`--split-at-ground` を `--open-bottom` と併用すると、モデルを「地形枠」と
+「建物部分（地表プレート＋建物＋平らなベース）」の2パーツに分割します。
+
+- 地形枠は側壁＋底面リムに、外周帯の地形表層（幅 `shellThickness - 0.4mm`。
+  既定 1.6mm なら 1.2mm）を加えたものです。内側上端には幅 **0.4mm の段差（棚）**
+  があり、建物側プレートの外周がそこに乗ります。枠自体に天井がないため、正立
+  印刷で内部サポートが不要です。
+- 建物部分は地表プレート＋建物に、プレート下の凹凸を埋める**短い中実ベース**を
+  union したものです。プレート外周は外形から `shellThickness - 0.4mm` 内側に
+  切り取られ、ベースは地形枠の空洞に片側 0.15mm のクリアランスで嵌まります。
+  パッド側との張り出しは 0.4 + 0.15 = **約 0.55mm** です。底面は地形の最低点から
+  0.2mm 下の**平らな面**になり、分割後の底面の凹凸によるサポートを減らせます。
+  継ぎ目（プレート外周）は既定 1.6mm で外形から 1.2mm 内側、合体後の高さは
+  地形厚み＋建物高さになります。
+- `--hollow-buildings`（既定）と併用しても、建物内部の空洞の開口は中空化で使った
+  カッターがベースを貫通するため、ベース底面に開口が空いたままになります
+  （密閉空洞にはなりません）。穴はプレートの開口と同じ位置です。
+- 建物部分は**切り口（ベース底面）を下、屋根を上**にして正立印刷できます。
+  屋根や地表がベッドに触れないため、天面にビルドプレート模様が転写されません。
+  建物内部の空洞が不要な場合は `--no-hollow-buildings` で中実にできます。
+- Web UI は完成形状のキャッシュに分割済みの2パーツも保存し、エクスポート時は
+  それをそのままシリアライズします（再分割しないため、ベースの開口も保たれます）。
+- `terrainThickness - shellThickness` は **2.0mm 以上**必要です。薄すぎる場合は
+  エラーになります。
+- 起伏が大きい範囲では、低地の建物下部が地形枠側に残ります。
+
 ### HTTP API
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| `POST` | `/api/export` | パラメータを受け取り、3MF/STLバイナリを返却 |
+| `POST` | `/api/export` | パラメータを受け取り、3MF/STLバイナリを返却。`splitAtGround: true` 時は2パーツ入りZIP（`model_split.zip`） |
 | `POST` | `/api/validate` | multipart `file` を受け取り、検証結果JSONを返却 |
 
 #### 検証の合否基準

@@ -12,6 +12,8 @@ import { serve, ServerType } from '@hono/node-server'
 import { pathToFileURL } from 'node:url'
 import { buildPrintableModel, exportMachimoki } from '../pipeline.js'
 import { validateMesh } from '../validate.js'
+import { DEFAULT_SHELL_THICKNESS_MM } from '../pipelineUtils.js'
+import { MIN_FRAME_HEIGHT_MM } from '../frameSplit.js'
 import { Bounds, ExportOptions, Lod } from '../types.js'
 
 const app = new Hono()
@@ -54,7 +56,42 @@ app.post('/api/export', async (c) => {
       })
     }
 
-    const { buffer, warnings } = await buildPrintableModel(bounds, options)
+    const { buffer, warnings, split } = await buildPrintableModel(bounds, options)
+
+    if (options.splitAtGround) {
+      if (!split) {
+        return c.json({ error: '分割モデルが返りませんでした', warnings }, 500)
+      }
+      const partMimeType = options.format === 'stl' ? 'model/stl' : 'model/3mf'
+      const [baseValidation, buildingsValidation] = await Promise.all([
+        validateMesh(split.base, partMimeType),
+        validateMesh(split.buildings, partMimeType),
+      ])
+      if (baseValidation.status === 'fail' || buildingsValidation.status === 'fail') {
+        const part = baseValidation.status === 'fail' ? 'base' : 'buildings'
+        return c.json(
+          {
+            error: 'Validation failed',
+            part,
+            warnings,
+            validation: { base: baseValidation, buildings: buildingsValidation },
+          },
+          422,
+        )
+      }
+      const status =
+        baseValidation.status === 'warning' || buildingsValidation.status === 'warning'
+          ? 'warning'
+          : 'pass'
+      return new Response(buffer as unknown as BodyInit, {
+        headers: {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': 'attachment; filename="model_split.zip"',
+          'X-Validation-Status': status,
+        },
+      })
+    }
+
     const mimeType = options.format === 'stl' ? 'model/stl' : 'model/3mf'
     const validation = await validateMesh(buffer, mimeType)
 
@@ -173,6 +210,28 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     shellThickness = parsed
   }
 
+  const splitAtGround = typeof record.splitAtGround === 'boolean' ? record.splitAtGround : false
+  if (splitAtGround) {
+    if (format === 'machimoki') {
+      return { ok: false, error: 'splitAtGround is not supported for .machimoki' }
+    }
+    if (!includeTerrain) {
+      return { ok: false, error: 'splitAtGround requires includeTerrain' }
+    }
+    if (!openBottom) {
+      return { ok: false, error: 'splitAtGround requires openBottom' }
+    }
+    const resolvedShell = shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
+    if (terrainThickness - resolvedShell < MIN_FRAME_HEIGHT_MM) {
+      return {
+        ok: false,
+        error:
+          `Invalid thickness: terrainThickness must be at least shellThickness + ` +
+          `${MIN_FRAME_HEIGHT_MM}mm`,
+      }
+    }
+  }
+
   let pickPoints: Array<{ lon: number; lat: number }> | undefined
   if (record.pickPoints !== undefined) {
     const parsed = parsePickPoints(record.pickPoints)
@@ -216,6 +275,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     openBottom,
     shellThickness,
     hollowBuildings,
+    splitAtGround,
     pickPoints,
     excludedGmlIds,
     terrainGridSize,

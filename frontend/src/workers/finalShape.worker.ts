@@ -28,6 +28,10 @@ export type FinalShapeWorkerResponse =
       requestId: number
       mesh: RawMesh
       warnings: string[]
+      /** 分割エクスポート用のスケール済み地形スラブ（地形なしは null） */
+      terrainMesh: RawMesh | null
+      /** 分割時の 2 パーツ（分割時のみ。プレビューの左右表示用） */
+      split?: { frame: RawMesh; buildings: RawMesh }
       timings?: Record<string, number>
     }
   | { type: 'error'; requestId: number; message: string }
@@ -88,6 +92,8 @@ self.onmessage = async (e: MessageEvent<FinalShapeWorkerRequest>) => {
       requestId,
       mesh: result.mesh,
       warnings: result.warnings,
+      terrainMesh: result.terrainMesh,
+      split: result.split,
       timings: { ...result.timings, terrainSlab: terrainSlabMs },
     })
   } catch (err) {

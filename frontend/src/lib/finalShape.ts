@@ -7,6 +7,10 @@ import type {
 export interface FinalShapeResult {
   mesh: RawMesh
   warnings: string[]
+  /** 分割エクスポート用のスケール済み地形スラブ（地形なしは null） */
+  terrainMesh: RawMesh | null
+  /** 分割時の 2 パーツ（分割時のみ。プレビューの左右表示用） */
+  split?: { frame: RawMesh; buildings: RawMesh }
 }
 
 /**
@@ -65,7 +69,12 @@ function handleMessage(event: MessageEvent<FinalShapeWorkerResponse>): void {
   if (msg.type === 'done') {
     // 工程別タイミング（開発時の性能確認用）。
     if (msg.timings) console.debug('[finalShape] timings', msg.timings)
-    pending.resolve({ mesh: msg.mesh, warnings: msg.warnings })
+    pending.resolve({
+      mesh: msg.mesh,
+      warnings: msg.warnings,
+      terrainMesh: msg.terrainMesh ?? null,
+      split: msg.split,
+    })
     return
   }
   // 生成エラー時は Worker を作り直す（安全側）。

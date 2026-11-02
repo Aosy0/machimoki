@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'node:child_process';
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,6 +12,7 @@ import {
   parseUpAxis,
   detectMimeType,
   parsePickPoint,
+  splitOutputPaths,
 } from '../../src/cli/index.js';
 
 vi.mock('../../src/pipeline.js', () => ({
@@ -80,6 +81,18 @@ describe('CLI argument parsers', () => {
     expect(detectMimeType('model.3mf')).toBe('model/3mf');
     expect(detectMimeType('model.stl')).toBe('model/stl');
     expect(() => detectMimeType('model.obj')).toThrow();
+  });
+
+  it('splitOutputPaths derives base/buildings names', () => {
+    expect(splitOutputPaths('model.3mf')).toEqual({
+      basePath: 'model_base.3mf',
+      buildingsPath: 'model_buildings.3mf',
+    });
+    expect(splitOutputPaths('out/model.stl')).toEqual({
+      basePath: 'out/model_base.stl',
+      buildingsPath: 'out/model_buildings.stl',
+    });
+    expect(() => splitOutputPaths('model')).toThrow();
   });
 
   it('parsePickPoint accepts lon,lat', () => {
@@ -155,7 +168,9 @@ describe('CLI export command', () => {
         openBottom: false,
         shellThickness: undefined,
         hollowBuildings: true,
+        splitAtGround: false,
         pickPoints: undefined,
+        excludedGmlIds: undefined,
       },
     );
   });
@@ -361,6 +376,47 @@ describe('CLI export command', () => {
         outputPath,
       ]),
     ).rejects.toThrow(/shell thickness/i);
+  });
+
+  it('writes two parts with --split-at-ground', async () => {
+    const outputPath = join(tempDir, 'split.3mf');
+    buildPrintableModel.mockResolvedValue({
+      buffer: new TextEncoder().encode('zip-bytes'),
+      warnings: [],
+      split: {
+        base: new TextEncoder().encode('base-bytes'),
+        buildings: new TextEncoder().encode('buildings-bytes'),
+      },
+    });
+
+    await program.parseAsync([
+      'node',
+      'cli',
+      'export',
+      '--bounds',
+      '0,0,1,1',
+      '--terrain-thickness',
+      '10',
+      '--terrain',
+      '--open-bottom',
+      '--shell-thickness',
+      '1.6',
+      '--split-at-ground',
+      '--output',
+      outputPath,
+    ]);
+
+    expect(buildPrintableModel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        openBottom: true,
+        includeTerrain: true,
+        splitAtGround: true,
+      }),
+    );
+    expect(existsSync(join(tempDir, 'split_base.3mf'))).toBe(true);
+    expect(existsSync(join(tempDir, 'split_buildings.3mf'))).toBe(true);
+    expect(validateMesh).toHaveBeenCalledTimes(2);
   });
 });
 

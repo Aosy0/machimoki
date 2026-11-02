@@ -50,6 +50,10 @@ export interface ExportOptions {
   // 建物内部も中空化し、底面開口から建物内へ通じる空洞を作る。デフォルト true。
   // openBottom が true のときのみ使用される。
   hollowBuildings?: boolean
+  // 中空モデルを「地形枠（土台）」と「建物部分（地表プレート＋建物）」
+  // に分割して出力する。openBottom かつ地形ありが必須。デフォルト false。
+  // 結果の buffer は 2 パーツを格納した ZIP になり、split に各パーツが入る。
+  splitAtGround?: boolean
 }
 
 export interface ExportRequest {
@@ -57,11 +61,22 @@ export interface ExportRequest {
   options: ExportOptions
 }
 
+/** splitAtGround 時の 2 パーツ。buffer はこの 2 ファイルを格納した ZIP。 */
+export interface SplitExportParts {
+  /** 地形枠（土台） */
+  base: Uint8Array
+  /** 建物部分（地表プレート＋建物） */
+  buildings: Uint8Array
+}
+
 export interface ExportResult {
+  /** 通常は完成モデル。splitAtGround 時は 2 パーツを格納した ZIP。 */
   buffer: Uint8Array
   warnings: string[]
   /** openBottom 時の建物ごとの中空化結果（未指定 = 中空化なし） */
   hollowing?: HollowingReport
+  /** splitAtGround 時の各パーツ（未指定 = 分割なし） */
+  split?: SplitExportParts
 }
 
 /** 建物1棟ごとの中空化ステータス */

@@ -31,6 +31,8 @@ export interface ExportOptions {
   shellThickness?: number
   /** 建物内部も中空化する（デフォルト true、openBottom 時のみ意味を持つ） */
   hollowBuildings?: boolean
+  /** 地形枠と建物部分に分割して ZIP で出力する */
+  splitAtGround?: boolean
 }
 
 export interface ValidationResult {

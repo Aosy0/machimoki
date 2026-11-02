@@ -1,4 +1,5 @@
 import React, { useRef } from 'react'
+import { MIN_FRAME_HEIGHT_MM } from '../../../core/src/frameSplitConstants.ts'
 import type { Lod } from '../lib/catalogApi'
 import { TERRAIN_GRID_PRESETS } from '../lib/previewBudget'
 import {
@@ -24,6 +25,8 @@ export interface Parameters {
   openBottom: boolean
   shellThickness: number
   hollowBuildings: boolean
+  /** 地形枠と建物部分に分割して出力する */
+  splitAtGround: boolean
 }
 
 interface ParameterPanelProps {
@@ -65,6 +68,22 @@ function ParameterPanel({
 }: ParameterPanelProps) {
   const handleChange = <K extends keyof Parameters>(key: K, value: Parameters[K]) => {
     onChange({ ...parameters, [key]: value })
+  }
+
+  const handleOpenBottomChange = (checked: boolean) => {
+    onChange({
+      ...parameters,
+      openBottom: checked,
+      ...(checked ? {} : { splitAtGround: false }),
+    })
+  }
+
+  const handleSplitAtGroundChange = (checked: boolean) => {
+    onChange({
+      ...parameters,
+      splitAtGround: checked,
+      ...(checked ? { openBottom: true } : {}),
+    })
   }
 
   const lodLabels: Record<Lod, string> = {
@@ -661,7 +680,7 @@ function ParameterPanel({
             <input
               type="checkbox"
               checked={parameters.openBottom}
-              onChange={(e) => handleChange('openBottom', e.target.checked)}
+              onChange={(e) => handleOpenBottomChange(e.target.checked)}
               disabled={!parameters.includeTerrain}
             />
             <span style={{ fontSize: '14px' }}>底面を開口（中空シェル）</span>
@@ -687,13 +706,21 @@ function ParameterPanel({
                 <input
                   type="range"
                   min={0.8}
-                  max={Math.min(5, Math.max(0.8, parameters.terrainThickness - 0.5))}
+                  max={Math.min(
+                    5,
+                    Math.max(0.8, parameters.terrainThickness - MIN_FRAME_HEIGHT_MM),
+                  )}
                   step={0.1}
                   value={parameters.shellThickness}
                   onChange={(e) => handleChange('shellThickness', Number(e.target.value))}
                   disabled={!parameters.includeTerrain}
                   style={{ width: '100%' }}
                 />
+                {parameters.terrainThickness - parameters.shellThickness < MIN_FRAME_HEIGHT_MM && (
+                  <p style={{ fontSize: '11px', color: 'var(--warn)', margin: '6px 0 0' }}>
+                    地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)}mm 以上必要です
+                  </p>
+                )}
               </div>
 
               <label
@@ -729,6 +756,36 @@ function ParameterPanel({
               </p>
             </div>
           )}
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: !parameters.includeTerrain ? 'default' : 'pointer',
+              marginTop: '12px',
+              marginBottom: '4px',
+              opacity: !parameters.includeTerrain ? 0.5 : 1,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={parameters.splitAtGround}
+              onChange={(e) => handleSplitAtGroundChange(e.target.checked)}
+              disabled={!parameters.includeTerrain}
+            />
+            <span style={{ fontSize: '14px' }}>土台と建物に分割</span>
+          </label>
+          <p
+            style={{
+              fontSize: '11px',
+              color: 'var(--text-dim)',
+              margin: '0 0 0 26px',
+              opacity: !parameters.includeTerrain ? 0.5 : 1,
+            }}
+          >
+            地形を枠、建物側を地表プレート＋建物＋印刷用の平らなベースに分けます。枠の内側上端の段差（0.4mm）に建物側の外周を乗せ、外周の張り出しを約0.55mmに抑えます。ベースが枠に嵌まり、底面の凹凸によるサポートを減らします。ベースは中実ですが、建物内部の空洞の開口はベースを貫通して開いたままになります。地上部は切り口を下・屋根を上にして印刷でき、天面にプレート痕が付きません。オンにすると底面開口も自動でオンになります。建物内部の空洞が不要な場合は「建物内部も中空化」をOFFにしてください。
+          </p>
 
           <div style={{ marginTop: '12px', opacity: parameters.includeTerrain ? 1 : 0.5 }}>
             <label

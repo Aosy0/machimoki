@@ -30,6 +30,9 @@ const buildPrintableModel = vi.mocked(
 const exportMachimoki = vi.mocked(
   (await import('../../src/pipeline.js')).exportMachimoki,
 );
+const validateMesh = vi.mocked(
+  (await import('../../src/validate.js')).validateMesh,
+);
 
 function getPort(server: ServerType): number {
   const address = (server as unknown as import('node:http').Server).address();
@@ -243,6 +246,53 @@ describe('API server', () => {
         format: '3mf',
         openBottom: true,
         shellThickness: 10,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('POST /api/export returns a ZIP for split exports', async () => {
+    validateMesh.mockClear();
+    buildPrintableModel.mockResolvedValue({
+      buffer: new TextEncoder().encode('zip-bytes'),
+      warnings: [],
+      split: {
+        base: new TextEncoder().encode('base-bytes'),
+        buildings: new TextEncoder().encode('buildings-bytes'),
+      },
+    });
+
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 0, south: 0, east: 1, north: 1 },
+        terrainThickness: 10,
+        format: '3mf',
+        includeTerrain: true,
+        openBottom: true,
+        shellThickness: 1.6,
+        splitAtGround: true,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('application/zip');
+    expect(response.headers.get('Content-Disposition')).toContain('model_split.zip');
+    expect(new TextDecoder().decode(await response.arrayBuffer())).toBe('zip-bytes');
+    expect(validateMesh).toHaveBeenCalledTimes(2);
+  });
+
+  it('POST /api/export rejects splitAtGround without openBottom', async () => {
+    const response = await fetch(`${baseUrl}/api/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bounds: { west: 0, south: 0, east: 1, north: 1 },
+        terrainThickness: 10,
+        format: '3mf',
+        splitAtGround: true,
       }),
     });
 

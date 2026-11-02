@@ -5,6 +5,7 @@ import {
   Cesium3DTileset,
   Color,
   ColorGeometryInstanceAttribute,
+  BoundingSphere,
   Cartesian2,
   Cartesian3,
   Cartographic,
@@ -32,7 +33,7 @@ import {
   Transforms,
   UniformType,
 } from 'cesium'
-import type { BoundingSphere, Cesium3DTile, Primitive, TerrainProvider } from 'cesium'
+import type { Cesium3DTile, Primitive, TerrainProvider } from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 // メインスレッドの manifold WASM 設定（断面表示で使用）。
 import '../lib/manifoldRuntime'
@@ -90,6 +91,7 @@ import {
 import { finalShapeGeometryKey } from '../lib/finalShapeKey'
 import {
   type CachedFinalShapeMesh,
+  type CachedSplitMesh,
   loadFinalShapeCache,
   saveFinalShapeCache,
 } from '../lib/finalShapeCache'
@@ -676,6 +678,11 @@ interface Preview3DProps {
   /** 影の表示ON/OFF（サイドパネルのトグル）。 */
   shadowsVisible?: boolean
   /**
+   * 分割（土台と建物を左右に並べて表示）。App から
+   * `openBottom && splitAtGround` の AND 結果が渡される。
+   */
+  splitAtGround?: boolean
+  /**
    * 重い処理（最終形状生成・断面派生・中空シェル生成）の進行中フラグ。
    * すべて終わるまで true のまま App 側でオーバーレイを維持する。
    */
@@ -711,6 +718,7 @@ export default function Preview3D({
   onBuildingsVisibleChange,
   shadowsVisible = true,
   onBusyChange,
+  splitAtGround = false,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -720,6 +728,21 @@ export default function Preview3D({
   const solidTerrainPrimitiveRef = useRef<Primitive[] | null>(null)
   // 最終形状プレビュー（エクスポートと同一の完成メッシュ）の表示状態。
   const finalShapePrimitiveRef = useRef<Primitive | null>(null)
+  // 分割表示時（splitAtGround）の2プリミティブ（[0]=土台frame 左、[1]=建物buildings 右）。
+  // 非分割時は空で、finalShapePrimitiveRef の単体表示になる。
+  const finalShapeSplitPrimitivesRef = useRef<Primitive[]>([])
+  // 分割表示の再構築用（色替え時の作り直しでオフセットを再現する）。
+  const finalShapeSplitRef = useRef<{
+    frame: import('@machimoki/core').RawMesh
+    buildings: import('@machimoki/core').RawMesh
+    offsetFrame: number
+    offsetBuildings: number
+    offsetFrameY: number
+    offsetBuildingsY: number
+  } | null>(null)
+  // 分割パーツの左右間隔（合体メッシュ幅に対する比率）。1箇所で調整可能にする。
+  // 2つの合成 bbox が元の中心に来るようオフセットする。
+  const SPLIT_GAP_RATIO = 0.125
   const finalShapeActiveRef = useRef(false)
   const finalShapeRequestIdRef = useRef(0)
   // 最終形状を生成中か（生成完了までの間、ベース再構築を後回しにする判定に使う）。
@@ -1289,10 +1312,8 @@ export default function Preview3D({
   const resetView = (): void => {
     const viewer = viewerRef.current
     if (!viewer) return
-    if (finalShapeActiveRef.current && finalShapePrimitiveRef.current) {
-      const instances = finalShapePrimitiveRef.current.geometryInstances
-      const instance = Array.isArray(instances) ? instances[0] : instances
-      const sphere = instance?.geometry?.boundingSphere
+    if (finalShapeActiveRef.current) {
+      const sphere = finalShapeCombinedSphere()
       if (sphere) {
         const radius = Math.max(sphere.radius, 1)
         viewer.camera.viewBoundingSphere(
@@ -2670,20 +2691,70 @@ export default function Preview3D({
   ])
 
   // 最終形状プレビューの破棄（プリミティブの remove & destroy）。
+  // 分割表示時は2プリミティブ、非分割時は単体を破棄する。
   const disposeFinalShapePrimitive = (): void => {
+    const prims: Primitive[] = []
     const p = finalShapePrimitiveRef.current
     finalShapePrimitiveRef.current = null
-    if (!p) return
-    try {
-      viewerRef.current?.scene.primitives.remove(p)
-    } catch {
-      void 0
+    if (p) prims.push(p)
+    const split = finalShapeSplitPrimitivesRef.current
+    finalShapeSplitPrimitivesRef.current = []
+    for (const s of split) prims.push(s)
+    finalShapeSplitRef.current = null
+    for (const prim of prims) {
+      try {
+        viewerRef.current?.scene.primitives.remove(prim)
+      } catch {
+        void 0
+      }
+      try {
+        prim.destroy()
+      } catch {
+        void 0
+      }
     }
-    try {
-      p.destroy()
-    } catch {
-      void 0
+  }
+
+  // 表示中の最終形状プリミティブ（単体または分割2つ）への一括操作。
+  const forEachFinalShapePrimitive = (fn: (p: Primitive) => void): void => {
+    const p = finalShapePrimitiveRef.current
+    if (p) fn(p)
+    for (const s of finalShapeSplitPrimitivesRef.current) fn(s)
+  }
+
+  const setFinalShapePrimitivesShow = (show: boolean): void => {
+    forEachFinalShapePrimitive((p) => {
+      p.show = show
+    })
+  }
+
+  // 表示中の全プリミティブを包む球（単体時はその球、分割時は2球の合成）。
+  // カメラのフレーミングと視点リセットで使う。
+  const finalShapeCombinedSphere = (): BoundingSphere | null => {
+    const spheres: BoundingSphere[] = []
+    forEachFinalShapePrimitive((p) => {
+      const instances = p.geometryInstances
+      const instance = Array.isArray(instances) ? instances[0] : instances
+      const sphere = instance?.geometry?.boundingSphere as BoundingSphere | undefined
+      if (sphere) spheres.push(sphere)
+    })
+    if (spheres.length === 0) return null
+    if (spheres.length === 1) return spheres[0]
+    const center = new Cartesian3()
+    for (const s of spheres) {
+      center.x += s.center.x
+      center.y += s.center.y
+      center.z += s.center.z
     }
+    center.x /= spheres.length
+    center.y /= spheres.length
+    center.z /= spheres.length
+    let radius = 0
+    for (const s of spheres) {
+      const d = Cartesian3.distance(center, s.center) + s.radius
+      if (d > radius) radius = d
+    }
+    return new BoundingSphere(center, radius)
   }
 
   // 永続キャッシュのキー（形状に影響するパラメータのみ。色は含めない）。
@@ -2702,6 +2773,7 @@ export default function Preview3D({
       openBottom,
       shellThickness,
       hollowBuildings,
+      splitAtGround,
     })
 
   currentFinalShapeKeyRef.current = selectionBounds
@@ -2739,7 +2811,25 @@ export default function Preview3D({
     openBottom,
     shellThickness,
     hollowBuildings,
+    splitAtGround,
   })
+
+  // 分割表示用の2パーツ（frame=土台、buildings=建物）。空パーツは分割なし扱いにする。
+  const splitOf = (value: { split?: CachedSplitMesh | null } | null): CachedSplitMesh | null => {
+    const split = value?.split
+    if (!split) return null
+    if (split.frame.positions.length === 0 || split.buildings.positions.length === 0) return null
+    return split
+  }
+  // splitAtGround がONなのに split が無い entry はキャッシュミス扱いにする（Workerで再生成）。
+  // OFFなら split は無視する。
+  const resolveDisplayCache = (
+    cached: CachedFinalShapeMesh | null,
+  ): CachedFinalShapeMesh | null => {
+    if (!cached) return null
+    if (splitAtGround && !splitOf(cached)) return null
+    return cached
+  }
 
   // 表示だけに影響する見た目キー。変化しても生成パイプラインは走らせず、
   // 既存メッシュの色だけを更新する。
@@ -2879,7 +2969,7 @@ export default function Preview3D({
     if (!sectioned) {
       // 対象側が空なら断面を出さず、元の最終形状に戻す（空のビューを避ける）。
       disposeFinalShapeSection()
-      if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
+      setFinalShapePrimitivesShow(true)
       viewer.scene.requestRender()
       return
     }
@@ -2908,7 +2998,7 @@ export default function Preview3D({
     if (cutPrimitive) sectionPrimitives.push(cutPrimitive)
     if (sectionPrimitives.length === 0) {
       disposeFinalShapeSection()
-      if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
+      setFinalShapePrimitivesShow(true)
       viewer.scene.requestRender()
       return
     }
@@ -2930,7 +3020,7 @@ export default function Preview3D({
       viewer.scene.primitives.add(p)
     }
     finalShapeSectionPrimitiveRef.current = sectionPrimitives
-    if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
+    setFinalShapePrimitivesShow(false)
     viewer.scene.requestRender()
   }
 
@@ -2957,7 +3047,7 @@ export default function Preview3D({
       finalShapeSectionTimerRef.current = null
     }
     // 新しい断面ができるまでは完成メッシュを隠しておく。
-    if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
+    setFinalShapePrimitivesShow(false)
     viewer.scene.requestRender()
     const requestId = finalShapeSectionRequestIdRef.current + 1
     finalShapeSectionRequestIdRef.current = requestId
@@ -2983,7 +3073,7 @@ export default function Preview3D({
       resetFinalShapeSection()
       if (openBottom && finalShapeActiveRef.current) {
         // 底面開口ONなら完成メッシュ（全形・中空）を表示したまま維持する。
-        if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = true
+        setFinalShapePrimitivesShow(true)
         viewer.scene.requestRender()
         return
       }
@@ -3078,11 +3168,17 @@ export default function Preview3D({
 
   // 完成メッシュのプリミティブ化と表示反映（キャッシュヒット時と生成時の共通後処理）。
   // 色は表示専用のため、キャッシュヒット時も現在の設定で作り直す。
+  // split があるときは土台（左）と建物（右）の2プリミティブに分け、
+  // 2つの合成 bbox が元の中心に来るようオフセットする。
   // 要求が古くなっていたら何もせず false を返す。
   const finalizeFinalShapeMesh = async (
     mesh: import('@machimoki/core').RawMesh,
     warnings: string[],
     requestId: number,
+    split?: {
+      frame: import('@machimoki/core').RawMesh
+      buildings: import('@machimoki/core').RawMesh
+    } | null,
   ): Promise<boolean> => {
     const viewer = viewerRef.current
     const bounds = selectionBounds
@@ -3100,7 +3196,7 @@ export default function Preview3D({
         ),
       )
     const finalColor = finalShapeColor()
-    const primitive = buildEngineMeshPrimitive(mesh, {
+    const baseOptions = {
       centerMatrix,
       positionScale: 1 / scale,
       color: finalColor,
@@ -3109,11 +3205,83 @@ export default function Preview3D({
       // 最終形状表示中は影を受ける他オブジェクトがないため影は切る。
       cadShaded: true,
       shadows: ShadowMode.DISABLED,
-    })
-    if (!primitive) throw new Error('最終形状メッシュが空でした')
+    }
+    // 分割表示できるのは splitAtGround がONで両パーツが非空のときだけ。
+    // それ以外は従来どおり合体メッシュ1つで描く。
+    const hasPart = (m: import('@machimoki/core').RawMesh | undefined): boolean =>
+      !!m && m.positions.length > 0 && m.indices.length > 0
+    const useSplit = splitAtGround && !!split && hasPart(split.frame) && hasPart(split.buildings)
+    const xBounds = (m: import('@machimoki/core').RawMesh): { min: number; max: number } => {
+      let min = Infinity
+      let max = -Infinity
+      const pos = m.positions
+      for (let i = 0; i < pos.length; i += 3) {
+        const x = pos[i]
+        if (x < min) min = x
+        if (x > max) max = x
+      }
+      return { min, max }
+    }
     disposeFinalShapePrimitive()
-    viewer.scene.primitives.add(primitive)
-    finalShapePrimitiveRef.current = primitive
+    if (useSplit && split) {
+      // 合体メッシュの幅の SPLIT_GAP_RATIO を間隔にし、合成 bbox の中心が
+      // 元の中心に一致するよう各パーツをX方向へオフセットする。
+      // 印刷パーツとして並べるため、各自の底面を共通の地面に合わせる。
+      const whole = xBounds(mesh)
+      const frameB = xBounds(split.frame)
+      const buildingsB = xBounds(split.buildings)
+      const yMin = (m: import('@machimoki/core').RawMesh): number => {
+        let min = Infinity
+        const pos = m.positions
+        for (let i = 0; i < pos.length; i += 3) {
+          const y = pos[i * 3 + 1]
+          if (y < min) min = y
+        }
+        return min
+      }
+      const frameMinY = yMin(split.frame)
+      const buildingsMinY = yMin(split.buildings)
+      const groundY = Math.min(frameMinY, buildingsMinY)
+      const offsetFrameY = groundY - frameMinY
+      const offsetBuildingsY = groundY - buildingsMinY
+      const wholeWidth = whole.max - whole.min
+      const gap = Number.isFinite(wholeWidth) && wholeWidth > 0 ? wholeWidth * SPLIT_GAP_RATIO : 0
+      const frameW = frameB.max - frameB.min
+      const buildingsW = buildingsB.max - buildingsB.min
+      const total = frameW + gap + buildingsW
+      const centerX = (whole.min + whole.max) / 2
+      const frameCX = (frameB.min + frameB.max) / 2
+      const buildingsCX = (buildingsB.min + buildingsB.max) / 2
+      const offsetFrame = centerX - total / 2 + frameW / 2 - frameCX
+      const offsetBuildings = centerX + total / 2 - buildingsW / 2 - buildingsCX
+      const framePrimitive = buildEngineMeshPrimitive(split.frame, {
+        ...baseOptions,
+        offsetX: offsetFrame,
+        offsetY: offsetFrameY,
+      })
+      const buildingsPrimitive = buildEngineMeshPrimitive(split.buildings, {
+        ...baseOptions,
+        offsetX: offsetBuildings,
+        offsetY: offsetBuildingsY,
+      })
+      if (!framePrimitive || !buildingsPrimitive) throw new Error('最終形状メッシュが空でした')
+      viewer.scene.primitives.add(framePrimitive)
+      viewer.scene.primitives.add(buildingsPrimitive)
+      finalShapeSplitPrimitivesRef.current = [framePrimitive, buildingsPrimitive]
+      finalShapeSplitRef.current = {
+        frame: split.frame,
+        buildings: split.buildings,
+        offsetFrame,
+        offsetBuildings,
+        offsetFrameY,
+        offsetBuildingsY,
+      }
+    } else {
+      const primitive = buildEngineMeshPrimitive(mesh, baseOptions)
+      if (!primitive) throw new Error('最終形状メッシュが空でした')
+      viewer.scene.primitives.add(primitive)
+      finalShapePrimitiveRef.current = primitive
+    }
     // 断面はこの完成メッシュから毎回派生する（上書きしない）。
     finalShapeMeshRef.current = mesh
     finalShapeRenderRef.current = {
@@ -3138,9 +3306,7 @@ export default function Preview3D({
     if (!wasActive) {
       const framed = cameraFramedForRef.current
       if (!framed || !sameBounds(framed, bounds)) {
-        const instances = primitive.geometryInstances
-        const instance = Array.isArray(instances) ? instances[0] : instances
-        const sphere = instance?.geometry?.boundingSphere
+        const sphere = finalShapeCombinedSphere()
         if (sphere) {
           const radius = Math.max(sphere.radius, 1)
           viewer.camera.viewBoundingSphere(
@@ -3174,31 +3340,43 @@ export default function Preview3D({
   const refreshFinalShapeAppearance = async (): Promise<void> => {
     const viewer = viewerRef.current
     const render = finalShapeRenderRef.current
-    const primitive = finalShapePrimitiveRef.current
-    if (!viewer || !render || !primitive || !finalShapeActiveRef.current) return
+    if (!viewer || !render || !finalShapeActiveRef.current) return
+    const hasPrimitive =
+      finalShapePrimitiveRef.current !== null || finalShapeSplitPrimitivesRef.current.length > 0
+    if (!hasPrimitive) return
     const color = finalShapeColor()
     let colorChanged = false
     if (color !== render.color) {
       colorChanged = true
       // ジオメトリは作り直さず、色属性だけ更新する（色替えを即時反映）。
-      let attributes: { color?: Uint8Array } | undefined
-      try {
-        attributes = primitive.getGeometryInstanceAttributes(undefined)
-      } catch {
-        attributes = undefined
-      }
-      if (attributes) {
-        attributes.color = ColorGeometryInstanceAttribute.toValue(Color.fromCssColorString(color))
+      // 分割表示時は両プリミティブの色を更新する。
+      let allUpdated = true
+      forEachFinalShapePrimitive((primitive) => {
+        let attributes: { color?: Uint8Array } | undefined
+        try {
+          attributes = primitive.getGeometryInstanceAttributes(undefined)
+        } catch {
+          attributes = undefined
+        }
+        if (attributes) {
+          attributes.color = ColorGeometryInstanceAttribute.toValue(Color.fromCssColorString(color))
+        } else {
+          allUpdated = false
+        }
+      })
+      if (allUpdated) {
         finalShapeRenderRef.current = { ...render, color }
         viewer.scene.requestRender()
       } else {
         // 属性が取れない場合は従来どおりプリミティブを作り直す。
         const mesh = finalShapeMeshRef.current
         if (!mesh) return
+        const stored = finalShapeSplitRef.current
         const updated = await finalizeFinalShapeMesh(
           mesh,
           finalShapeWarningsRef.current,
           finalShapeRequestIdRef.current,
+          stored ? { frame: stored.frame, buildings: stored.buildings } : undefined,
         )
         if (!updated) return
       }
@@ -3210,7 +3388,7 @@ export default function Preview3D({
         clearTimeout(finalShapeSectionTimerRef.current)
         finalShapeSectionTimerRef.current = null
       }
-      if (finalShapePrimitiveRef.current) finalShapePrimitiveRef.current.show = false
+      setFinalShapePrimitivesShow(false)
       const sectionRequestId = finalShapeSectionRequestIdRef.current + 1
       finalShapeSectionRequestIdRef.current = sectionRequestId
       viewer.scene.requestRender()
@@ -3250,10 +3428,16 @@ export default function Preview3D({
         }
       }
       if (requestId !== finalShapeRequestIdRef.current) return
-      if (cached) {
+      const displayCached = resolveDisplayCache(cached)
+      if (displayCached) {
         // 色だけ変えた場合もキャッシュヒットで即時反映される。
         finalShapeBuiltGeometryKeyRef.current = geometryKey
-        const finalized = await finalizeFinalShapeMesh(cached, cached.warnings, requestId)
+        const finalized = await finalizeFinalShapeMesh(
+          displayCached,
+          displayCached.warnings,
+          requestId,
+          splitOf(displayCached),
+        )
         if (finalized) showFinalShapeSection()
         return
       }
@@ -3289,7 +3473,7 @@ export default function Preview3D({
         background: false,
       })
       const options = finalShapeExportOptions()
-      const { mesh, warnings } = await buildFinalShapeInWorker(
+      const built = await buildFinalShapeInWorker(
         requestId,
         {
           buildingKey: buildingMeshesKey(meshParams),
@@ -3312,6 +3496,8 @@ export default function Preview3D({
           })
         },
       )
+      const { mesh, warnings, terrainMesh } = built
+      const builtSplit = splitOf(built)
       if (requestId !== finalShapeRequestIdRef.current) return
       finalShapeBuiltGeometryKeyRef.current = geometryKey
       // 成功時は永続キャッシュへ保存する（fire-and-forget）。
@@ -3320,8 +3506,11 @@ export default function Preview3D({
         positions: mesh.positions,
         indices: mesh.indices,
         warnings,
+        terrainMesh,
+        // 合体と split を両方保存する（エクスポートは合体メッシュを使う）。
+        split: builtSplit,
       })
-      await finalizeFinalShapeMesh(mesh, warnings, requestId)
+      await finalizeFinalShapeMesh(mesh, warnings, requestId, builtSplit)
       if (finalShapeActiveRef.current) showFinalShapeSection()
     } catch (err) {
       if (requestId !== finalShapeRequestIdRef.current) return
@@ -3379,7 +3568,7 @@ export default function Preview3D({
     try {
       // 既に永続キャッシュがあるならメッシュを保持するだけでよい。
       const cached = await loadFinalShapeCache(geometryKey).catch(() => null)
-      if (cached) {
+      if (cached && resolveDisplayCache(cached)) {
         prefetchedFinalShapeRef.current = { key: geometryKey, mesh: cached }
         return
       }
@@ -3387,7 +3576,7 @@ export default function Preview3D({
       const buildingMeshes = await loadBuildingMeshes(meshParams)
       let terrainSample: import('@machimoki/core').TerrainSample | null = null
       if (includeTerrain) terrainSample = await loadTerrainSample(meshParams)
-      const { mesh, warnings } = await buildFinalShapeInWorker(
+      const built = await buildFinalShapeInWorker(
         requestId,
         {
           buildingKey: buildingMeshesKey(meshParams),
@@ -3398,17 +3587,27 @@ export default function Preview3D({
         bounds,
         finalShapeExportOptions(),
       )
+      const { mesh, warnings, terrainMesh } = built
+      const builtSplit = splitOf(built)
       // 生成中にパラメータが変わっていたら、古いキーでキャッシュを上書きしない。
       if (currentFinalShapeKeyRef.current !== geometryKey) return
       prefetchedFinalShapeRef.current = {
         key: geometryKey,
-        mesh: { positions: mesh.positions, indices: mesh.indices, warnings },
+        mesh: {
+          positions: mesh.positions,
+          indices: mesh.indices,
+          warnings,
+          terrainMesh,
+          split: builtSplit,
+        },
       }
       void saveFinalShapeCache({
         key: geometryKey,
         positions: mesh.positions,
         indices: mesh.indices,
         warnings,
+        terrainMesh,
+        split: builtSplit,
       })
     } catch {
       // 先読み失敗は無視する（断面ONで再試行）。
@@ -3436,13 +3635,15 @@ export default function Preview3D({
     finalShapeCacheProbeRef.current = { key: geometryKey, hit: false, mesh: null }
     void loadFinalShapeCache(geometryKey).then((cached) => {
       if (probeId !== finalShapeCacheProbeIdRef.current) return
+      // splitAtGround がONなのに split が無ければミス扱い（自動生成がWorkerで作り直す）。
+      const display = resolveDisplayCache(cached)
       finalShapeCacheProbeRef.current = {
         key: geometryKey,
-        hit: cached !== null,
-        mesh: cached,
+        hit: display !== null,
+        mesh: display,
       }
       // ヒット時は再レンダーして自動生成ウォッチャーを再評価させる。
-      if (cached) bumpFinalShapeCacheProbeVersion((v) => v + 1)
+      if (display) bumpFinalShapeCacheProbeVersion((v) => v + 1)
     })
   })
 

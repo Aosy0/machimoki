@@ -74,6 +74,7 @@ const DEFAULT_PARAMETERS: Parameters = {
   openBottom: false,
   shellThickness: 1.6,
   hollowBuildings: true,
+  splitAtGround: false,
 }
 
 /** 保存済みの選択範囲を読む（不正値は null）。 */
@@ -452,6 +453,7 @@ function App() {
       openBottom: parameters.openBottom,
       shellThickness: parameters.shellThickness,
       hollowBuildings: parameters.hollowBuildings,
+      splitAtGround: parameters.openBottom && parameters.splitAtGround,
       pickPoints,
       excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
     }
@@ -460,7 +462,15 @@ function App() {
     // 完成メッシュの永続キャッシュを照会し、ヒットしたら取得と形状生成を
     // スキップしてシリアライズのみ行う（プレビューと同一キーで共有）。
     if (useWorker) {
-      let cachedMesh: { positions: Float32Array; indices: Uint32Array } | null = null
+      let cachedMesh: {
+        positions: Float32Array
+        indices: Uint32Array
+        terrainMesh: { positions: Float32Array; indices: Uint32Array } | null
+        split: {
+          frame: { positions: Float32Array; indices: Uint32Array }
+          buildings: { positions: Float32Array; indices: Uint32Array }
+        } | null
+      } | null = null
       try {
         const geometryKey = finalShapeGeometryKey({
           bounds: selectionBounds,
@@ -476,10 +486,23 @@ function App() {
           openBottom: exportOptions.openBottom,
           shellThickness: exportOptions.shellThickness,
           hollowBuildings: exportOptions.hollowBuildings,
+          splitAtGround: exportOptions.splitAtGround,
         })
         const cached = await loadFinalShapeCache(geometryKey)
-        if (cached) cachedMesh = { positions: cached.positions, indices: cached.indices }
+        if (cached) {
+          cachedMesh = {
+            positions: cached.positions,
+            indices: cached.indices,
+            terrainMesh: cached.terrainMesh,
+            split: cached.split ?? null,
+          }
+        }
       } catch {
+        cachedMesh = null
+      }
+      // 分割はキャッシュ済みパーツを再利用する。旧キャッシュなどで無い場合は
+      // フル生成へ回す（合体メッシュからの再分割は建物カッターが無く穴が空かない）。
+      if (cachedMesh && exportOptions.splitAtGround && !cachedMesh.split) {
         cachedMesh = null
       }
       if (cachedMesh) {
@@ -491,15 +514,33 @@ function App() {
             error: null,
           })
           // バッファは transfer で切り離されるため、コピーを渡す。
-          const { buffer } = await runWorkerSerialize(
+          const { buffer, split } = await runWorkerSerialize(
             Date.now(),
             {
               positions: cachedMesh.positions.slice(),
               indices: cachedMesh.indices.slice(),
             },
+            cachedMesh.terrainMesh
+              ? {
+                  positions: cachedMesh.terrainMesh.positions.slice(),
+                  indices: cachedMesh.terrainMesh.indices.slice(),
+                }
+              : null,
             exportOptions as unknown as import('@machimoki/core').ExportOptions,
+            cachedMesh.split
+              ? {
+                  frame: {
+                    positions: cachedMesh.split.frame.positions.slice(),
+                    indices: cachedMesh.split.frame.indices.slice(),
+                  },
+                  buildings: {
+                    positions: cachedMesh.split.buildings.positions.slice(),
+                    indices: cachedMesh.split.buildings.indices.slice(),
+                  },
+                }
+              : null,
           )
-          triggerDownload(buffer, exportOptions.format)
+          triggerDownload(buffer, exportOptions.format, split)
           setPipelineState({ phase: 'complete', progress: 100, message: '完了', error: null })
           setTimeout(
             () => setPipelineState({ phase: 'idle', progress: 0, message: '', error: null }),
@@ -549,7 +590,7 @@ function App() {
           message: '3Dモデル生成中（Worker）...',
           error: null,
         })
-        const { buffer, warnings } = await runWorkerExport(
+        const { buffer, warnings, split } = await runWorkerExport(
           selectionBounds,
           exportOptions as unknown as import('@machimoki/core').ExportOptions,
           buildingMeshes,
@@ -563,7 +604,7 @@ function App() {
             }),
         )
         if (warnings.length > 0) console.warn('[Machimoki] warnings:', warnings)
-        triggerDownload(buffer, exportOptions.format)
+        triggerDownload(buffer, exportOptions.format, split)
         setPipelineState({ phase: 'complete', progress: 100, message: '完了', error: null })
         setTimeout(
           () => setPipelineState({ phase: 'idle', progress: 0, message: '', error: null }),
@@ -600,6 +641,7 @@ function App() {
         openBottom: parameters.openBottom,
         shellThickness: parameters.shellThickness,
         hollowBuildings: parameters.hollowBuildings,
+        splitAtGround: parameters.openBottom && parameters.splitAtGround,
         pickPoints,
         excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
       })
@@ -1170,6 +1212,7 @@ function App() {
                 openBottom={parameters.openBottom}
                 shellThickness={parameters.shellThickness}
                 hollowBuildings={parameters.hollowBuildings}
+                splitAtGround={parameters.openBottom && parameters.splitAtGround}
                 terrainGridSize={resolvedTerrainGridSize}
                 includeTerrain={parameters.includeTerrain}
                 buildingColor={parameters.buildingColor}

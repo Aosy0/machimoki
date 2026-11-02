@@ -60,18 +60,30 @@ curl -X POST http://localhost:3000/api/export \
     "format": "3mf"
   }' \
   --output model.3mf
+
+# Split export: returns a ZIP with model_base.* / model_buildings.*
+curl -X POST http://localhost:3000/api/export \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bounds": {"west": 139.6903, "south": 35.6997, "east": 139.6906, "north": 35.7000},
+    "terrainThickness": 10,
+    "openBottom": true,
+    "shellThickness": 1.6,
+    "splitAtGround": true,
+    "format": "3mf"
+  }' \
+  --output model_split.zip
 ```
 
 ### Step 3: Validate Model
 
-The CLI `export` command now **automatically validates** the generated file and deletes it if validation does not return `pass`.
+The CLI `export` command now **automatically validates** the generated file and deletes it only if validation returns `fail`. A `warning` is logged but the file is kept.
 
 #### CLI Auto-Validation Exit Codes
 
 | Exit Code | When | Meaning |
 |-----------|------|---------|
-| `0` | Validation status is `pass` | File is kept and printable |
-| `1` | Validation status is `warning` | File is deleted; model has multiple shells or other non-fatal issues |
+| `0` | Validation status is `pass` or `warning` | File is kept. `warning` (e.g. multiple shells) is logged |
 | `2` | Validation status is `fail` | File is deleted; model has holes, non-manifold edges, self-intersections, or invalid geometry |
 
 #### Manual Validation CLI Usage
@@ -197,7 +209,8 @@ curl -s -X POST http://localhost:3000/api/validate \
 | `--open-bottom` / `--no-open-bottom` | No | flag | `false` | Output an open-bottom hollow shell: hollows the terrain slab and buildings, leaving only a rim of `--shell-thickness` on the underside. Requires terrain |
 | `--shell-thickness` | No | number (printed mm) | `1.6` | Shell (wall/roof) thickness used by `--open-bottom`. Must be smaller than `--terrain-thickness` |
 | `--hollow-buildings` / `--no-hollow-buildings` | No | flag | `true` | With `--open-bottom`, also hollow building interiors so they connect through to the open underside |
-| `--output` | Yes | path | -- | Output file path |
+| `--split-at-ground` | No | flag | `false` | Split into a terrain frame (`<stem>_base.<ext>`) and a buildings part (`<stem>_buildings.<ext>`, terrain plate + buildings + a short solid base). Requires `--open-bottom` and terrain. Requires `terrainThickness - shellThickness >= 2.0mm` |
+| `--output` | Yes | path | -- | Output file path. With `--split-at-ground`, the stem for the two part files |
 
 ### Validate Parameters
 
@@ -218,9 +231,9 @@ curl -s -X POST http://localhost:3000/api/validate \
 | `Invalid format` | Not `3mf` or `stl` | Use one of the supported formats |
 | `Failed to build printable model: No meshes generated` | Area has no buildings or terrain | Check bounds cover a built-up area in Japan |
 | `Failed to build printable model: ...` | Network or API error | Check connectivity to PLATEAU API and Cesium Ion |
-| CLI exits with code `1` | Validation status is `warning` | Output file is deleted; model is printable but has multiple shells or metric issues |
-| CLI exits with code `2` | Validation status is `fail` | Output file is deleted; model has topology or geometry problems |
-| HTTP 422 on API `/api/export` | Generated model failed validation | Response body contains `{ error, warnings, validation }` for diagnosis |
+| CLI exits with code `2` | Validation status is `fail` | Output file(s) are deleted; model has topology or geometry problems |
+| HTTP 400 on API `/api/export` | `splitAtGround` without `includeTerrain`/`openBottom`, or `terrainThickness - shellThickness < 2mm` | Fix the split-related parameters |
+| HTTP 422 on API `/api/export` | Generated model failed validation | Response body contains `{ error, warnings, validation }` (split adds `part: "base" \| "buildings"` and per-part `validation`) |
 | HTTP 500 on API | Server-side error during export | Check server logs for details |
 
 ### Validate Errors
@@ -237,12 +250,13 @@ curl -s -X POST http://localhost:3000/api/validate \
 - **3MF is recommended over STL**: 3MF preserves manifold topology and produces smaller files. STL is supported for compatibility with older slicers.
 - **Open-bottom hollow shell (`--open-bottom`)**: The terrain slab is hollowed analytically and each building is hollowed by morphological erosion (Minkowski difference with a cube), so the model is a watertight single shell with an open underside and building interiors connected to it (water poured in from below reaches inside the buildings). The downward shaft is built from the building's true cross-section, sliced just above its bottom, so concave footprints and courtyard holes are preserved (a convex-hull footprint is no longer used). The terrain cavity ceiling re-samples the surface height at the inset position with the actual triangle interpolation, so steep slopes cannot make it poke through. Buildings whose footprint or height is smaller than twice the shell thickness stay solid (a warning summarizes the count). Buildings that cannot be made into a valid closed solid are excluded from the output with an explicit reason (e.g. an open bottom that is not a single convex loop).
 - **Hollowing report**: the export result carries a `hollowing` report with per-building statuses (`hollowed` / `small` / `no-section` / `boolean-failed` / `cap-unsupported` / `invalid-geometry`) and a sealed-cavity check of the finished model (a warning is emitted when sealed cavities are detected). General bottom-reachability of every cavity is **not** verified (`reachability: 'unverified'`); the known-shape shafts are covered by the thin-column probe tests.
-- **Shared geometry step**: `buildPrintableGeometryFromMeshes()` returns the finished mesh (Y-up, scaled model space) without serializing, and `buildPrintableModelFromMeshes()` wraps it for STL/3MF. The web preview's final-shape mode runs the same function in a Worker, so the preview matches the exported model exactly (including the terrain openings under buildings).
-- **Printing the open side down** requires slicer support material inside the cavity; drain holes are not needed because the underside is open.
+- **Frame split (`--split-at-ground` / `splitAtGround: true`)**: After hollowing, the model is split into a **terrain frame** (outer walls + bottom rim + an outer terrain-surface flange, open at the top and bottom) and a **buildings part** (terrain top-layer plate + buildings + a short solid base). The frame is a single closed L-shaped cross-section mesh (outer O / mid S / inner C loops, no boolean union), so no sliver residue remains on the perimeter. It has a **0.4mm step (shelf)** at its inner top edge: the outer terrain band (`shellThickness - 0.4mm` wide; 1.2mm with the default 1.6mm shell) belongs to the frame, and the buildings-part plate is cut at that boundary and rests on the shelf. The plate's seam is `shellThickness - 0.4mm` inside the outline. The base footprint is inset `0.15mm` per side from the frame cavity (so it drops into the cavity with clearance and never intersects the frame), so the plate overhangs the pad by `0.4 + 0.15 = 0.55mm`. Its top overlaps the plate underside slightly, and its bottom is a **flat horizontal face** `0.2mm` below the terrain's lowest point. This fills the relief under the plate to reduce the supports the split parts would otherwise need. With `--hollow-buildings` the building cutters are subtracted from the base as well, so the hollow interiors stay open through the flat base (the holes match the plate openings, no sealed cavities). The buildings part prints **right side up with its flat base down and the roofs up**, so visible top surfaces never touch the build plate. The assembled height is `terrainThickness + building heights`. The frame has no ceiling, so it needs no internal supports. If hollow building interiors are not wanted, `--no-hollow-buildings` / `hollowBuildings: false` makes the buildings part solid. `terrainThickness - shellThickness` must be at least `2.0mm`. The API returns a ZIP (`model_split.zip`) with `model_base.*` and `model_buildings.*`; the CLI writes the two files next to `--output`.
+- **Shared geometry step**: `buildPrintableGeometryFromMeshes()` returns the finished mesh (Y-up, scaled model space) without serializing, and `buildPrintableModelFromMeshes()` wraps it for STL/3MF. The web preview's final-shape mode runs the same function in a Worker, so the preview matches the exported model exactly (including the terrain openings under buildings). The final-shape result also carries the scaled terrain slab and, when split, the finished `frame` / `buildings` meshes. The export Worker serializes those cached split parts directly (no re-splitting, so the base openings survive); a cache hit without split parts falls back to a full generation.
+- **Printing the open side down** requires slicer support material inside the cavity; drain holes are not needed because the underside is open. When split, print the frame bottom-down and the buildings part flat-base-down (roofs up). The base is solid except for the through-holes under hollowed buildings, so building cavities still drain and validate as a single shell.
 - **Terrain sampling**: Terrain uses a 64x64 grid from Cesium World Terrain. Larger areas take longer to sample.
 - **Building data**: Buildings come from PLATEAU 3D Tiles (municipality-specific). Coverage depends on which cities have published data.
 - **Coordinate system**: All coordinates are in WGS84 degrees. Heights are in meters above ellipsoid.
 - **Export time**: Depends on area size and LOD. Small areas (a few city blocks) take 10-30 seconds. Larger areas may take several minutes.
 - **Memory**: Large areas can use significant memory. Stick to areas under 1 km for reliable results.
 - **Manifold WASM**: Validation requires the manifold-3d WASM module to be initialized. This happens on first call and may take a moment.
-- **Auto-validation**: The CLI export command validates the output automatically. Treat any non-zero exit code as a failed export, even if a file was briefly written.
+- **Auto-validation**: The CLI export command validates the output automatically. `fail` deletes the file(s) and exits with code 2; `warning` is logged but the file is kept and the command exits with code 0. For split exports both parts are validated (`base` and `buildings`).

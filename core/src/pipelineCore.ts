@@ -289,12 +289,13 @@ export function buildSlabIndices(n: number): Uint32Array {
  * グリッドは (x, z) の正規格子で、行 i は z の減少方向、列 j は x の増加方向。
  * 範囲外の座標は最寄りのセルにクランプして評価する。
  */
-export function sampleTerrainHeightFromGrid(
+export function sampleGridHeightFromGrid(
   positions: Float32Array,
   gridSize: number,
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number },
   x: number,
   z: number,
+  vertexOffset = 0,
 ): number | null {
   const n = gridSize
   if (!(n >= 2)) return null
@@ -311,7 +312,7 @@ export function sampleTerrainHeightFromGrid(
   const f = Math.min(Math.max(u - j0, 0), 1)
   const g = Math.min(Math.max(v - i0, 0), 1)
 
-  const height = (i: number, j: number): number => positions[(i * n + j) * 3 + 1]
+  const height = (i: number, j: number): number => positions[(vertexOffset + i * n + j) * 3 + 1]
   const ha = height(i0, j0)
   const hb = height(i0, j0 + 1)
   const hc = height(i0 + 1, j0)
@@ -324,28 +325,36 @@ export function sampleTerrainHeightFromGrid(
   return hd + (1 - f) * (hc - hd) + (1 - g) * (hb - hd)
 }
 
+/** 地形スラブの地表高を求める（top grid）。 */
+export function sampleTerrainHeightFromGrid(
+  positions: Float32Array,
+  gridSize: number,
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number },
+  x: number,
+  z: number,
+): number | null {
+  return sampleGridHeightFromGrid(positions, gridSize, bounds, x, z, 0)
+}
+
 /**
- * Build the inner cavity solid for an open-bottom terrain shell.
+ * 地形スラブ格子から、内側へ `inset` だけ縮小したスラブメッシュを構築する。
  *
- * The input must be the slab mesh produced by `buildTerrainMesh` (2·n²
- * vertices: top grid followed by bottom grid). The cavity is shrunk in XZ by
- * linear scaling toward the center so the side walls keep `shellThickness`,
- * its ceiling follows the terrain relief `shellThickness` below the surface
- * (the surface height is re-sampled at the inset position with the actual
- * triangle interpolation, so steep slopes cannot make the ceiling poke
- * through the terrain), and its floor extends below the slab so that
- * subtracting it opens the model's underside (leaving only a rim of
- * `shellThickness`).
+ * 上面は移動後の座標の地表を再サンプルして `topOffset` を加え、底面は
+ * `resolveBottomY` が返す一定の高さ（水平）にする。空洞（天井が起伏・底面が
+ * スラブ下）と中実ベース（上面が起伏・底面が水平）の共通実装。
  *
- * Returns null when the mesh does not have the expected grid layout or when
- * the shell is too thick for the footprint.
+ * 地表高を再サンプルするのは、元頂点の高さを使い回すと急斜面（45°超）で
+ * 上面が地表を突き抜けて穴になるため。
+ *
+ * 格子レイアウトでない場合や、足跡が縮小に足りない場合は null。
  */
-export function buildTerrainCavityMesh(
+function buildInsetTerrainSlabMesh(
   terrainMesh: RawMesh,
-  shellThickness: number,
+  inset: number,
+  topOffset: number,
+  resolveBottomY: (minTopY: number, minBottomY: number) => number,
 ): RawMesh | null {
-  const t = shellThickness
-  if (!Number.isFinite(t) || t <= 0) return null
+  if (!Number.isFinite(inset) || inset <= 0) return null
 
   const positions = terrainMesh.positions
   const vertexCount = positions.length / 3
@@ -356,14 +365,17 @@ export function buildTerrainCavityMesh(
   let maxX = -Infinity
   let minZ = Infinity
   let maxZ = -Infinity
+  let minTopY = Infinity
   let minBottomY = Infinity
   for (let i = 0; i < n * n; i++) {
     const x = positions[i * 3]
+    const y = positions[i * 3 + 1]
     const z = positions[i * 3 + 2]
     if (x < minX) minX = x
     if (x > maxX) maxX = x
     if (z < minZ) minZ = z
     if (z > maxZ) maxZ = z
+    if (y < minTopY) minTopY = y
   }
   for (let i = n * n; i < vertexCount; i++) {
     const y = positions[i * 3 + 1]
@@ -372,36 +384,250 @@ export function buildTerrainCavityMesh(
 
   const width = maxX - minX
   const depth = maxZ - minZ
-  if (!(width > 2 * t) || !(depth > 2 * t)) return null
-  if (!Number.isFinite(minBottomY)) return null
+  if (!(width > 2 * inset) || !(depth > 2 * inset)) return null
+  if (!Number.isFinite(minTopY) || !Number.isFinite(minBottomY)) return null
 
-  const scaleX = (width - 2 * t) / width
-  const scaleZ = (depth - 2 * t) / depth
+  const scaleX = (width - 2 * inset) / width
+  const scaleZ = (depth - 2 * inset) / depth
   const centerX = (minX + maxX) / 2
   const centerZ = (minZ + maxZ) / 2
-  const cavityBottomY = minBottomY - 2 * t
+  const bottomY = resolveBottomY(minTopY, minBottomY)
 
   const gridBounds = { minX, maxX, minZ, maxZ }
-  const cavityPositions = new Float32Array(vertexCount * 3)
+  const outPositions = new Float32Array(vertexCount * 3)
   for (let i = 0; i < n * n; i++) {
     const x = positions[i * 3]
     const y = positions[i * 3 + 1]
     const z = positions[i * 3 + 2]
     const insetX = centerX + (x - centerX) * scaleX
     const insetZ = centerZ + (z - centerZ) * scaleZ
-    // 天井の高さは移動後の座標の地表を再サンプルする。元頂点の高さを
-    // 使い回すと、急斜面（45°超）で天井が地表を突き抜けて穴になる。
     const terrainY = sampleTerrainHeightFromGrid(positions, n, gridBounds, insetX, insetZ)
-    cavityPositions[i * 3] = insetX
-    cavityPositions[i * 3 + 1] = (terrainY ?? y) - t
-    cavityPositions[i * 3 + 2] = insetZ
+    outPositions[i * 3] = insetX
+    outPositions[i * 3 + 1] = (terrainY ?? y) + topOffset
+    outPositions[i * 3 + 2] = insetZ
   }
   for (let i = 0; i < n * n; i++) {
     const target = n * n + i
-    cavityPositions[target * 3] = cavityPositions[i * 3]
-    cavityPositions[target * 3 + 1] = cavityBottomY
-    cavityPositions[target * 3 + 2] = cavityPositions[i * 3 + 2]
+    outPositions[target * 3] = outPositions[i * 3]
+    outPositions[target * 3 + 1] = bottomY
+    outPositions[target * 3 + 2] = outPositions[i * 3 + 2]
   }
 
-  return { positions: cavityPositions, indices: buildSlabIndices(n) }
+  return { positions: outPositions, indices: buildSlabIndices(n) }
+}
+
+/**
+ * Build the inner cavity solid for an open-bottom terrain shell.
+ *
+ * The input must be the slab mesh produced by `buildTerrainMesh` (2·n²
+ * vertices: top grid followed by bottom grid). The cavity is shrunk in XZ by
+ * linear scaling toward the center so the side walls keep `shellThickness`,
+ * its ceiling follows the terrain relief `shellThickness` below the surface,
+ * and its floor extends below the slab so that subtracting it opens the
+ * model's underside (leaving only a rim of `shellThickness`).
+ *
+ * Returns null when the mesh does not have the expected grid layout or when
+ * the shell is too thick for the footprint.
+ */
+export function buildTerrainCavityMesh(
+  terrainMesh: RawMesh,
+  shellThickness: number,
+): RawMesh | null {
+  const t = shellThickness
+  if (!Number.isFinite(t) || t <= 0) return null
+  return buildInsetTerrainSlabMesh(terrainMesh, t, -t, (_minTopY, minBottomY) => minBottomY - 2 * t)
+}
+
+/** ベース上面をプレート下面へ食い込ませる比率（シェル厚みに対する）。 */
+const BASE_TOP_OVERLAP_RATIO = 0.1
+
+/**
+ * 建物部分の下面を平らにする「短い中実ベース」メッシュを構築する。
+ *
+ * 足跡は空洞境界から `clearance` 内側（= スラブ外形から shellThickness +
+ * clearance 内側）なので、枠の内壁とは交差せずクリアランス分だけ嵌まる。
+ * 上面は地表から `shellThickness - overlap` 下（プレート下面へ少し食い込む）、
+ * 底面は地形の最低点から `shellThickness + extension` 下の水平面。
+ * プレート下の凹凸を埋めるため中実（リングではない）。
+ *
+ * `shellThickness` / `clearance` / `extension` は同じ座標空間の値で渡す。
+ *
+ * Returns null when the mesh does not have the expected grid layout or when
+ * the inset footprint collapses.
+ */
+export function buildBaseSlabMesh(
+  terrainMesh: RawMesh,
+  shellThickness: number,
+  clearance: number,
+  extension: number,
+): RawMesh | null {
+  const t = shellThickness
+  if (!Number.isFinite(t) || t <= 0) return null
+  if (!Number.isFinite(clearance) || clearance < 0) return null
+  if (!Number.isFinite(extension) || extension < 0) return null
+  return buildInsetTerrainSlabMesh(
+    terrainMesh,
+    t + clearance,
+    -t + t * BASE_TOP_OVERLAP_RATIO,
+    (minTopY) => minTopY - t - extension,
+  )
+}
+
+/** 枠上面をプレート内へ食い込ませる比率（シェル厚みに対する）。 */
+const FRAME_TOP_OVERLAP_RATIO = 0.1
+
+/**
+ * 地形枠カッター（L 字断面）メッシュを構築する。
+ *
+ * 3 ループの閉じた単一シェル:
+ * - 外周 O: 上 = 地表、下 = 地形スラブ底面。
+ * - ミッド S = C + step: 上 = 地表、下 = リング上端（terrain - 0.9t）。
+ * - 内周 C（空洞壁とのゼロ厚を避けるため eps だけ内側）: 上 = リング上端、
+ *   下 = 地形スラブ底面。
+ * 面は上面 O..S、段差 S..C、底面 O..C、外周壁 O、S 内面、内周壁 C。
+ * 1 メッシュなので union 不要（外周の union 残渣が出ない）。
+ *
+ * 枠の露出地形帯 O..S は地表まで、内側の段差 S..C はリング上端で建物側
+ * プレートの外周を受ける。step はシェル厚み未満の正値であること。
+ */
+export function buildFrameCutterMesh(
+  terrainMesh: RawMesh,
+  cavityMesh: RawMesh,
+  shellThickness: number,
+  step: number,
+): RawMesh | null {
+  const t = shellThickness
+  if (!(t > 0) || !(step > 0) || !(step < t)) return null
+
+  const tp = terrainMesh.positions
+  const terrainVertexCount = tp.length / 3
+  const n = Math.round(Math.sqrt(terrainVertexCount / 2))
+  if (!(n >= 2) || n * n * 2 !== terrainVertexCount) return null
+
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+  for (let i = 0; i < n * n; i++) {
+    const x = tp[i * 3]
+    const z = tp[i * 3 + 2]
+    if (x < minX) minX = x
+    if (x > maxX) maxX = x
+    if (z < minZ) minZ = z
+    if (z > maxZ) maxZ = z
+  }
+  const gridBounds = { minX, maxX, minZ, maxZ }
+  if (!(maxX > minX) || !(maxZ > minZ)) return null
+
+  const cp = cavityMesh.positions
+  const cavityVertexCount = cp.length / 3
+  const cn = Math.round(Math.sqrt(cavityVertexCount / 2))
+  if (!(cn >= 2) || cn * cn * 2 !== cavityVertexCount) return null
+  let cMinX = Infinity
+  let cMaxX = -Infinity
+  let cMinZ = Infinity
+  let cMaxZ = -Infinity
+  for (let i = 0; i < cn * cn; i++) {
+    const x = cp[i * 3]
+    const z = cp[i * 3 + 2]
+    if (x < cMinX) cMinX = x
+    if (x > cMaxX) cMaxX = x
+    if (z < cMinZ) cMinZ = z
+    if (z > cMaxZ) cMaxZ = z
+  }
+  if (!(cMaxX > cMinX) || !(cMaxZ > cMinZ)) return null
+
+  // 内周を空洞壁と一致させるとブール演算がゼロ厚の面を残すため、わずかに
+  // 食い込ませる（印刷寸法では無視できる差）。S はその外側でなければならない。
+  const eps = t * 0.01
+  if (!(step > eps)) return null
+  const iMinX = cMinX + eps
+  const iMaxX = cMaxX - eps
+  const iMinZ = cMinZ + eps
+  const iMaxZ = cMaxZ - eps
+  // S = C + step。step < t なので外形 O の内側に収まる。
+  const sMinX = cMinX - step
+  const sMaxX = cMaxX + step
+  const sMinZ = cMinZ - step
+  const sMaxZ = cMaxZ + step
+  if (!(sMinX > minX) || !(sMaxX < maxX) || !(sMinZ > minZ) || !(sMaxZ < maxZ)) return null
+
+  const segments = Math.max(1, Math.min(256, n - 1))
+  const outer = buildRectLoop(minX, maxX, minZ, maxZ, segments)
+  const mid = buildRectLoop(sMinX, sMaxX, sMinZ, sMaxZ, segments)
+  const inner = buildRectLoop(iMinX, iMaxX, iMinZ, iMaxZ, segments)
+  const count = outer.length
+  if (count !== mid.length || count !== inner.length || count < 4) return null
+
+  const overlap = t * FRAME_TOP_OVERLAP_RATIO
+  const bottomOffset = n * n
+  // 1 頂点につき 6 種: O top / O bottom / S top / S bottom / C top / C bottom。
+  const positions: number[] = []
+  for (let i = 0; i < count; i++) {
+    const [ox, oz] = outer[i]
+    const [mx, mz] = mid[i]
+    const [ix, iz] = inner[i]
+    const oTop = sampleGridHeightFromGrid(tp, n, gridBounds, ox, oz, 0)
+    const oBottom = sampleGridHeightFromGrid(tp, n, gridBounds, ox, oz, bottomOffset)
+    const sTop = sampleGridHeightFromGrid(tp, n, gridBounds, mx, mz, 0)
+    const cTop = sampleGridHeightFromGrid(tp, n, gridBounds, ix, iz, 0)
+    const cBottom = sampleGridHeightFromGrid(tp, n, gridBounds, ix, iz, bottomOffset)
+    if (oTop === null || oBottom === null || sTop === null || cTop === null) return null
+    if (cBottom === null) return null
+    positions.push(ox, oTop, oz)
+    positions.push(ox, oBottom, oz)
+    positions.push(mx, sTop, mz)
+    positions.push(mx, sTop - t + overlap, mz)
+    positions.push(ix, cTop - t + overlap, iz)
+    positions.push(ix, cBottom, iz)
+  }
+
+  const indices: number[] = []
+  const at = (i: number, kind: 0 | 1 | 2 | 3 | 4 | 5): number => i * 6 + kind
+  for (let i = 0; i < count; i++) {
+    const j = (i + 1) % count
+    const oti = at(i, 0)
+    const obi = at(i, 1)
+    const mti = at(i, 2)
+    const mbi = at(i, 3)
+    const cti = at(i, 4)
+    const cbi = at(i, 5)
+    const otj = at(j, 0)
+    const obj = at(j, 1)
+    const mtj = at(j, 2)
+    const mbj = at(j, 3)
+    const ctj = at(j, 4)
+    const cbj = at(j, 5)
+    // 上面 O..S（+Y）
+    indices.push(oti, mti, mtj, oti, mtj, otj)
+    // 段差 S..C（+Y）
+    indices.push(mbi, cti, ctj, mbi, ctj, mbj)
+    // 底面 O..C（-Y）
+    indices.push(obi, cbj, cbi, obi, obj, cbj)
+    // 外周壁 O（外側向き）
+    indices.push(oti, otj, obj, oti, obj, obi)
+    // フランジ内面 S（内側向き）
+    indices.push(mti, mbj, mtj, mti, mbi, mbj)
+    // 内周壁 C（内側向き）
+    indices.push(cti, cbj, ctj, cti, cbi, cbj)
+  }
+
+  return { positions: new Float32Array(positions), indices: new Uint32Array(indices) }
+}
+
+/** 矩形ループ（x-z 平面・正の面積方向）を各辺 segments 分割で返す。始点は重複させない。 */
+function buildRectLoop(
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number,
+  segments: number,
+): Array<[number, number]> {
+  const points: Array<[number, number]> = []
+  const n = Math.max(1, Math.floor(segments))
+  for (let i = 0; i < n; i++) points.push([minX + ((maxX - minX) * i) / n, minZ])
+  for (let i = 0; i < n; i++) points.push([maxX, minZ + ((maxZ - minZ) * i) / n])
+  for (let i = 0; i < n; i++) points.push([maxX - ((maxX - minX) * i) / n, maxZ])
+  for (let i = 0; i < n; i++) points.push([minX, maxZ - ((maxZ - minZ) * i) / n])
+  return points
 }

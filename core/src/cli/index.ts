@@ -14,9 +14,12 @@
 
 import { Command } from 'commander'
 import { readFile, writeFile, unlink } from 'node:fs/promises'
+import { extname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildPrintableModel } from '../pipeline.js'
 import { validateMesh } from '../validate.js'
+import { DEFAULT_SHELL_THICKNESS_MM } from '../pipelineUtils.js'
+import { MIN_FRAME_HEIGHT_MM } from '../frameSplit.js'
 import { Bounds, ExportOptions, Lod } from '../types.js'
 
 export const program = new Command()
@@ -67,6 +70,25 @@ export function detectMimeType(filePath: string): string {
   if (lower.endsWith('.3mf')) return 'model/3mf'
   if (lower.endsWith('.stl')) return 'model/stl'
   throw new Error(`Unsupported file extension: ${filePath}. Expected .3mf or .stl`)
+}
+
+/**
+ * 分割出力のファイル名を `--output` から導出する。
+ * `model.3mf` -> `model_base.3mf` / `model_buildings.3mf`
+ */
+export function splitOutputPaths(outputPath: string): {
+  basePath: string
+  buildingsPath: string
+} {
+  const ext = extname(outputPath)
+  if (!ext) {
+    throw new Error(`分割出力には拡張子が必要です: ${outputPath}. Expected .3mf or .stl`)
+  }
+  const stem = outputPath.slice(0, -ext.length)
+  return {
+    basePath: `${stem}_base${ext}`,
+    buildingsPath: `${stem}_buildings${ext}`,
+  }
 }
 
 export interface PickPoint {
@@ -164,15 +186,26 @@ program
   })
   .option('--hollow-buildings', 'hollow building interiors (requires --open-bottom)', true)
   .option('--no-hollow-buildings', 'keep building interiors solid')
+  .option(
+    '--split-at-ground',
+    'split into a terrain frame and a buildings part that sits on top',
+    false,
+  )
   .action(async (options) => {
-    if (
-      options.openBottom &&
-      options.shellThickness !== undefined &&
-      options.shellThickness >= options.terrainThickness
-    ) {
+    const shellThickness = options.shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
+    if (options.openBottom && shellThickness > options.terrainThickness - MIN_FRAME_HEIGHT_MM) {
       throw new Error(
-        `Invalid shell thickness: ${options.shellThickness}. Must be smaller than terrain thickness (${options.terrainThickness})`,
+        `Invalid shell thickness: ${shellThickness}. Terrain thickness must be at least ` +
+          `shell thickness + ${MIN_FRAME_HEIGHT_MM}mm (${options.terrainThickness}mm)`,
       )
+    }
+    if (options.splitAtGround) {
+      if (!options.terrain) {
+        throw new Error('--split-at-ground requires terrain (do not use --no-terrain)')
+      }
+      if (!options.openBottom) {
+        throw new Error('--split-at-ground requires --open-bottom')
+      }
     }
 
     const exportOptions: ExportOptions = {
@@ -188,6 +221,7 @@ program
       openBottom: options.openBottom,
       shellThickness: options.shellThickness,
       hollowBuildings: options.hollowBuildings,
+      splitAtGround: options.splitAtGround,
       pickPoints: options.pickPoint.length > 0 ? options.pickPoint : undefined,
       excludedGmlIds: options.excludeGmlid.length > 0 ? options.excludeGmlid : undefined,
     }
@@ -198,9 +232,43 @@ program
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds)
 
-    const { buffer, warnings } = await buildPrintableModel(options.bounds, exportOptions)
+    const { buffer, warnings, split } = await buildPrintableModel(options.bounds, exportOptions)
     for (const warning of warnings) {
       console.error(`Warning: ${warning}`)
+    }
+
+    if (options.splitAtGround) {
+      if (!split) {
+        throw new Error('分割モデルが返りませんでした')
+      }
+      const { basePath, buildingsPath } = splitOutputPaths(options.output)
+      await writeFile(basePath, split.base)
+      await writeFile(buildingsPath, split.buildings)
+      console.error(`Wrote ${split.base.length} bytes to ${basePath}`)
+      console.error(`Wrote ${split.buildings.length} bytes to ${buildingsPath}`)
+
+      const [baseResult, buildingsResult] = await Promise.all([
+        validateMesh(split.base, detectMimeType(basePath)),
+        validateMesh(split.buildings, detectMimeType(buildingsPath)),
+      ])
+      if (baseResult.status === 'fail' || buildingsResult.status === 'fail') {
+        const failedName = baseResult.status === 'fail' ? 'base' : 'buildings'
+        const failedResult = baseResult.status === 'fail' ? baseResult : buildingsResult
+        console.error(`Validation fail (${failedName}): ${JSON.stringify(failedResult)}`)
+        await Promise.all([unlink(basePath), unlink(buildingsPath)])
+        process.exit(2)
+      }
+      for (const [name, result] of [
+        ['base', baseResult],
+        ['buildings', buildingsResult],
+      ] as const) {
+        if (result.status === 'warning') {
+          console.error(`Validation warning (${name}): ${JSON.stringify(result)}`)
+        } else {
+          console.error(`Validation pass (${name}): ${JSON.stringify(result)}`)
+        }
+      }
+      return
     }
 
     await writeFile(options.output, buffer)

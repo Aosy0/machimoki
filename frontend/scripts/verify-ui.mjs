@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Playwright ベースのヘッドレス動作確認スクリプト。
 // 結果 JSON を stdout に、ログは stderr に出力する。
-import { mkdirSync, statSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { chromium, devices } from 'playwright'
+import { unzipSync } from 'fflate'
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 
@@ -27,6 +28,7 @@ Options:
   --timeout <ms>                  既定: 30000
   --export                        preview 後にエクスポートを実行
   --export-out <path>             エクスポート先 (既定: .screenshots/export-<timestamp>)
+  --split                         分割印刷パラメータ（openBottom + splitAtGround）で確認
   --fail-on-console               console.error を失敗扱いにする
   --base-url <url>                既定: http://localhost:5173
   --help
@@ -90,6 +92,7 @@ async function main() {
         profile: { type: 'boolean', default: false },
         timeout: { type: 'string', default: '30000' },
         export: { type: 'boolean', default: false },
+        split: { type: 'boolean', default: false },
         'export-out': { type: 'string' },
         'fail-on-console': { type: 'boolean', default: false },
         'base-url': { type: 'string', default: 'http://localhost:5173' },
@@ -159,10 +162,12 @@ async function main() {
     twoFingerSelectionUnchanged: null,
     modeHint: null,
     consoleErrors: [],
+    consoleWarnings: [],
     pageErrors: [],
     shot: null,
     exportFile: null,
     exportBytes: null,
+    splitEntries: null,
     durationMs: 0,
     error: null,
   }
@@ -189,6 +194,7 @@ async function main() {
 
     page.on('console', (msg) => {
       if (msg.type() === 'error') result.consoleErrors.push(msg.text())
+      else if (msg.type() === 'warning') result.consoleWarnings.push(msg.text())
     })
     page.on('pageerror', (err) => {
       result.pageErrors.push(String(err?.message ?? err))
@@ -201,6 +207,23 @@ async function main() {
     let shot = null
     let exportFile = null
     let exportBytes = null
+
+    // 分割印刷の確認時は、アプリ起動前に local storage のパラメータを設定する。
+    if (values.split) {
+      await page.addInitScript(() => {
+        localStorage.setItem(
+          'machimoki.parameters',
+          JSON.stringify({
+            includeTerrain: true,
+            openBottom: true,
+            shellThickness: 1.6,
+            terrainThickness: 10,
+            hollowBuildings: true,
+            splitAtGround: true,
+          }),
+        )
+      })
+    }
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' })
     await page.waitForSelector('[data-testid="map2d-container"]', {
@@ -361,6 +384,14 @@ async function main() {
         mkdirSync(dirname(exportFile), { recursive: true })
         await download.saveAs(exportFile)
         exportBytes = statSync(exportFile).size
+        if (values.split) {
+          try {
+            const files = unzipSync(new Uint8Array(readFileSync(exportFile)))
+            result.splitEntries = Object.keys(files).sort()
+          } catch {
+            result.splitEntries = []
+          }
+        }
       }
     }
 
@@ -395,16 +426,24 @@ async function main() {
       (result.longPressSelection !== null &&
         result.selectModeChanged === true &&
         result.twoFingerSelectionUnchanged === true)
+    const splitOk =
+      !values.split ||
+      !values.export ||
+      (Array.isArray(result.splitEntries) &&
+        result.splitEntries.includes('model_base.3mf') &&
+        result.splitEntries.includes('model_buildings.3mf'))
 
     result.ok =
       !webglError &&
       result.pageErrors.length === 0 &&
       scenarioOk &&
       touchOk &&
+      splitOk &&
       (!values['fail-on-console'] || result.consoleErrors.length === 0)
     if (webglError) result.error = 'webgl-error'
     else if (!scenarioOk) result.error = `scenario-${values.scenario}-failed`
     else if (!touchOk) result.error = 'scenario-touch-assertion-failed'
+    else if (!splitOk) result.error = 'split-entries-missing'
     else if (values['fail-on-console'] && result.consoleErrors.length > 0)
       result.error = 'console-errors'
   } catch (err) {

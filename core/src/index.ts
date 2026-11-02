@@ -1,5 +1,6 @@
 export {
   boundsToEngineXZ,
+  buildFrameCutterMesh,
   componentContainsPoint,
   componentIntersectsBounds,
   dedupeComponents,
@@ -12,8 +13,20 @@ export {
   buildHollowBuildingShells,
   buildPrintableGeometryFromMeshes,
   buildPrintableModelFromMeshes,
+  buildSplitModelFromFinalMesh,
+  DEFAULT_SHELL_THICKNESS_MM,
+  serializeSplitParts,
 } from './pipelineUtils.js'
 export type { PrintableGeometryResult } from './pipelineUtils.js'
+
+export {
+  BASE_CLEARANCE_MM,
+  BASE_EXTENSION_MM,
+  FRAME_STEP_MM,
+  MIN_FRAME_HEIGHT_MM,
+  splitFrameAndBuildings,
+} from './frameSplit.js'
+export type { FrameSplitParts, FrameSplitPrebuilt } from './frameSplit.js'
 
 export { exportMachimoki, exportMachimokiFromMeshes } from './pipeline.js'
 export type { MachimokiExportResult } from './pipeline.js'
@@ -35,6 +48,7 @@ export {
 
 export {
   createManifoldFromMesh,
+  createZipBuffer,
   exportPartsTo3MF,
   exportMeshesToSTL,
   unionMeshes,
@@ -44,6 +58,7 @@ export {
   exportMeshesTo3MF,
   importFrom3MF,
   importFromSTL,
+  removeTinyShells,
   sectionMesh,
   cleanupManifoldImports,
 } from './manifoldOps.js'
@@ -54,6 +69,7 @@ export type {
   ExportOptions,
   ExportResult,
   RawMesh,
+  SplitExportParts,
   UpAxis,
   ValidationResult,
 } from './types.js'

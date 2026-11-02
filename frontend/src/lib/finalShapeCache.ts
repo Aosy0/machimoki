@@ -11,12 +11,26 @@ export interface FinalShapeCacheEntry {
   positions: Float32Array
   indices: Uint32Array
   warnings: string[]
+  /** 分割エクスポート用のスケール済み地形スラブ（地形なしは null） */
+  terrainMesh?: { positions: Float32Array; indices: Uint32Array } | null
+  /** 分割時の 2 パーツ（プレビューの左右表示用） */
+  split?: CachedSplitMesh | null
+}
+
+/** 分割の 2 パーツ（地形枠 / 建物）。 */
+export interface CachedSplitMesh {
+  frame: { positions: Float32Array; indices: Uint32Array }
+  buildings: { positions: Float32Array; indices: Uint32Array }
 }
 
 export interface CachedFinalShapeMesh {
   positions: Float32Array
   indices: Uint32Array
   warnings: string[]
+  /** 分割エクスポート用のスケール済み地形スラブ（地形なしは null） */
+  terrainMesh: { positions: Float32Array; indices: Uint32Array } | null
+  /** 分割時の 2 パーツ（分割時のみ） */
+  split?: CachedSplitMesh | null
 }
 
 const DB_NAME = 'machimoki-final-shape'
@@ -52,6 +66,24 @@ function closeDb(db: IDBDatabase): void {
   }
 }
 
+/** メッシュ部分（positions/indices）の形式を検証する。 */
+function asValidPart(value: unknown): { positions: Float32Array; indices: Uint32Array } | null {
+  if (value == null || typeof value !== 'object') return null
+  const part = value as { positions?: unknown; indices?: unknown }
+  return part.positions instanceof Float32Array && part.indices instanceof Uint32Array
+    ? { positions: part.positions, indices: part.indices }
+    : null
+}
+
+/** 分割の 2 パーツを検証する（どちらかが壊れていれば null）。 */
+function asValidSplit(value: unknown): CachedSplitMesh | null {
+  if (value == null || typeof value !== 'object') return null
+  const split = value as { frame?: unknown; buildings?: unknown }
+  const frame = asValidPart(split.frame)
+  const buildings = asValidPart(split.buildings)
+  return frame && buildings ? { frame, buildings } : null
+}
+
 /** 取得値の形式を検証する（Float32Array / Uint32Array でなければ null）。 */
 function asValidEntry(value: unknown, key: string): CachedFinalShapeMesh | null {
   if (value == null || typeof value !== 'object') return null
@@ -65,6 +97,8 @@ function asValidEntry(value: unknown, key: string): CachedFinalShapeMesh | null 
     warnings: Array.isArray(entry.warnings)
       ? entry.warnings.filter((w) => typeof w === 'string')
       : [],
+    terrainMesh: asValidPart(entry.terrainMesh),
+    split: asValidSplit(entry.split),
   }
 }
 
@@ -134,8 +168,22 @@ function isQuotaExceeded(err: unknown): boolean {
 export async function saveFinalShapeCache(entry: FinalShapeCacheEntry): Promise<void> {
   try {
     if (typeof indexedDB === 'undefined') return
-    // 大きすぎるメッシュは保存しない。
-    if (entry.positions.byteLength + entry.indices.byteLength > MAX_CACHE_BYTES) return
+    // 大きすぎるメッシュは保存しない（分割用の地形メッシュ・分割パーツも含める）。
+    const terrainBytes = entry.terrainMesh
+      ? entry.terrainMesh.positions.byteLength + entry.terrainMesh.indices.byteLength
+      : 0
+    const splitBytes = entry.split
+      ? entry.split.frame.positions.byteLength +
+        entry.split.frame.indices.byteLength +
+        entry.split.buildings.positions.byteLength +
+        entry.split.buildings.indices.byteLength
+      : 0
+    if (
+      entry.positions.byteLength + entry.indices.byteLength + terrainBytes + splitBytes >
+      MAX_CACHE_BYTES
+    ) {
+      return
+    }
     const db = await openDb()
     if (!db) return
     try {
