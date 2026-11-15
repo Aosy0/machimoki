@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useId } from 'react'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import { computeNaturalDimensions, formatMm, formatScale } from '../lib/selectionBounds'
 
@@ -15,6 +15,8 @@ export default function ModelSizeOverlay({
 }: ModelSizeOverlayProps) {
   const [editingField, setEditingField] = useState<'width' | 'depth' | null>(null)
   const [inputValue, setInputValue] = useState('')
+  const widthInputId = useId()
+  const depthInputId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const dragRef = useRef<{ startX: number; startScale: number } | null>(null)
 
@@ -50,6 +52,8 @@ export default function ModelSizeOverlay({
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {
+        // IME の変換確定 Enter で確定させない
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return
         commitEdit()
       } else if (e.key === 'Escape') {
         setEditingField(null)
@@ -103,10 +107,13 @@ export default function ModelSizeOverlay({
       </div>
 
       <div style={rowStyle}>
-        <span style={labelStyle}>W</span>
+        <label htmlFor={widthInputId} style={labelStyle}>
+          W
+        </label>
         {editingField === 'width' ? (
           <input
             ref={inputRef}
+            id={widthInputId}
             type="number"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
@@ -133,10 +140,13 @@ export default function ModelSizeOverlay({
       <div style={dividerStyle} />
 
       <div style={rowStyle}>
-        <span style={labelStyle}>D</span>
+        <label htmlFor={depthInputId} style={labelStyle}>
+          D
+        </label>
         {editingField === 'depth' ? (
           <input
             ref={inputRef}
+            id={depthInputId}
             type="number"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
@@ -171,7 +181,9 @@ export default function ModelSizeOverlay({
         <>
           <div style={dividerStyle} />
           <button
+            type="button"
             style={resetBtnStyle}
+            aria-label="選択範囲の最大辺を150mmに自動調整"
             onClick={() => onScaleChange(autoScale)}
             title="最大辺を150mmに自動調整"
           >
@@ -243,7 +255,6 @@ const inputStyle: React.CSSProperties = {
   fontWeight: 600,
   padding: '1px 4px',
   width: 70,
-  outline: 'none',
 }
 
 const dividerStyle: React.CSSProperties = {
