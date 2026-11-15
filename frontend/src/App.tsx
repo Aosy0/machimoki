@@ -1848,7 +1848,8 @@ function App() {
       <ErrorToast
         message={displayErrorMessage}
         onDismiss={handleDismissError}
-        onRetry={pipelineState.phase === 'error' ? handleDismissError : undefined}
+        // 再試行ボタンはラベルどおりエクスポートをやり直させる。
+        onRetry={pipelineState.phase === 'error' ? () => void handleExport() : undefined}
       />
     </div>
   )
