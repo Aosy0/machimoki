@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import Preview3D, { DEFAULT_BUILDING_COLOR } from './components/Preview3D'
 import ParameterPanel from './components/ParameterPanel'
@@ -63,6 +64,12 @@ import { coercePresetBounds, parseManualCoords } from './lib/mapSelectionInput'
 import { computeModelDimensions } from './lib/selectionBounds'
 
 type Tab = 'map' | 'preview'
+
+// タブの並び順・表示名・対応するパネルID（ARIA の参照に使う）
+const TABS = [
+  { id: 'map', label: '範囲選択', panelId: 'panel-map' },
+  { id: 'preview', label: '3Dプレビュー', panelId: 'panel-preview' },
+] as const
 
 // リロードで選択範囲・設定・タブが失われないよう localStorage に保存する。
 const SELECTION_STORAGE_KEY = 'machimoki.selectionBounds'
@@ -221,6 +228,10 @@ function App() {
     }
   }, [activeTab])
 
+  // タブのキーボード移動でフォーカスを移すための参照。
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ map: null, preview: null })
+  // モバイルの設定シートを <dialog> として開くための参照。
+  const settingsDialogRef = useRef<HTMLDialogElement | null>(null)
   const coverageAvailableRef = useRef(false)
   const coverageProbedMapRef = useRef<MapLibreMap | null>(null)
   // ピックUIは廃止したため常に空。エクスポート引数の形は維持する。
@@ -238,6 +249,16 @@ function App() {
     message: '',
     error: null,
   })
+
+  // 設定シートは <dialog> のモーダル表示にして、フォーカスの閉じ込めと Esc での閉じる操作を任せる。
+  useEffect(() => {
+    const dialog = settingsDialogRef.current
+    if (!dialog) return
+    if (!dialog.open) dialog.showModal()
+    const handleClose = () => setSettingsOpen(false)
+    dialog.addEventListener('close', handleClose)
+    return () => dialog.removeEventListener('close', handleClose)
+  }, [isCompact, settingsOpen, engravingMode])
 
   // ヘッドレス動作確認（frontend/scripts/verify-ui.mjs）から完了状態を参照するための公開。
   useEffect(() => {
@@ -929,6 +950,23 @@ function App() {
     setActiveTab(tab)
     if (tab === 'preview') setPreviewMounted(true)
   }, [])
+  // タブは左右キーとHome/Endで循環移動し、移動と同時に切り替える（automatic activation）。
+  const handleTabKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>, tab: Tab) => {
+      const index = TABS.findIndex((item) => item.id === tab)
+      let nextIndex: number | null = null
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % TABS.length
+      else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + TABS.length) % TABS.length
+      else if (event.key === 'Home') nextIndex = 0
+      else if (event.key === 'End') nextIndex = TABS.length - 1
+      if (nextIndex === null) return
+      event.preventDefault()
+      const nextTab = TABS[nextIndex].id
+      handleTabChange(nextTab)
+      tabRefs.current[nextTab]?.focus()
+    },
+    [handleTabChange],
+  )
 
   // タブ復帰時に hidden だった地図・3Dビューをリサイズする。
   // Preview3D / Map2D はマウント維持＋display切替のため、再表示直後は
@@ -1052,7 +1090,7 @@ function App() {
   return (
     <div className="app-root">
       {/* Tab bar with app name */}
-      <div
+      <header
         className="app-header"
         style={{
           display: 'flex',
@@ -1062,8 +1100,13 @@ function App() {
           flexShrink: 0,
         }}
       >
-        <div
+        {/* キーボードではヘッダーのタブを飛ばして本文へ移れるようにする */}
+        <a className="skip-link" href="#main-content">
+          本文へ移動
+        </a>
+        <h1
           style={{
+            margin: 0,
             padding: isCompact ? '10px 12px' : '12px 20px',
             fontSize: isCompact ? 13 : 14,
             fontWeight: 700,
@@ -1095,27 +1138,32 @@ function App() {
               DEV
             </span>
           )}
-        </div>
-        <div style={{ display: 'flex', flexShrink: 0 }}>
-          {(
-            [
-              ['map', '範囲選択'],
-              ['preview', '3Dプレビュー'],
-            ] as const
-          ).map(([tab, label]) => (
+        </h1>
+        <div role="tablist" aria-label="表示モード" style={{ display: 'flex', flexShrink: 0 }}>
+          {TABS.map(({ id, label, panelId }) => (
             <button
-              key={tab}
-              onClick={() => handleTabChange(tab)}
+              key={id}
+              ref={(node) => {
+                tabRefs.current[id] = node
+              }}
+              type="button"
+              role="tab"
+              id={`tab-${id}`}
+              aria-selected={activeTab === id}
+              aria-controls={panelId}
+              tabIndex={activeTab === id ? 0 : -1}
+              onClick={() => handleTabChange(id)}
+              onKeyDown={(event) => handleTabKeyDown(event, id)}
               style={{
                 padding: isCompact ? '10px 12px' : '12px 20px',
                 background: 'transparent',
-                color: activeTab === tab ? 'var(--text)' : 'var(--text-dim)',
+                color: activeTab === id ? 'var(--text)' : 'var(--text-dim)',
                 border: 'none',
                 borderBottom:
-                  activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                  activeTab === id ? '2px solid var(--accent)' : '2px solid transparent',
                 cursor: 'pointer',
                 fontSize: isCompact ? 12 : 13,
-                fontWeight: activeTab === tab ? 600 : 400,
+                fontWeight: activeTab === id ? 600 : 400,
                 transition: 'color 150ms ease, border-color 150ms ease',
                 whiteSpace: 'nowrap',
                 flexShrink: 0,
@@ -1129,7 +1177,7 @@ function App() {
           type="button"
           data-testid="help-trigger"
           aria-expanded={helpOpen}
-          aria-controls="help-detail"
+          aria-controls={helpOpen ? 'help-detail' : undefined}
           onClick={() => {
             dismissHint()
             toggleHelp()
@@ -1157,7 +1205,7 @@ function App() {
         >
           ?
         </button>
-      </div>
+      </header>
 
       {/* Selection bounds bar */}
       {isDevMode && !isCompact && selectionBounds && activeTab === 'map' && (
@@ -1177,8 +1225,18 @@ function App() {
       )}
 
       {/* Content area: マウント維持＋display切替。アンマウントするとViewer破棄で再読込になるため */}
-      <div data-testid="app-content" style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <main
+        id="main-content"
+        tabIndex={-1}
+        data-testid="app-content"
+        style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
+      >
         <div
+          id="panel-map"
+          role="tabpanel"
+          aria-labelledby="tab-map"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: タブパネルもキーボードで到達できるようにする（Biome の誤検知）
+          tabIndex={0}
           style={{
             width: '100%',
             height: '100%',
@@ -1354,6 +1412,11 @@ function App() {
           <HelpDetail mode="map" isOpen={helpOpen && activeTab === 'map'} onClose={closeHelp} />
         </div>
         <div
+          id="panel-preview"
+          role="tabpanel"
+          aria-labelledby="tab-preview"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: タブパネルもキーボードで到達できるようにする（Biome の誤検知）
+          tabIndex={0}
           style={{
             display: activeTab === 'preview' ? 'flex' : 'none',
             width: '100%',
@@ -1601,6 +1664,7 @@ function App() {
             )}
             {engravingMode && selectionBounds && (
               <div
+                className="engraving-panel"
                 style={
                   isCompact
                     ? {
@@ -1688,20 +1752,7 @@ function App() {
                     textOverflow: 'ellipsis',
                   }}
                 >
-                  <style>{`
-                    .machimoki-update-dot {
-                      width: 8px;
-                      height: 8px;
-                      border-radius: 50%;
-                      background: var(--accent);
-                      animation: machimoki-update-pulse 1s ease-in-out infinite;
-                    }
-                    @keyframes machimoki-update-pulse {
-                      0%, 100% { opacity: 0.35; }
-                      50% { opacity: 1; }
-                    }
-                  `}</style>
-                  <span className="machimoki-update-dot" />
+                  <span className="machimoki-update-dot" aria-hidden="true" />
                   <span>
                     {pipelineState.background ? '更新中…' : pipelineState.message || '読み込み中…'}{' '}
                     {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
@@ -1762,19 +1813,18 @@ function App() {
             />
           )}
           {isCompact && settingsOpen && !engravingMode && (
-            <>
-              <div
-                onClick={() => setSettingsOpen(false)}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'rgba(0, 0, 0, 0.45)',
-                  zIndex: 280,
-                }}
-              />
+            <dialog
+              ref={settingsDialogRef}
+              className="settings-dialog"
+              aria-label="設定"
+              onClick={(event) => {
+                // シート外（背景）をクリックしたら閉じる。
+                if (event.target === event.currentTarget) event.currentTarget.close()
+              }}
+            >
               <ParameterPanel
                 mobile
-                onClose={() => setSettingsOpen(false)}
+                onClose={() => settingsDialogRef.current?.close()}
                 parameters={parameters}
                 onChange={handleParametersChange}
                 onExport={handleExport}
@@ -1790,15 +1840,16 @@ function App() {
                 previewQualityOverride={previewQuality.override}
                 onPreviewQualityOverrideChange={previewQuality.setOverride}
               />
-            </>
+            </dialog>
           )}
         </div>
-      </div>
+      </main>
 
       <ErrorToast
         message={displayErrorMessage}
         onDismiss={handleDismissError}
-        onRetry={pipelineState.phase === 'error' ? handleDismissError : undefined}
+        // 再試行ボタンはラベルどおりエクスポートをやり直させる。
+        onRetry={pipelineState.phase === 'error' ? () => void handleExport() : undefined}
       />
     </div>
   )

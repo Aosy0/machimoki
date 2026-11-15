@@ -5,6 +5,8 @@
 }
 
 :root {
+  /* ブラウザ既定UI（スクロールバー・フォーム部品）も暗い配色にそろえる。 */
+  color-scheme: dark;
   --bg: #1a1a1a;
   --surface: rgba(0, 0, 0, 0.75);
   --surface-solid: #222;
@@ -37,6 +39,12 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* キーボード操作時だけフォーカスを可視化する（個別指定がある要素はそちらが優先）。 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .app-root {
   display: flex;
   flex-direction: column;
@@ -47,6 +55,33 @@ body {
 /* ノッチ付き端末でもヘッダーが隠れないようにする。 */
 .app-header {
   padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* スキップリンク: 通常は画面外に置き、キーボードフォーカス時だけ左上に出す。
+   position: fixed なのでレイアウトを押し広げず、セーフエリアも避ける。 */
+.skip-link {
+  position: fixed;
+  top: -100px;
+  left: calc(env(safe-area-inset-left, 0px) + 8px);
+  z-index: 2000;
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.skip-link:focus-visible {
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+}
+
+/* スキップリンクの移動先はコンテナなので、着地時にリングは出さない。 */
+#main-content:focus-visible {
+  outline: none;
 }
 
 /* iOS Safari は16px未満の入力でフォーカス時に自動ズームする。 */
@@ -359,5 +394,106 @@ input[type="file"]::file-selector-button:hover {
 @media (prefers-reduced-motion: reduce) {
   .machimoki-engraving-overlay-in {
     animation: none;
+  }
+}
+
+/* モバイルの設定シート: <dialog> は画面下端のアンカーとしてだけ使い、中身は
+   ParameterPanel 側の絶対配置に描かせる。モーダルなのでフォーカスの閉じ込めと
+   Esc での閉じる操作はブラウザ側が受け持つ。 */
+.settings-dialog {
+  position: fixed;
+  inset: auto 0 0 0;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  /* 中身が上方向にはみ出すため、既定の overflow: auto では切れてしまう。 */
+  overflow: visible;
+}
+
+.settings-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* 読み込み中オーバーレイ（LoadingOverlay）のスピナーと進捗バー */
+.machimoki-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: machimoki-spin 1s linear infinite;
+}
+
+@keyframes machimoki-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* 進捗バーは外枠を CSS、塗りの幅だけを JS から % で与える。 */
+.machimoki-loading-progress {
+  width: 200px;
+  height: 6px;
+  margin-top: 12px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.machimoki-loading-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+/* 建物一覧の読み込み中に流れる不定進捗バー（BuildingListPanel） */
+@keyframes machimoki-indeterminate {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* プレビュー更新中であることを示す小さな点（App の preview-load-indicator） */
+.machimoki-update-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: machimoki-update-pulse 1s ease-in-out infinite;
+}
+
+@keyframes machimoki-update-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 動きを減らす設定では、装飾目的のアニメーションとトランジションを止める。
+   刻印パネルの animation はインライン指定なので !important で打ち消す。 */
+@media (prefers-reduced-motion: reduce) {
+  .machimoki-spinner,
+  .machimoki-update-dot,
+  .machimoki-indeterminate,
+  .machimoki-loading-progress-fill,
+  .engraving-panel {
+    animation: none !important;
+    transition: none !important;
   }
 }
