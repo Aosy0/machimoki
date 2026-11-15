@@ -1165,7 +1165,7 @@ function App() {
           type="button"
           data-testid="help-trigger"
           aria-expanded={helpOpen}
-          aria-controls="help-detail"
+          aria-controls={helpOpen ? 'help-detail' : undefined}
           onClick={() => {
             dismissHint()
             toggleHelp()
