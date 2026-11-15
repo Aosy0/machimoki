@@ -396,3 +396,26 @@ input[type="file"]::file-selector-button:hover {
     animation: none;
   }
 }
+
+/* モバイルの設定シート: <dialog> は画面下端のアンカーとしてだけ使い、中身は
+   ParameterPanel 側の絶対配置に描かせる。モーダルなのでフォーカスの閉じ込めと
+   Esc での閉じる操作はブラウザ側が受け持つ。 */
+.settings-dialog {
+  position: fixed;
+  inset: auto 0 0 0;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  /* 中身が上方向にはみ出すため、既定の overflow: auto では切れてしまう。 */
+  overflow: visible;
+}
+
+.settings-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}

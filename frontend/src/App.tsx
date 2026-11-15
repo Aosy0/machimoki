@@ -230,6 +230,8 @@ function App() {
 
   // タブのキーボード移動でフォーカスを移すための参照。
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ map: null, preview: null })
+  // モバイルの設定シートを <dialog> として開くための参照。
+  const settingsDialogRef = useRef<HTMLDialogElement | null>(null)
   const coverageAvailableRef = useRef(false)
   const coverageProbedMapRef = useRef<MapLibreMap | null>(null)
   // ピックUIは廃止したため常に空。エクスポート引数の形は維持する。
@@ -247,6 +249,16 @@ function App() {
     message: '',
     error: null,
   })
+
+  // 設定シートは <dialog> のモーダル表示にして、フォーカスの閉じ込めと Esc での閉じる操作を任せる。
+  useEffect(() => {
+    const dialog = settingsDialogRef.current
+    if (!dialog) return
+    if (!dialog.open) dialog.showModal()
+    const handleClose = () => setSettingsOpen(false)
+    dialog.addEventListener('close', handleClose)
+    return () => dialog.removeEventListener('close', handleClose)
+  }, [isCompact, settingsOpen, engravingMode])
 
   // ヘッドレス動作確認（frontend/scripts/verify-ui.mjs）から完了状態を参照するための公開。
   useEffect(() => {
@@ -1813,19 +1825,18 @@ function App() {
             />
           )}
           {isCompact && settingsOpen && !engravingMode && (
-            <>
-              <div
-                onClick={() => setSettingsOpen(false)}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'rgba(0, 0, 0, 0.45)',
-                  zIndex: 280,
-                }}
-              />
+            <dialog
+              ref={settingsDialogRef}
+              className="settings-dialog"
+              aria-label="設定"
+              onClick={(event) => {
+                // シート外（背景）をクリックしたら閉じる。
+                if (event.target === event.currentTarget) event.currentTarget.close()
+              }}
+            >
               <ParameterPanel
                 mobile
-                onClose={() => setSettingsOpen(false)}
+                onClose={() => settingsDialogRef.current?.close()}
                 parameters={parameters}
                 onChange={handleParametersChange}
                 onExport={handleExport}
@@ -1841,7 +1852,7 @@ function App() {
                 previewQualityOverride={previewQuality.override}
                 onPreviewQualityOverrideChange={previewQuality.setOverride}
               />
-            </>
+            </dialog>
           )}
         </div>
       </main>
