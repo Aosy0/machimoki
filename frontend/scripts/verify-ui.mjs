@@ -374,7 +374,7 @@ async function main() {
       selectionInfo = await readSelectionInfo()
     } else {
       await applyBounds()
-      await page.getByRole('button', { name: '3Dプレビュー' }).click()
+      await page.getByRole('tab', { name: '3Dプレビュー' }).click()
       await page.waitForSelector('[data-testid="preview-canvas"]', { state: 'visible', timeout })
       try {
         // App が公開している pipelineState を正とする。オーバーレイの一瞬の消滅では完了扱いにしない。
