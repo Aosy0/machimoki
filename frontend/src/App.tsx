@@ -1664,6 +1664,7 @@ function App() {
             )}
             {engravingMode && selectionBounds && (
               <div
+                className="engraving-panel"
                 style={
                   isCompact
                     ? {
@@ -1751,20 +1752,7 @@ function App() {
                     textOverflow: 'ellipsis',
                   }}
                 >
-                  <style>{`
-                    .machimoki-update-dot {
-                      width: 8px;
-                      height: 8px;
-                      border-radius: 50%;
-                      background: var(--accent);
-                      animation: machimoki-update-pulse 1s ease-in-out infinite;
-                    }
-                    @keyframes machimoki-update-pulse {
-                      0%, 100% { opacity: 0.35; }
-                      50% { opacity: 1; }
-                    }
-                  `}</style>
-                  <span className="machimoki-update-dot" />
+                  <span className="machimoki-update-dot" aria-hidden="true" />
                   <span>
                     {pipelineState.background ? '更新中…' : pipelineState.message || '読み込み中…'}{' '}
                     {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%

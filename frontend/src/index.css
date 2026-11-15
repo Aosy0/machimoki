@@ -465,3 +465,35 @@ input[type="file"]::file-selector-button:hover {
     background-position: -200% 0;
   }
 }
+
+/* プレビュー更新中であることを示す小さな点（App の preview-load-indicator） */
+.machimoki-update-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: machimoki-update-pulse 1s ease-in-out infinite;
+}
+
+@keyframes machimoki-update-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 動きを減らす設定では、装飾目的のアニメーションとトランジションを止める。
+   刻印パネルの animation はインライン指定なので !important で打ち消す。 */
+@media (prefers-reduced-motion: reduce) {
+  .machimoki-spinner,
+  .machimoki-update-dot,
+  .machimoki-indeterminate,
+  .machimoki-loading-progress-fill,
+  .engraving-panel {
+    animation: none !important;
+    transition: none !important;
+  }
+}
