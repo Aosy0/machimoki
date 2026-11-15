@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useId, useMemo, useState } from 'react'
 import { FixedSizeList, type ListChildComponentProps } from 'react-window'
 import { useIsCompactLayout } from '../hooks/useMediaQuery'
 
@@ -102,6 +102,8 @@ export default function BuildingListPanel({
   onHoverItem,
 }: BuildingListPanelProps) {
   const [filter, setFilter] = useState('')
+  // 開閉ボタンと一覧の対応を支援技術に伝えるための ID。
+  const listId = useId()
   const isCompact = useIsCompactLayout()
   const [open, setOpen] = useState(!isCompact)
   const itemSize = isCompact ? 36 : ITEM_SIZE
@@ -169,6 +171,7 @@ export default function BuildingListPanel({
         )}
         {listLoading && loadingProgress == null && (
           <div
+            className="machimoki-indeterminate"
             aria-hidden
             style={{
               position: 'absolute',
@@ -186,6 +189,9 @@ export default function BuildingListPanel({
           />
         )}
         <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={listId}
           onClick={() => setOpen((v) => !v)}
           style={{
             position: 'relative',
@@ -211,13 +217,13 @@ export default function BuildingListPanel({
               : `建物一覧（${items.length}件 / 削除済み ${excludedIds.length}件）`}
           </span>
         </button>
-        <style>{`@keyframes machimoki-indeterminate { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
       </div>
       {open && (
-        <>
+        <div id={listId} style={{ display: 'contents' }}>
           <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>
             <input
               type="text"
+              aria-label="建物IDで絞り込み"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="IDで絞り込み"
@@ -247,7 +253,7 @@ export default function BuildingListPanel({
           ) : (
             <div style={{ padding: '10px', color: 'var(--text-dim)' }}>該当なし</div>
           )}
-        </>
+        </div>
       )}
     </div>
   )

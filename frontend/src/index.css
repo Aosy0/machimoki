@@ -455,3 +455,13 @@ input[type="file"]::file-selector-button:hover {
   border-radius: 3px;
   transition: width 0.2s ease;
 }
+
+/* 建物一覧の読み込み中に流れる不定進捗バー（BuildingListPanel） */
+@keyframes machimoki-indeterminate {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
