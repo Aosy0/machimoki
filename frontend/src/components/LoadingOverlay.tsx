@@ -9,9 +9,15 @@ interface LoadingOverlayProps {
 function LoadingOverlay({ message, visible, progress }: LoadingOverlayProps) {
   if (!visible) return null
 
+  // 進捗は 0〜100 に丸めてから ARIA とバーの幅に使う。
+  const clampedProgress = Math.max(0, Math.min(100, progress ?? 0))
+
   return (
     <div
       data-testid="loading-overlay"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
       style={{
         position: 'absolute',
         top: 0,
@@ -27,44 +33,23 @@ function LoadingOverlay({ message, visible, progress }: LoadingOverlayProps) {
         color: 'var(--text)',
       }}
     >
-      <div className="machimoki-spinner" />
+      <div className="machimoki-spinner" aria-hidden="true" />
       <p style={{ marginTop: '16px', fontSize: '14px' }}>{message}</p>
       {progress !== undefined && (
         <div
-          style={{
-            width: '200px',
-            height: '6px',
-            background: 'var(--border)',
-            borderRadius: '3px',
-            marginTop: '12px',
-            overflow: 'hidden',
-          }}
+          className="machimoki-loading-progress"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(clampedProgress)}
+          aria-label="進捗"
         >
           <div
-            style={{
-              width: `${Math.max(0, Math.min(100, progress))}%`,
-              height: '100%',
-              background: 'var(--accent)',
-              borderRadius: '3px',
-              transition: 'width 0.2s ease',
-            }}
+            className="machimoki-loading-progress-fill"
+            style={{ width: `${clampedProgress}%` }}
           />
         </div>
       )}
-      <style>{`
-        .machimoki-spinner {
-          width: 40px;
-          height: 40px;
-          border: 4px solid var(--border);
-          border-top-color: var(--accent);
-          border-radius: 50%;
-          animation: machimoki-spin 1s linear infinite;
-        }
-        @keyframes machimoki-spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   )
 }
