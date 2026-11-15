@@ -1052,7 +1052,7 @@ function App() {
   return (
     <div className="app-root">
       {/* Tab bar with app name */}
-      <div
+      <header
         className="app-header"
         style={{
           display: 'flex',
@@ -1062,8 +1062,13 @@ function App() {
           flexShrink: 0,
         }}
       >
-        <div
+        {/* キーボードではヘッダーのタブを飛ばして本文へ移れるようにする */}
+        <a className="skip-link" href="#main-content">
+          本文へ移動
+        </a>
+        <h1
           style={{
+            margin: 0,
             padding: isCompact ? '10px 12px' : '12px 20px',
             fontSize: isCompact ? 13 : 14,
             fontWeight: 700,
@@ -1095,7 +1100,7 @@ function App() {
               DEV
             </span>
           )}
-        </div>
+        </h1>
         <div style={{ display: 'flex', flexShrink: 0 }}>
           {(
             [
@@ -1157,7 +1162,7 @@ function App() {
         >
           ?
         </button>
-      </div>
+      </header>
 
       {/* Selection bounds bar */}
       {isDevMode && !isCompact && selectionBounds && activeTab === 'map' && (
@@ -1177,7 +1182,12 @@ function App() {
       )}
 
       {/* Content area: マウント維持＋display切替。アンマウントするとViewer破棄で再読込になるため */}
-      <div data-testid="app-content" style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <main
+        id="main-content"
+        tabIndex={-1}
+        data-testid="app-content"
+        style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
+      >
         <div
           style={{
             width: '100%',
@@ -1793,7 +1803,7 @@ function App() {
             </>
           )}
         </div>
-      </div>
+      </main>
 
       <ErrorToast
         message={displayErrorMessage}
