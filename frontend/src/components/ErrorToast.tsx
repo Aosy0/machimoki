@@ -11,6 +11,8 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
 
   return (
     <div
+      role="alert"
+      aria-atomic="true"
       style={{
         position: 'absolute',
         top: '60px',
@@ -32,6 +34,7 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
       <span style={{ flex: 1 }}>{message}</span>
       {onRetry && (
         <button
+          type="button"
           onClick={onRetry}
           style={{
             background: 'transparent',
@@ -48,6 +51,8 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
       )}
       {onDismiss && (
         <button
+          type="button"
+          aria-label="エラーを閉じる"
           onClick={onDismiss}
           style={{
             background: 'transparent',
