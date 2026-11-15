@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useId } from 'react'
 
 export interface ManualCoords {
   west: string
@@ -27,6 +27,9 @@ export default function CoordinateSelectionPanel({
   hasCoarsePointer,
   onClose,
 }: CoordinateSelectionPanelProps) {
+  // ラベルと入力部品を関連付ける id の接頭辞。インスタンスごとに一意になる。
+  const baseId = useId()
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
       <div
@@ -77,8 +80,10 @@ export default function CoordinateSelectionPanel({
           ] as const
         ).map(([key, label]) => (
           <div key={key}>
-            <div
+            <label
+              htmlFor={`${baseId}-${key}`}
               style={{
+                display: 'block',
                 fontSize: '12px',
                 color: 'var(--text-muted)',
                 marginBottom: '2px',
@@ -86,8 +91,9 @@ export default function CoordinateSelectionPanel({
               }}
             >
               {label}
-            </div>
+            </label>
             <input
+              id={`${baseId}-${key}`}
               type="text"
               inputMode="decimal"
               placeholder={
