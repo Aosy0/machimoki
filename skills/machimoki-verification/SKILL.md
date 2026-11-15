@@ -28,11 +28,13 @@ description: machimoki の動作確認手順。ヘッドレスでの範囲選択
 | 3Dプレビュー完了待ち | `npm run verify:ui -- --scenario preview --bounds ...`（既定で完了まで待つ） |
 | エクスポートまで確認 | `npm run verify:ui -- --scenario preview --bounds ... --export --export-out out.3mf` |
 | 分割印刷（土台＋建物）を確認 | `npm run verify:ui -- --scenario preview --bounds ... --split --export --export-out out.zip`（結果の `splitEntries` に `model_base.3mf` / `model_buildings.3mf` が入る） |
+| 刻印（3D上の位置決め）を確認 | `npm run verify:ui -- --scenario preview --bounds ... --engrave --export --timeout 180000`（`engravingPanel` / `engravingGlyphPaths` / `engravingViewFace` / `engravingOverlayDrag.moved` / `engravingMetadata.hasEngravedText` を確認） |
 | 画像も保存 | 上記に `--shot` を追加（`--selector` / `--clip` で範囲を絞れる） |
 | 実ブラウザで確認 | `--headed` を追加 |
 
 - `--bounds` は `west,south,east,north`（WGS84）。
 - `--drag` は地図キャンバスに対する 0〜1 の相対座標 `x1,y1,x2,y2`。
+- 刻印（`--engrave`）は初回の完成形状生成に時間がかかるため `--timeout 180000` 程度を指定する。
 - 全フラグは `node frontend/scripts/verify-ui.mjs --help` を参照。
 
 ## 結果JSONの読み方

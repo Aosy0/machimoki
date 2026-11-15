@@ -34,8 +34,13 @@ export default defineConfig({
       // chokidar が親ディレクトリごと fs.watch し、ルート直下の .codegraph
       // ジャンクションの stat に失敗してプロセスが落ちる。.env は変更時に
       // 再起動が必要なため監視対象から外す（.codegraph は念のため併記）。
+      // また、エディタのアトミック書き込みが作る一時ディレクトリ
+      // （.foo.ts.1234.abcd.tmpdir/）を監視すると EBUSY でプロセスが落ちるため除外する。
       ignored: [
         '**/.env*',
+        '**/.*.tmpdir/**',
+        '**/.*.tmpdir',
+        '**/*.tmp',
         (filePath: string) =>
           filePath === codegraphPath || filePath.startsWith(`${codegraphPath}${sep}`),
       ],

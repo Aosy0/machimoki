@@ -16,6 +16,9 @@ import { DEFAULT_SHELL_THICKNESS_MM } from '../pipelineUtils.js'
 import { MIN_FRAME_HEIGHT_MM } from '../frameSplit.js'
 import { hasMiterBase, hasMiterWall } from '../frameSplitConstants.js'
 import { Bounds, ExportOptions, Lod } from '../types.js'
+import type { EngravingFace, EngravingLine, EngravingOptions } from '../engraving/types.js'
+import { ENGRAVING_FACES, defaultEngravingOptions } from '../engraving/types.js'
+import { configureNodeEngravingFont } from '../engraving/nodeFont.js'
 
 const app = new Hono()
 
@@ -37,6 +40,11 @@ app.post('/api/export', async (c) => {
   }
 
   const { bounds, options } = parseResult.value
+
+  // 刻印が有効なときだけ同梱フォント（core/assets/MPLUS1p-Bold.ttf）を読み込む。
+  if (options.engraving?.enabled) {
+    configureNodeEngravingFont()
+  }
 
   try {
     if (options.format === 'machimoki') {
@@ -158,7 +166,11 @@ interface ParseFailure {
   error: string
 }
 
-function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
+/**
+ * POST /api/export のリクエストボディを検証し、bounds と ExportOptions に変換する。
+ * テスト用に export している（サーバー起動なしでパースだけ検証できる）。
+ */
+export function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
   if (typeof body !== 'object' || body === null) {
     return { ok: false, error: 'Request body must be an object' }
   }
@@ -274,6 +286,15 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     terrainGridSize = parsed
   }
 
+  let engraving: EngravingOptions | undefined
+  if (record.engraving !== undefined) {
+    const parsed = parseEngravingOptions(record.engraving)
+    if ('error' in parsed) {
+      return { ok: false, error: parsed.error }
+    }
+    engraving = parsed.value
+  }
+
   const options: ExportOptions = {
     terrainThickness,
     flattenBottom,
@@ -294,6 +315,7 @@ function parseExportBody(body: unknown): ParseSuccess | ParseFailure {
     pickPoints,
     excludedGmlIds,
     terrainGridSize,
+    engraving,
   }
 
   return { ok: true, value: { bounds, options } }
@@ -385,6 +407,135 @@ function parseExcludedGmlIds(value: unknown): string[] | null | undefined {
   if (value.length > MAX_EXCLUDED_GMLIDS) return null
   if (!value.every((item) => typeof item === 'string')) return null
   return value as string[]
+}
+
+function parseEngravingNumber(label: string, value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Invalid engraving.${label}: expected a finite number`)
+  }
+  return value
+}
+
+function parseEngravingFace(value: unknown): EngravingFace {
+  if (typeof value === 'string' && (ENGRAVING_FACES as readonly string[]).includes(value)) {
+    return value as EngravingFace
+  }
+  throw new Error(
+    `Invalid engraving.face: ${String(value)}. Expected one of ${ENGRAVING_FACES.join(', ')}`,
+  )
+}
+
+function parseEngravingLine(value: unknown, index: number): EngravingLine {
+  const label = `lines[${index}]`
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid engraving.${label}: expected an object`)
+  }
+  const record = value as Record<string, unknown>
+  if (typeof record.id !== 'string') {
+    throw new Error(`Invalid engraving.${label}.id: expected a string`)
+  }
+  if (typeof record.text !== 'string') {
+    throw new Error(`Invalid engraving.${label}.text: expected a string`)
+  }
+  const sizeMm = parseEngravingNumber(`${label}.sizeMm`, record.sizeMm)
+  if (sizeMm <= 0) {
+    throw new Error(`Invalid engraving.${label}.sizeMm: expected a number > 0`)
+  }
+  if (record.auto !== undefined && typeof record.auto !== 'boolean') {
+    throw new Error(`Invalid engraving.${label}.auto: expected a boolean`)
+  }
+  const line: EngravingLine = { id: record.id, text: record.text, sizeMm }
+  if (record.auto !== undefined) line.auto = record.auto as boolean
+  return line
+}
+
+/**
+ * `engraving` を defaultEngravingOptions() にマージして検証する。
+ * enabled は JSON で明示しない限り false（既定値）。
+ */
+function mergeEngravingOptions(input: unknown): EngravingOptions {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('Invalid engraving: expected an object')
+  }
+  const record = input as Record<string, unknown>
+  const defaults = defaultEngravingOptions()
+  const options: EngravingOptions = { ...defaults, printProfile: { ...defaults.printProfile } }
+
+  if (record.enabled !== undefined) {
+    if (typeof record.enabled !== 'boolean') {
+      throw new Error('Invalid engraving.enabled: expected a boolean')
+    }
+    options.enabled = record.enabled
+  }
+  if (record.face !== undefined) {
+    options.face = parseEngravingFace(record.face)
+  }
+  if (record.centerX !== undefined) {
+    options.centerX = parseEngravingNumber('centerX', record.centerX)
+  }
+  if (record.centerY !== undefined) {
+    options.centerY = parseEngravingNumber('centerY', record.centerY)
+  }
+  if (record.lineGapMm !== undefined) {
+    const lineGapMm = parseEngravingNumber('lineGapMm', record.lineGapMm)
+    if (lineGapMm < 0) {
+      throw new Error('Invalid engraving.lineGapMm: expected a number >= 0')
+    }
+    options.lineGapMm = lineGapMm
+  }
+  if (record.depthMm !== undefined) {
+    const depthMm = parseEngravingNumber('depthMm', record.depthMm)
+    if (depthMm <= 0) {
+      throw new Error('Invalid engraving.depthMm: expected a number > 0')
+    }
+    options.depthMm = depthMm
+  }
+  if (record.wrap !== undefined) {
+    if (typeof record.wrap !== 'boolean') {
+      throw new Error('Invalid engraving.wrap: expected a boolean')
+    }
+    options.wrap = record.wrap
+  }
+  if (record.lines !== undefined) {
+    if (!Array.isArray(record.lines)) {
+      throw new Error('Invalid engraving.lines: expected an array')
+    }
+    options.lines = record.lines.map((line, index) => parseEngravingLine(line, index))
+  }
+  if (record.printProfile !== undefined) {
+    if (
+      typeof record.printProfile !== 'object' ||
+      record.printProfile === null ||
+      Array.isArray(record.printProfile)
+    ) {
+      throw new Error('Invalid engraving.printProfile: expected an object')
+    }
+    const profile = record.printProfile as Record<string, unknown>
+    const nozzleMm =
+      profile.nozzleMm === undefined
+        ? defaults.printProfile.nozzleMm
+        : parseEngravingNumber('printProfile.nozzleMm', profile.nozzleMm)
+    const layerHeightMm =
+      profile.layerHeightMm === undefined
+        ? defaults.printProfile.layerHeightMm
+        : parseEngravingNumber('printProfile.layerHeightMm', profile.layerHeightMm)
+    if (nozzleMm <= 0) {
+      throw new Error('Invalid engraving.printProfile.nozzleMm: expected a number > 0')
+    }
+    if (layerHeightMm <= 0) {
+      throw new Error('Invalid engraving.printProfile.layerHeightMm: expected a number > 0')
+    }
+    options.printProfile = { nozzleMm, layerHeightMm }
+  }
+  return options
+}
+
+function parseEngravingOptions(value: unknown): { value: EngravingOptions } | { error: string } {
+  try {
+    return { value: mergeEngravingOptions(value) }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 function detectMimeType(fileName: string): string | null {

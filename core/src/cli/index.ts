@@ -8,6 +8,7 @@
  *            [--terrain-grid <integer 4-512>]
  *            [--open-bottom] [--shell-thickness <number>]
  *            [--hollow-buildings|--no-hollow-buildings]
+ *            [--engraving <json> | --engraving-file <path>]
  *
  *   validate --file <path> [--json|--no-json]
  */
@@ -22,6 +23,9 @@ import { DEFAULT_SHELL_THICKNESS_MM } from '../pipelineUtils.js'
 import { MIN_FRAME_HEIGHT_MM } from '../frameSplit.js'
 import { hasMiterBase, hasMiterWall } from '../frameSplitConstants.js'
 import { Bounds, ExportOptions, Lod } from '../types.js'
+import type { EngravingFace, EngravingLine, EngravingOptions } from '../engraving/types.js'
+import { ENGRAVING_FACES, defaultEngravingOptions } from '../engraving/types.js'
+import { configureNodeEngravingFont } from '../engraving/nodeFont.js'
 
 export const program = new Command()
 
@@ -64,6 +68,154 @@ export function parseUpAxis(value: string): 'z-up' | 'y-up' {
     throw new Error(`Invalid up-axis: ${value}. Expected z-up or y-up`)
   }
   return lower
+}
+
+function parseEngravingNumber(label: string, value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Invalid ${label}: expected a finite number`)
+  }
+  return value
+}
+
+function parseEngravingFace(value: unknown): EngravingFace {
+  if (typeof value === 'string' && (ENGRAVING_FACES as readonly string[]).includes(value)) {
+    return value as EngravingFace
+  }
+  throw new Error(
+    `Invalid engraving.face: ${String(value)}. Expected one of ${ENGRAVING_FACES.join(', ')}`,
+  )
+}
+
+function parseEngravingLine(value: unknown, index: number): EngravingLine {
+  const label = `engraving.lines[${index}]`
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`Invalid ${label}: expected an object`)
+  }
+  const record = value as Record<string, unknown>
+  if (typeof record.id !== 'string') {
+    throw new Error(`Invalid ${label}.id: expected a string`)
+  }
+  if (typeof record.text !== 'string') {
+    throw new Error(`Invalid ${label}.text: expected a string`)
+  }
+  const sizeMm = parseEngravingNumber(`${label}.sizeMm`, record.sizeMm)
+  if (sizeMm <= 0) {
+    throw new Error(`Invalid ${label}.sizeMm: expected a number > 0`)
+  }
+  if (record.auto !== undefined && typeof record.auto !== 'boolean') {
+    throw new Error(`Invalid ${label}.auto: expected a boolean`)
+  }
+  const line: EngravingLine = { id: record.id, text: record.text, sizeMm }
+  if (record.auto !== undefined) line.auto = record.auto as boolean
+  return line
+}
+
+/**
+ * 刻印設定のJSONオブジェクトを `EngravingOptions` にマージ・検証する。
+ *
+ * `defaultEngravingOptions()` をベースに、指定されたキーだけを上書きする。
+ * enabled は明示しない限り false（JSONに enabled: true が必要）。
+ * 型が違う値は分かりやすいメッセージの Error にする（CLI/APIの400に対応）。
+ */
+export function mergeEngravingOptions(input: unknown): EngravingOptions {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('Invalid engraving settings: expected a JSON object')
+  }
+  const record = input as Record<string, unknown>
+  const defaults = defaultEngravingOptions()
+  const options: EngravingOptions = { ...defaults, printProfile: { ...defaults.printProfile } }
+
+  if (record.enabled !== undefined) {
+    if (typeof record.enabled !== 'boolean') {
+      throw new Error('Invalid engraving.enabled: expected a boolean')
+    }
+    options.enabled = record.enabled
+  }
+  if (record.face !== undefined) {
+    options.face = parseEngravingFace(record.face)
+  }
+  if (record.centerX !== undefined) {
+    options.centerX = parseEngravingNumber('engraving.centerX', record.centerX)
+  }
+  if (record.centerY !== undefined) {
+    options.centerY = parseEngravingNumber('engraving.centerY', record.centerY)
+  }
+  if (record.lineGapMm !== undefined) {
+    const lineGapMm = parseEngravingNumber('engraving.lineGapMm', record.lineGapMm)
+    if (lineGapMm < 0) {
+      throw new Error('Invalid engraving.lineGapMm: expected a number >= 0')
+    }
+    options.lineGapMm = lineGapMm
+  }
+  if (record.depthMm !== undefined) {
+    const depthMm = parseEngravingNumber('engraving.depthMm', record.depthMm)
+    if (depthMm <= 0) {
+      throw new Error('Invalid engraving.depthMm: expected a number > 0')
+    }
+    options.depthMm = depthMm
+  }
+  if (record.wrap !== undefined) {
+    if (typeof record.wrap !== 'boolean') {
+      throw new Error('Invalid engraving.wrap: expected a boolean')
+    }
+    options.wrap = record.wrap
+  }
+  if (record.lines !== undefined) {
+    if (!Array.isArray(record.lines)) {
+      throw new Error('Invalid engraving.lines: expected an array')
+    }
+    options.lines = record.lines.map((line, index) => parseEngravingLine(line, index))
+  }
+  if (record.printProfile !== undefined) {
+    if (
+      typeof record.printProfile !== 'object' ||
+      record.printProfile === null ||
+      Array.isArray(record.printProfile)
+    ) {
+      throw new Error('Invalid engraving.printProfile: expected an object')
+    }
+    const profile = record.printProfile as Record<string, unknown>
+    const nozzleMm =
+      profile.nozzleMm === undefined
+        ? defaults.printProfile.nozzleMm
+        : parseEngravingNumber('engraving.printProfile.nozzleMm', profile.nozzleMm)
+    const layerHeightMm =
+      profile.layerHeightMm === undefined
+        ? defaults.printProfile.layerHeightMm
+        : parseEngravingNumber('engraving.printProfile.layerHeightMm', profile.layerHeightMm)
+    if (nozzleMm <= 0) {
+      throw new Error('Invalid engraving.printProfile.nozzleMm: expected a number > 0')
+    }
+    if (layerHeightMm <= 0) {
+      throw new Error('Invalid engraving.printProfile.layerHeightMm: expected a number > 0')
+    }
+    options.printProfile = { nozzleMm, layerHeightMm }
+  }
+  return options
+}
+
+/** 刻印設定JSON文字列をパースして `EngravingOptions` にする。 */
+export function parseEngravingOptionsJson(json: string): EngravingOptions {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid engraving JSON: ${message}`)
+  }
+  return mergeEngravingOptions(parsed)
+}
+
+/** `--engraving-file` のJSONファイルを読み込んで `EngravingOptions` にする。 */
+export async function readEngravingOptionsFile(path: string): Promise<EngravingOptions> {
+  let text: string
+  try {
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`刻印設定ファイルを読み込めません: ${path}（${message}）`)
+  }
+  return parseEngravingOptionsJson(text)
 }
 
 export function detectMimeType(filePath: string): string {
@@ -192,6 +344,12 @@ program
     'split into a terrain frame and a buildings part that sits on top',
     false,
   )
+  .option(
+    '--engraving <json>',
+    'engraving settings as JSON (merged with defaults; needs "enabled": true). ' +
+      'Example: {"enabled":true,"face":"bottom","lines":[{"id":"t","text":"...","sizeMm":8}]}',
+  )
+  .option('--engraving-file <path>', 'read engraving settings JSON from a file')
   .action(async (options) => {
     const shellThickness = options.shellThickness ?? DEFAULT_SHELL_THICKNESS_MM
     if (options.openBottom && shellThickness > options.terrainThickness - MIN_FRAME_HEIGHT_MM) {
@@ -241,6 +399,31 @@ program
 
     if (options.terrainGrid !== undefined) {
       exportOptions.terrainGridSize = options.terrainGrid
+    }
+
+    // 刻印設定: --engraving（JSON文字列）か --engraving-file（JSONファイル）の
+    // どちらか一方。enabled のときだけ同梱フォントを有効化する。
+    if (options.engraving !== undefined || options.engravingFile !== undefined) {
+      if (options.engraving !== undefined && options.engravingFile !== undefined) {
+        throw new Error('--engraving と --engraving-file は同時に指定できません')
+      }
+      const engraving: EngravingOptions =
+        options.engraving !== undefined
+          ? parseEngravingOptionsJson(options.engraving)
+          : await readEngravingOptionsFile(options.engravingFile)
+      exportOptions.engraving = engraving
+      if (engraving.enabled) {
+        configureNodeEngravingFont()
+        if (exportOptions.format === 'stl') {
+          console.error(
+            'Warning: STLはメタデータを持てないため、刻印テキストはファイルに保存されません',
+          )
+        }
+      } else {
+        console.error(
+          'Warning: 刻印設定が enabled=false のため刻印しません（enabled: true を指定してください）',
+        )
+      }
     }
 
     console.error(`Building ${exportOptions.format.toUpperCase()} model for bounds`, options.bounds)

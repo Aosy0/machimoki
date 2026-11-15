@@ -44,6 +44,26 @@ npx tsx core/src/cli/index.ts export \
   --output model.3mf
 ```
 
+#### CLI Engraving Example
+
+```bash
+# Engrave a title on the south face (JSON is merged with defaultEngravingOptions())
+npx tsx core/src/cli/index.ts export \
+  --bounds 139.6903,35.6997,139.6906,35.7000 \
+  --terrain-thickness 10 \
+  --engraving '{"enabled":true,"face":"south","lines":[{"id":"title","text":"新宿区","sizeMm":10},{"id":"scale","text":"1:1,000  W150 x D100 x T10 mm","sizeMm":5}]}' \
+  --format 3mf \
+  --output engraved.3mf
+
+# Or read the same JSON from a file (--engraving and --engraving-file are exclusive)
+npx tsx core/src/cli/index.ts export \
+  --bounds 139.6903,35.6997,139.6906,35.7000 \
+  --terrain-thickness 10 \
+  --engraving-file engraving.json \
+  --format 3mf \
+  --output engraved.3mf
+```
+
 #### API Usage
 
 ```bash
@@ -73,6 +93,21 @@ curl -X POST http://localhost:3000/api/export \
     "format": "3mf"
   }' \
   --output model_split.zip
+
+# Engrave the bottom face (same JSON as the CLI --engraving flag)
+curl -X POST http://localhost:3000/api/export \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bounds": {"west": 139.6903, "south": 35.6997, "east": 139.6906, "north": 35.7000},
+    "terrainThickness": 10,
+    "format": "3mf",
+    "engraving": {
+      "enabled": true,
+      "face": "bottom",
+      "lines": [{"id": "coord", "text": "35.68120N 139.76710E", "sizeMm": 8}]
+    }
+  }' \
+  --output engraved.3mf
 ```
 
 ### Step 3: Validate Model
@@ -210,7 +245,38 @@ curl -s -X POST http://localhost:3000/api/validate \
 | `--shell-thickness` | No | number (printed mm) | `1.6` | Shell (wall/roof) thickness used by `--open-bottom`. Must be smaller than `--terrain-thickness` |
 | `--hollow-buildings` / `--no-hollow-buildings` | No | flag | `true` | With `--open-bottom`, also hollow building interiors so they connect through to the open underside |
 | `--split-at-ground` | No | flag | `false` | Split into a terrain frame (`<stem>_base.<ext>`) and a buildings part (`<stem>_buildings.<ext>`, terrain plate + buildings + a short solid base). Requires `--open-bottom` and terrain. Requires `terrainThickness - shellThickness >= 2.0mm` |
+| `--engraving` | No | JSON string | -- | Engrave text on a face. JSON is merged with `defaultEngravingOptions()`; requires `"enabled": true`. Cannot be combined with `--engraving-file` |
+| `--engraving-file` | No | path | -- | Read the engraving JSON from a file (UTF-8). Cannot be combined with `--engraving` |
 | `--output` | Yes | path | -- | Output file path. With `--split-at-ground`, the stem for the two part files |
+
+#### Engraving Parameters
+
+Passed as the `engraving` object (API) or the `--engraving` JSON (CLI). All keys are optional
+and merge onto `defaultEngravingOptions()`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Set `true` to actually engrave. Omitting it means no engraving |
+| `face` | `bottom` | `bottom` \| `south` \| `north` \| `east` \| `west`. `bottom` is unavailable when the bottom is open (`openBottom` / `splitAtGround`) or not flattened |
+| `lines` | `[]` | Array of `{ id: string, text: string, sizeMm: number, auto?: boolean }`. Newlines inside `text` split into lines |
+| `centerX`, `centerY` | `0.5` | Block center inside the usable face area (0..1) |
+| `lineGapMm` | `1.5` | Extra gap between lines (printed mm) |
+| `depthMm` | `0.4` | Engraving depth (printed mm). Defaults to two layers |
+| `printProfile` | `{ nozzleMm: 0.4, layerHeightMm: 0.2 }` | FDM nozzle / layer height that drives the minimum stroke width and default depth |
+| `wrap` | `true` | Wrap text to the face width |
+
+Notes:
+
+- Engraving requires terrain (`includeTerrain: true` / `--terrain`); side faces need at least
+  a 6.0mm band (derived from `terrainThickness`).
+- The bundled font is **M PLUS 1p Bold** (SIL OFL 1.1, `core/assets/MPLUS1p-Bold.ttf`,
+  license in `core/assets/OFL.txt`); CLI/API load it automatically. Browser workers must
+  register a font provider.
+- On 3MF the full engraving text is also written to the model metadata
+  (`Title` / `Description` / `CreationDate`) so long text is not lost; **STL has no metadata**.
+- When a face is unavailable, text overflows, or a glyph is missing, the export continues and
+  the model is left unengraved (the CLI prints warnings to stderr; the API still returns 200
+  but does not echo warnings in the success response).
 
 ### Validate Parameters
 
@@ -233,6 +299,10 @@ curl -s -X POST http://localhost:3000/api/validate \
 | `Failed to build printable model: ...` | Network or API error | Check connectivity to PLATEAU API and Cesium Ion |
 | CLI exits with code `2` | Validation status is `fail` | Output file(s) are deleted; model has topology or geometry problems |
 | HTTP 400 on API `/api/export` | `splitAtGround` without `includeTerrain`/`openBottom`, or `terrainThickness - shellThickness < 2mm` | Fix the split-related parameters |
+| `Invalid engraving JSON` | `--engraving` value is not valid JSON | Quote the JSON as one shell argument (single quotes) |
+| `Invalid engraving.face` | `face` is not `bottom`/`south`/`north`/`east`/`west` | Fix the JSON; the API returns HTTP 400 with the same message |
+| `--engraving と --engraving-file は同時に指定できません` | Both engraving sources were passed | Use only one of them |
+| Engraving missing from the result | `enabled` not `true`, face unavailable, text overflow, or unsupported glyph | Check stderr warnings; set `enabled: true`, pick another face, lower `sizeMm`, or enable `wrap` |
 | HTTP 422 on API `/api/export` | Generated model failed validation | Response body contains `{ error, warnings, validation }` (split adds `part: "base" \| "buildings"` and per-part `validation`) |
 | HTTP 500 on API | Server-side error during export | Check server logs for details |
 
@@ -260,3 +330,4 @@ curl -s -X POST http://localhost:3000/api/validate \
 - **Memory**: Large areas can use significant memory. Stick to areas under 1 km for reliable results.
 - **Manifold WASM**: Validation requires the manifold-3d WASM module to be initialized. This happens on first call and may take a moment.
 - **Auto-validation**: The CLI export command validates the output automatically. `fail` deletes the file(s) and exits with code 2; `warning` is logged but the file is kept and the command exits with code 0. For split exports both parts are validated (`base` and `buildings`).
+- **Engraving**: `--engraving '<json>'` (or `engraving` in the API body) engraves text on the model. Faces are `bottom` / `south` / `north` / `east` / `west`; `bottom` is unavailable when the bottom is open (`openBottom` / `splitAtGround`) or not flattened, and side faces need a band of at least 6mm. Defaults assume an FDM 0.4mm nozzle with 0.2mm layers (minimum stroke 0.45mm, depth 0.4mm). The bundled M PLUS 1p Bold font (SIL OFL 1.1) is loaded automatically by the CLI/API. 3MF also stores the full text in the model metadata (`Title` / `Description` / `CreationDate`), while STL cannot. Unavailable faces, overflow, or missing glyphs only warn; the export continues unengraved.

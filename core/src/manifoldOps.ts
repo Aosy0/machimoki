@@ -232,13 +232,59 @@ export async function createSlicePrism(
  * @param manifold The manifold to export.
  * @param color Optional hex color string (e.g. "#ff0000") applied to the object.
  * @param upAxis Which axis points up in the exported model (default 'z-up').
+ * @param metadata Optional 3MF model metadata written as `<metadata>` elements
+ *   (e.g. Title/Description). Same-named entries override the defaults, and
+ *   values are XML-escaped. 3MF can carry text that does not fit on the model;
+ *   STL cannot.
  */
 export async function exportTo3MF(
   manifold: Manifold,
   color?: string,
   upAxis: UpAxis = 'z-up',
+  metadata?: Record<string, string>,
 ): Promise<Uint8Array> {
-  return exportPartsTo3MF([{ manifold, color }], upAxis)
+  return exportPartsTo3MF([{ manifold, color }], upAxis, metadata)
+}
+
+/** 3MF の既定メタデータ。metadata 引数で同名キーを上書きできる。 */
+const DEFAULT_3MF_METADATA: ReadonlyArray<readonly [string, string]> = [
+  ['Title', 'Machimoki model'],
+  ['Application', 'Machimoki'],
+]
+
+/** XML のテキスト／属性値をエスケープする（& を最初に処理する）。 */
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+/**
+ * 既定の Title/Application に呼び出し側のメタデータを重ねる。
+ * 同名キーはメタデータ側で上書きし、キー順は「既定 → 追加」の順になる。
+ */
+function merge3mfMetadata(metadata?: Record<string, string>): Array<[string, string]> {
+  const merged = new Map<string, string>(DEFAULT_3MF_METADATA)
+  for (const [key, value] of Object.entries(metadata ?? {})) {
+    merged.set(key, value)
+  }
+  return [...merged.entries()]
+}
+
+/**
+ * `<metadata name="...">値</metadata>` 群を生成する。
+ * 3MF 仕様に従い `<resources>` より前に置く。
+ */
+function build3mfMetadataXml(metadata?: Record<string, string>): string {
+  const out: string[] = []
+  for (const [name, value] of merge3mfMetadata(metadata)) {
+    out.push(`  <metadata name="${escapeXml(name)}">${escapeXml(value)}</metadata>
+`)
+  }
+  return out.join('')
 }
 
 /**
@@ -262,28 +308,25 @@ function normalizeColor(color: string): string {
  * pid/pindex on <object> elements. The material extension is only declared
  * when a non-white color is actually used, so pure-geometry white models
  * stay compatible with slicers that warn on unused extensions (e.g. Bambu Studio).
+ *
+ * `metadata` entries are written as `<metadata>` elements (before `<resources>`),
+ * overriding the default Title/Application when the same name is given.
  */
 function buildColored3mfXml(
   parts: Array<{ positions: Float32Array; indices: Uint32Array; color?: string }>,
   precision: number,
+  metadata?: Record<string, string>,
 ): string {
   const out: string[] = []
 
   const hasColor = parts.some((p) => p.color && normalizeColor(p.color) !== '#FFFFFFFF')
-  const modelHeader = hasColor
-    ? `<?xml version="1.0" encoding="UTF-8"?>
-<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">
-  <metadata name="Title">Machimoki model</metadata>
-  <metadata name="Application">Machimoki</metadata>
-  <resources>
-`
-    : `<?xml version="1.0" encoding="UTF-8"?>
-<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
-  <metadata name="Title">Machimoki model</metadata>
-  <metadata name="Application">Machimoki</metadata>
-  <resources>
-`
-  out.push(modelHeader)
+  const materialNamespace = hasColor
+    ? ' xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"'
+    : ''
+  out.push(`<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"${materialNamespace}>
+${build3mfMetadataXml(metadata)}  <resources>
+`)
 
   const partCount = parts.length
 
@@ -405,10 +448,14 @@ function createColored3mfZip(xml: string): Uint8Array {
  * <object> with one <build> <item>. Bambu Studio warns on multi-object /
  * multi-height files, so a single merged object is the safe default. The
  * merged object uses a single color (the first part's color, or white).
+ *
+ * @param metadata 3MF model metadata (written before `<resources>`; overrides the
+ *   default Title/Application). Values are XML-escaped.
  */
 export async function exportPartsTo3MF(
   parts: Array<{ manifold: Manifold; color?: string } | { mesh: RawMesh; color?: string }>,
   upAxis: UpAxis = 'z-up',
+  metadata?: Record<string, string>,
 ): Promise<Uint8Array> {
   if (parts.length === 0) {
     throw new Error('No parts to export')
@@ -460,7 +507,7 @@ export async function exportPartsTo3MF(
         color,
       },
     ]
-    const xml = buildColored3mfXml(meshParts, 7)
+    const xml = buildColored3mfXml(meshParts, 7, metadata)
     return createColored3mfZip(xml)
   } finally {
     // 入力の Manifold は呼び出し側が所有するため、union した中間体だけ破棄する。

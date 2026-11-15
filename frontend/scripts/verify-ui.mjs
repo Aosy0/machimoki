@@ -29,6 +29,7 @@ Options:
   --export                        preview 後にエクスポートを実行
   --export-out <path>             エクスポート先 (既定: .screenshots/export-<timestamp>)
   --split                         分割印刷パラメータ（openBottom + splitAtGround）で確認
+  --engrave                       刻印パラメータで確認（パネル・面プレビュー・エクスポートのメタデータ）
   --fail-on-console               console.error を失敗扱いにする
   --base-url <url>                既定: http://localhost:5173
   --help
@@ -93,6 +94,7 @@ async function main() {
         timeout: { type: 'string', default: '30000' },
         export: { type: 'boolean', default: false },
         split: { type: 'boolean', default: false },
+        engrave: { type: 'boolean', default: false },
         'export-out': { type: 'string' },
         'fail-on-console': { type: 'boolean', default: false },
         'base-url': { type: 'string', default: 'http://localhost:5173' },
@@ -168,6 +170,18 @@ async function main() {
     exportFile: null,
     exportBytes: null,
     splitEntries: null,
+    engravingPanel: null,
+    engravingModeBanner: null,
+    engravingSettingsHidden: null,
+    engravingGlyphPaths: null,
+    engravingViewFace: null,
+    engravingZoom: null,
+    engravingOverlayVisible: null,
+    engravingOverlayDrag: null,
+    engravingOverflowWarning: null,
+    engravingOverflowStroke: null,
+    engravingViewApi: null,
+    engravingMetadata: null,
     durationMs: 0,
     error: null,
   }
@@ -208,21 +222,43 @@ async function main() {
     let exportFile = null
     let exportBytes = null
 
-    // 分割印刷の確認時は、アプリ起動前に local storage のパラメータを設定する。
-    if (values.split) {
-      await page.addInitScript(() => {
-        localStorage.setItem(
-          'machimoki.parameters',
-          JSON.stringify({
+    // 分割印刷・刻印の確認時は、アプリ起動前に local storage のパラメータを設定する。
+    if (values.split || values.engrave) {
+      await page.addInitScript(
+        ({ split, engrave }) => {
+          const parameters = {
             includeTerrain: true,
-            openBottom: true,
-            shellThickness: 1.6,
             terrainThickness: 10,
+            flattenBottom: true,
+            shellThickness: 1.6,
             hollowBuildings: true,
-            splitAtGround: true,
-          }),
-        )
-      })
+          }
+          if (split) {
+            Object.assign(parameters, { openBottom: true, splitAtGround: true })
+          }
+          if (engrave) {
+            parameters.engraving = {
+              enabled: true,
+              face: 'bottom',
+              centerX: 0.5,
+              centerY: 0.5,
+              lineGapMm: 1.5,
+              lines: [
+                { id: 'place', text: '東京都新宿区', sizeMm: 6, auto: true },
+                { id: 'coords', text: '35.69000N 139.69100E', sizeMm: 3.5, auto: true },
+                { id: 'scale', text: '1:1,333  W150 x D100 x T10 mm', sizeMm: 3.5, auto: true },
+                { id: 'attribution', text: '© PLATEAU (MLIT)', sizeMm: 3.5, auto: true },
+                { id: 'date', text: '2026.11', sizeMm: 3.5, auto: true },
+              ],
+              depthMm: 0.4,
+              printProfile: { nozzleMm: 0.4, layerHeightMm: 0.2 },
+              wrap: true,
+            }
+          }
+          localStorage.setItem('machimoki.parameters', JSON.stringify(parameters))
+        },
+        { split: values.split, engrave: values.engrave },
+      )
     }
 
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' })
@@ -369,12 +405,153 @@ async function main() {
         )
       }
 
+      if (values.engrave) {
+        // 刻印モード専用UIへ入る（右の設定パネルは隠れ、上部にモードバナーが出る）。
+        await page.waitForSelector('[data-testid="engraving-mode-button"]', {
+          state: 'visible',
+          timeout,
+        })
+        await page.click('[data-testid="engraving-mode-button"]')
+        await page.waitForSelector('[data-testid="engraving-mode-banner"]', {
+          state: 'visible',
+          timeout,
+        })
+        result.engravingModeBanner = true
+        result.engravingSettingsHidden =
+          (await page.locator('[data-testid="export-button"]').count()) === 0
+        // 刻印モード: パネル表示・フォント読込（面プレビューのグリフpath）・面ビュー適用。
+        await page.waitForSelector('[data-testid="engraving-panel"]', {
+          state: 'visible',
+          timeout,
+        })
+        result.engravingPanel = true
+        await page.waitForFunction(
+          () => document.querySelectorAll('[data-testid="engraving-preview"] path').length > 0,
+          null,
+          { timeout, polling: 100 },
+        )
+        result.engravingGlyphPaths = await page.evaluate(
+          () => document.querySelectorAll('[data-testid="engraving-preview"] path').length,
+        )
+        result.engravingViewApi = await page.evaluate(
+          () => typeof window.__previewControls?.viewEngravingFace === 'function',
+        )
+        // 完成形状の表示（刻印面ビュー適用）まで待つ。未適用なら null のまま。
+        try {
+          await page.waitForFunction(
+            () => window.__previewControls?.getEngravingViewFace?.() != null,
+            null,
+            { timeout: 120000, polling: 500 },
+          )
+        } catch {
+          // 面ビューが未適用でもエクスポート確認は続行する。
+        }
+        result.engravingViewFace = await page.evaluate(
+          () => window.__previewControls?.getEngravingViewFace?.() ?? null,
+        )
+        // モード中のズームボタンでカメラ距離が変わることを確認する。
+        try {
+          await page.waitForTimeout(1200)
+          const heightBefore = await page.evaluate(
+            () => window.__cesiumViewer?.camera?.positionCartographic?.height ?? null,
+          )
+          await page.click('[data-testid="engraving-zoom-out"]')
+          await page.waitForTimeout(800)
+          const heightAfter = await page.evaluate(
+            () => window.__cesiumViewer?.camera?.positionCartographic?.height ?? null,
+          )
+          result.engravingZoom = {
+            before: heightBefore === null ? null : Math.round(heightBefore * 10) / 10,
+            after: heightAfter === null ? null : Math.round(heightAfter * 10) / 10,
+            changed:
+              heightBefore !== null &&
+              heightAfter !== null &&
+              Math.abs(heightAfter - heightBefore) > 1,
+          }
+        } catch {
+          result.engravingZoom = null
+        }
+        // 3Dモデル上のオーバーレイをドラッグして位置が動くことを確認する。
+        // 面全体のSVGは固定サイズ＋transformなので、ブロック矩形の画面位置で判定する。
+        try {
+          await page.waitForSelector('[data-testid="engraving-overlay"]', {
+            state: 'visible',
+            timeout: 30000,
+          })
+          result.engravingOverlayVisible = true
+          const blockLocator = page.locator('[data-testid="engraving-overlay-block"]')
+          const before = await blockLocator.boundingBox()
+          const positionBefore = await page.evaluate(
+            () => window.__previewControls?.getEngravingPosition?.() ?? null,
+          )
+          if (before) {
+            const startX = before.x + before.width / 2
+            const startY = before.y + before.height / 2
+            await page.mouse.move(startX, startY)
+            await page.mouse.down()
+            await page.mouse.move(startX + 80, startY + 40, { steps: 8 })
+            await page.mouse.up()
+            await page.waitForTimeout(400)
+            const after = await blockLocator.boundingBox()
+            const positionAfter = await page.evaluate(
+              () => window.__previewControls?.getEngravingPosition?.() ?? null,
+            )
+            const moved =
+              (!!after &&
+                (Math.abs(after.x - before.x) > 5 || Math.abs(after.y - before.y) > 5)) ||
+              (positionBefore != null &&
+                positionAfter != null &&
+                (Math.abs(positionAfter.centerX - positionBefore.centerX) > 0.01 ||
+                  Math.abs(positionAfter.centerY - positionBefore.centerY) > 0.01))
+            result.engravingOverlayDrag = {
+              before: { x: Math.round(before.x), y: Math.round(before.y) },
+              after: after ? { x: Math.round(after.x), y: Math.round(after.y) } : null,
+              positionBefore,
+              positionAfter,
+              moved,
+            }
+          }
+        } catch {
+          result.engravingOverlayVisible = false
+        }
+      }
+
       if (values.export) {
         // スマホでは設定がボトムシート内にあるため、先に開く。
         if (await page.locator('[data-testid="open-settings"]').isVisible().catch(() => false)) {
           await page.locator('[data-testid="open-settings"]').click()
         }
-        await page.click('[data-testid="export-button"]')
+        if (values.engrave) {
+          // ドラッグ結果を反映してから、モードバナーのエクスポートで書き出す。
+          // ズーム後のドラッグでは面からはみ出すことがあるため、自動調整してから反映する。
+          const autofit = page.locator('[data-testid="engraving-autofit"]')
+          if ((await autofit.count()) > 0) {
+            await autofit.first().click()
+            await page.waitForTimeout(300)
+          }
+          await page.click('[data-testid="engraving-apply"]')
+          await page
+            .waitForFunction(
+              () =>
+                window.__pipelineState?.phase !== 'complete' &&
+                window.__pipelineState?.phase !== 'error',
+              null,
+              { timeout: 60000, polling: 300 },
+            )
+            .catch(() => {})
+          await page
+            .waitForFunction(
+              () =>
+                window.__pipelineState?.phase === 'complete' ||
+                window.__pipelineState?.phase === 'error',
+              null,
+              { timeout: 240000, polling: 500 },
+            )
+            .catch(() => {})
+          await page.click('[data-testid="engraving-export-button"]')
+        } else {
+          await page.click('[data-testid="export-button"]')
+        }
         const download = await page.waitForEvent('download', { timeout })
         const suggested = download.suggestedFilename() ?? 'export.glb'
         const ext = suggested.includes('.') ? suggested.split('.').pop() : 'glb'
@@ -391,6 +568,50 @@ async function main() {
           } catch {
             result.splitEntries = []
           }
+        }
+        if (values.engrave && !values.split) {
+          try {
+            const files = unzipSync(new Uint8Array(readFileSync(exportFile)))
+            const model = files['3D/3dmodel.model']
+            const xml = model ? new TextDecoder().decode(model) : ''
+            const match = xml.match(/<metadata name="Description">([\s\S]*?)<\/metadata>/)
+            result.engravingMetadata = {
+              hasDescription: match !== null,
+              description: match ? match[1].slice(0, 300) : null,
+              hasEngravedText: xml.includes('東京都新宿区') || xml.includes('PLATEAU'),
+            }
+          } catch (err) {
+            result.engravingMetadata = { error: String(err?.message ?? err) }
+          }
+        }
+      }
+
+      if (values.engrave) {
+        // はみ出し警告: 自由入力をONにして長文＋大きすぎるサイズにし、
+        // 面枠の stroke が赤（var(--error)）になることを確認する。
+        const customToggle = page.locator('[data-testid="engraving-content-custom"]')
+        if ((await customToggle.count()) > 0) {
+          await customToggle.first().check()
+          const customText = page.locator('[data-testid="engraving-text-custom"]')
+          if ((await customText.count()) > 0) {
+            await customText
+              .first()
+              .fill('東京都新宿区西新宿二丁目北九番地先交差点付近の建物模型記念品です')
+          }
+          const customSize = page.locator('[data-testid="engraving-size-custom"]')
+          if ((await customSize.count()) > 0) {
+            await customSize.first().fill('60')
+            await customSize.first().blur()
+          }
+          await page.waitForTimeout(400)
+          result.engravingOverflowWarning = await page
+            .locator('[data-testid="engraving-warning"]')
+            .count()
+          result.engravingOverflowStroke = await page.evaluate(() => {
+            const svg = document.querySelector('[data-testid="engraving-preview"]')
+            const rect = svg?.querySelector('rect')
+            return rect?.getAttribute('stroke') ?? null
+          })
         }
       }
     }
@@ -432,6 +653,18 @@ async function main() {
       (Array.isArray(result.splitEntries) &&
         result.splitEntries.includes('model_base.3mf') &&
         result.splitEntries.includes('model_buildings.3mf'))
+    const engravingOk =
+      !values.engrave ||
+      (result.engravingPanel === true &&
+        result.engravingModeBanner === true &&
+        result.engravingSettingsHidden === true &&
+        (result.engravingGlyphPaths ?? 0) > 0 &&
+        result.engravingZoom?.changed === true &&
+        result.engravingOverlayVisible === true &&
+        result.engravingOverlayDrag?.moved === true &&
+        (!values.export ||
+          values.split ||
+          result.engravingMetadata?.hasEngravedText === true))
 
     result.ok =
       !webglError &&
@@ -439,11 +672,13 @@ async function main() {
       scenarioOk &&
       touchOk &&
       splitOk &&
+      engravingOk &&
       (!values['fail-on-console'] || result.consoleErrors.length === 0)
     if (webglError) result.error = 'webgl-error'
     else if (!scenarioOk) result.error = `scenario-${values.scenario}-failed`
     else if (!touchOk) result.error = 'scenario-touch-assertion-failed'
     else if (!splitOk) result.error = 'split-entries-missing'
+    else if (!engravingOk) result.error = 'engraving-check-failed'
     else if (values['fail-on-console'] && result.consoleErrors.length > 0)
       result.error = 'console-errors'
   } catch (err) {

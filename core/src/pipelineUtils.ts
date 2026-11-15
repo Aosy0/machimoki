@@ -46,8 +46,26 @@ import {
   dedupeComponents,
   scaleRawMesh,
 } from './pipelineCore.js'
+import { applyEngravingToManifold } from './engraving/pipeline.js'
 
 export const DEFAULT_SHELL_THICKNESS_MM = 1.6
+
+/**
+ * 刻印内容を 3MF のメタデータへ変換する（STLはメタデータを持てない）。
+ * 刻印しきれない長文でも失われないよう、全行を Description に保存する。
+ */
+export function engravingMetadata(options: ExportOptions): Record<string, string> | undefined {
+  const engraving = options.engraving
+  if (!engraving?.enabled) return undefined
+  const lines = engraving.lines.map((line) => line.text.trim()).filter((text) => text !== '')
+  if (lines.length === 0) return undefined
+  return {
+    Title: lines[0].slice(0, 200),
+    Description: lines.join('\n'),
+    CreationDate: new Date().toISOString(),
+    Application: 'Machimoki',
+  }
+}
 
 /**
  * Build the hollowing cutter for one building.
@@ -976,6 +994,31 @@ async function buildPrintableGeometry(
     }
     timings.sealedCavityCheck = performance.now() - sealedStart
 
+    // 刻印（側面・底面）。分割前に彫るため、枠の外壁の刻印は枠側に残る。
+    // 刻印できない場合（面が使えない・文字がはみ出す等）は警告のみで続行する。
+    if (options.engraving?.enabled) {
+      const engravingStart = performance.now()
+      try {
+        const engraved = await applyEngravingToManifold(final, options.engraving, {
+          terrainMesh,
+          terrainThicknessMm: options.terrainThickness,
+          shellThicknessMm: shellThickness,
+          openBottom: hollowActive,
+          splitAtGround,
+          flatBottom: options.flattenBottom || (options.reflectActualElevation ?? false),
+        })
+        warnings.push(...engraved.warnings)
+        if (engraved.manifold) {
+          final.delete()
+          final = engraved.manifold
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        warnings.push(`刻印に失敗しました: ${message}`)
+      }
+      timings.engraving = performance.now() - engravingStart
+    }
+
     // 地形枠＋建物部分への分割。中空化後に分割するため、空洞は両パーツで
     // 開いたまま（枠は底面開口、建物部分は地表プレートの下面が開口）になる。
     // 建物カッターを渡し、中実ベースにも同じ開口を貫通させる。
@@ -1049,8 +1092,13 @@ export async function serializeSplitParts(
 ): Promise<{ buffer: Uint8Array; split: SplitExportParts }> {
   const upAxis = options.upAxis ?? 'z-up'
   const format = options.format === 'stl' ? 'stl' : '3mf'
-  const serialize = async (manifold: Manifold, color: string): Promise<Uint8Array> =>
-    format === 'stl' ? exportToSTL(manifold, upAxis) : exportTo3MF(manifold, color, upAxis)
+  const metadata = engravingMetadata(options)
+  const serialize = async (manifold: Manifold, color: string): Promise<Uint8Array> => {
+    if (format === 'stl') return exportToSTL(manifold, upAxis)
+    return metadata
+      ? exportTo3MF(manifold, color, upAxis, metadata)
+      : exportTo3MF(manifold, color, upAxis)
+  }
 
   const base = await serialize(frame, options.terrainColor ?? '#ffffff')
   const above = await serialize(buildings, options.buildingColor ?? '#ffffff')
@@ -1169,7 +1217,14 @@ export async function buildPrintableModelFromMeshes(
     const modelColor = terrainMesh
       ? (options.terrainColor ?? '#ffffff')
       : (options.buildingColor ?? '#ffffff')
-    return { buffer: await exportTo3MF(build.manifold, modelColor, upAxis), warnings, hollowing }
+    const metadata = engravingMetadata(options)
+    return {
+      buffer: metadata
+        ? await exportTo3MF(build.manifold, modelColor, upAxis, metadata)
+        : await exportTo3MF(build.manifold, modelColor, upAxis),
+      warnings,
+      hollowing,
+    }
   } finally {
     // 完成 Manifold / 分割パーツはここで所有権を終える。
     build.manifold?.delete()

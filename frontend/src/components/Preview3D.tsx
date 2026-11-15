@@ -22,10 +22,15 @@ import {
   DirectionalLight,
   GridImageryProvider,
   HeadingPitchRange,
+  IntersectionTests,
   LightingModel,
+  Matrix3,
   Matrix4,
   OrthographicFrustum,
   PerspectiveFrustum,
+  Plane,
+  Quaternion,
+  SceneTransforms,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   Cesium3DTileFeature,
@@ -89,6 +94,28 @@ import {
   type PreviewLoadEstimate,
 } from '../lib/previewBudget'
 import { finalShapeGeometryKey } from '../lib/finalShapeKey'
+import type { EngravingFace, EngravingOptions } from '../../../core/src/engraving/types.ts'
+import {
+  engravingFaceVectors,
+  faceViewDistance,
+  faceViewOrthoDistance,
+  faceViewOrthoWidth,
+  modelVectorToEnu,
+} from '../lib/engravingFaceView'
+import {
+  type EngravingOverlayData,
+  type MeshBounds,
+  type ScreenPoint,
+  type Vec3,
+  buildOverlayFaceFrame,
+  computeHomography,
+  faceLocalToCenter,
+  faceLocalToModel,
+  homographyToMatrix3d,
+  modelToEnu,
+  pointInFace,
+  worldLengthToMm,
+} from '../lib/engraving3dOverlay'
 import {
   type CachedFinalShapeMesh,
   type CachedSplitMesh,
@@ -137,6 +164,40 @@ const CAMERA_GROUND_CLEARANCE = 2
 // ソリッド地形の底面より下へ潜るときの余裕(m)。底面開口(中空シェル)の内側を
 // 下から覗けるよう、地表クランプを底面厚み+この値だけ緩める。
 const CAMERA_UNDER_CLEARANCE = 0.5
+
+// 刻印モード: 面ビューへの切替・モード終了時の視点復帰アニメーション時間(ms)。
+const ENGRAVING_CAMERA_ANIM_MS = 500
+// 刻印モードの自前ズーム感度（1ノッチ=deltaY 100 で約1.1倍）。
+const ENGRAVING_ZOOM_PER_PIXEL = Math.log(1.1) / 100
+// 刻印モードの自前ズーム距離クランプ（面ビュー距離に対する倍率）。
+const ENGRAVING_ZOOM_MIN_FACTOR = 0.25
+const ENGRAVING_ZOOM_MAX_FACTOR = 8
+// 刻印オーバーレイのフェードイン用クラス（frontend/src/index.css）。
+const ENGRAVING_OVERLAY_FADE_CLASS = 'machimoki-engraving-overlay-in'
+
+/** ワールド座標のカメラ姿勢（位置・視線・上方向）。 */
+interface CameraPose {
+  position: Cartesian3
+  direction: Cartesian3
+  up: Cartesian3
+}
+
+/** 刻印モードの自前ズームが使う面ビュー状態（注視点・向き・距離）。 */
+interface EngravingZoomState {
+  centerWorld: Cartesian3
+  direction: Cartesian3
+  up: Cartesian3
+  /** 面ビューを適用したときのカメラ距離。 */
+  distance: number
+  /** 完成形状のバウンディング球半径（ズーム量の基準）。 */
+  radius: number
+}
+
+/** OS の「視差効果を減らす」設定。アニメーションを無効化する。 */
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
 
 function createBuildingCustomShader(color: Color): CustomShader {
   return new CustomShader({
@@ -643,6 +704,45 @@ function tilesetStats(ts: Cesium3DTileset): TilesetStatsLike {
   return (ts as unknown as { statistics: TilesetStatsLike }).statistics
 }
 
+/** 分割表示の2パーツと表示オフセット（finalShapeSplitRef と同型）。 */
+type FinalShapeSplitParts = {
+  frame: import('@machimoki/core').RawMesh
+  buildings: import('@machimoki/core').RawMesh
+  offsetFrame: number
+  offsetBuildings: number
+  offsetFrameY: number
+  offsetBuildingsY: number
+}
+
+/** 刻印面のワールド幾何（毎フレームの射影に使う）。 */
+interface EngravingOverlayGeometry {
+  faceWidthMm: number
+  faceHeightMm: number
+  positionScale: number
+  /** SVG 座標系での面の4隅（左上・右上・右下・左下）。 */
+  sourcePoints: ScreenPoint[]
+  /** 面ローカル(0,0)（=面の左下）のワールド座標。 */
+  originWorld: Cartesian3
+  centerWorld: Cartesian3
+  uWorld: Cartesian3
+  vWorld: Cartesian3
+  normalWorld: Cartesian3
+  /** SVG 4隅 (0,0),(W,0),(W,H),(0,H) のワールド座標。 */
+  cornersWorld: Cartesian3[]
+}
+
+/** 刻印面フレームのキャッシュ（メッシュ・面・変換が変わったときだけ再計算する）。 */
+interface EngravingOverlayGeometryCache {
+  mesh: import('@machimoki/core').RawMesh
+  split: FinalShapeSplitParts | null
+  face: EngravingFace
+  widthMm: number
+  heightMm: number
+  centerMatrix: Matrix4
+  positionScale: number
+  geometry: EngravingOverlayGeometry | null
+}
+
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
   /** 端末に応じた描画品質（影・MSAA・AO・解像度）。 */
@@ -687,6 +787,25 @@ interface Preview3DProps {
    * すべて終わるまで true のまま App 側でオーバーレイを維持する。
    */
   onBusyChange?: (busy: boolean) => void
+  /** 刻印設定（完成形状の生成に渡す）。enabled のときだけ形状に影響する。 */
+  engraving?: EngravingOptions | null
+  /**
+   * 刻印モードで正面表示する面。face / nonce が変わるたびに完成形状の面へ
+   * カメラを向け直す（同じ値の再指定では視点を動かさない）。
+   */
+  engravingView?: { face: EngravingFace; nonce: number } | null
+  /**
+   * 3Dモデル上に重ねる刻印オーバーレイ。null の間は表示・ドラッグとも無効。
+   * 刻印モード中はカメラの回転・チルト・平行移動を無効化し、自前ズームにする。
+   */
+  engravingOverlay?: EngravingOverlayData | null
+  /** 3Dモデル上でのドラッグ結果（刻印ブロック中心比 0..1）。 */
+  onEngravingPositionChange?: (centerX: number, centerY: number) => void
+  /**
+   * 刻印モード中か。モード中は完成形状を表示し、カメラ操作ロック・
+   * 3Dオーバーレイ・自前ズームを有効にする。終了時は開始前の視点へ戻す。
+   */
+  engravingMode?: boolean
 }
 
 export default function Preview3D({
@@ -719,6 +838,11 @@ export default function Preview3D({
   shadowsVisible = true,
   onBusyChange,
   splitAtGround = false,
+  engraving = null,
+  engravingView = null,
+  engravingOverlay = null,
+  onEngravingPositionChange,
+  engravingMode = false,
 }: Preview3DProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
@@ -732,14 +856,7 @@ export default function Preview3D({
   // 非分割時は空で、finalShapePrimitiveRef の単体表示になる。
   const finalShapeSplitPrimitivesRef = useRef<Primitive[]>([])
   // 分割表示の再構築用（色替え時の作り直しでオフセットを再現する）。
-  const finalShapeSplitRef = useRef<{
-    frame: import('@machimoki/core').RawMesh
-    buildings: import('@machimoki/core').RawMesh
-    offsetFrame: number
-    offsetBuildings: number
-    offsetFrameY: number
-    offsetBuildingsY: number
-  } | null>(null)
+  const finalShapeSplitRef = useRef<FinalShapeSplitParts | null>(null)
   // 分割パーツの左右間隔（合体メッシュ幅に対する比率）。1箇所で調整可能にする。
   // 2つの合成 bbox が元の中心に来るようオフセットする。
   const SPLIT_GAP_RATIO = 0.125
@@ -876,6 +993,36 @@ export default function Preview3D({
   const applyPresetViewRef = useRef<
     ((headingDeg: number, pitchDeg: number, opts?: { useTop?: boolean }) => void) | null
   >(null)
+  // 刻印面ビュー（最新クロージャを window API から呼ぶための ref）。
+  const viewEngravingFaceRef = useRef<((face: EngravingFace) => boolean) | null>(null)
+  // 直近に適用した刻印面（動作確認用。完成形状が非表示になったら null に戻す）。
+  const engravingViewFaceRef = useRef<EngravingFace | null>(null)
+  // 3Dモデル上の刻印オーバーレイ（SVG）。transform は scene.postRender で行列更新する。
+  const engravingOverlaySvgRef = useRef<SVGSVGElement | null>(null)
+  const engravingOverlayRef = useRef<EngravingOverlayData | null>(engravingOverlay)
+  engravingOverlayRef.current = engravingOverlay
+  const onEngravingPositionChangeRef = useRef(onEngravingPositionChange)
+  onEngravingPositionChangeRef.current = onEngravingPositionChange
+  // 刻印モード中だけカメラロック・ドラッグ・オーバーレイ・自前ズームを有効にする。
+  const engravingEditActive = engravingMode && engravingOverlay != null
+  const engravingEditActiveRef = useRef(engravingEditActive)
+  engravingEditActiveRef.current = engravingEditActive
+  // 面ビューのカメラ姿勢（自前ズームで up/注視点を固定して再適用する）。
+  const engravingZoomRef = useRef<EngravingZoomState | null>(null)
+  // 面ビュー・モード復帰のカメラアニメーション。
+  const engravingCameraAnimRef = useRef<{ raf: number } | null>(null)
+  const engravingCameraAnimatingRef = useRef(false)
+  // モード開始前のカメラ姿勢（終了時にアニメーションで戻す）。
+  const engravingSavedPoseRef = useRef<CameraPose | null>(null)
+  const applyEngravingZoomRef = useRef<((factor: number) => boolean) | null>(null)
+  // postRender から最新の更新関数を呼ぶための ref（リスナーは1回だけ登録する）。
+  const engravingOverlayUpdateRef = useRef<(() => void) | null>(null)
+  // 面フレームの計算結果（毎フレームの bbox 走査を避ける）。
+  const engravingOverlayGeometryCacheRef = useRef<EngravingOverlayGeometryCache | null>(null)
+  // ドラッグ中の pointerId（null = 非ドラッグ）。
+  const engravingOverlayDragRef = useRef<{ pointerId: number } | null>(null)
+  // 直近に通知した刻印ブロック中心（動作確認用）。
+  const engravingPositionRef = useRef<{ centerX: number; centerY: number } | null>(null)
   const [terrainProvider, setTerrainProvider] = useState<TerrainProvider | null>(null)
   const [terrainError, setTerrainError] = useState<string | null>(null)
 
@@ -1157,6 +1304,13 @@ export default function Preview3D({
     terrainColor,
   }
 
+  // 刻印モード中・刻印適用中は完成形状（刻印込みの正確な形状）を表示・維持する。
+  // モード中は未反映でもオーバーレイを重ねて位置決めできるよう、完成形状を出す。
+  const engravingOn = engravingMode || engraving?.enabled === true
+  // 生成完了時の再スケジュール判定用（最新値を参照する）。
+  const engravingOnRef = useRef(engravingOn)
+  engravingOnRef.current = engravingOn
+
   // 最終形状が表示中/生成予定/生成中なら、隠れて見えないベースプレビューの
   // 再構築は不要なため後回しにする。
   const isBaseRebuildDeferred = (): boolean =>
@@ -1193,6 +1347,10 @@ export default function Preview3D({
       orthoWheelCleanupRef.current?.()
       orthoWheelCleanupRef.current = null
       viewer.camera.switchToPerspectiveFrustum()
+      // 刻印モード中は Cesium 既定ズームへ戻さない（底面ビューの反転防止）。
+      if (engravingEditActiveRef.current) {
+        viewer.scene.screenSpaceCameraController.enableZoom = false
+      }
       isOrthographicRef.current = false
       setIsOrthographic(false)
       try {
@@ -1340,6 +1498,18 @@ export default function Preview3D({
         applyPresetViewRef.current?.(headingDeg, pitchDeg, opts),
       getProjection: () => (isOrthographicRef.current ? 'orthographic' : 'perspective'),
       isOrthographic: () => isOrthographicRef.current,
+      // 動作確認用: 完成形状表示中に指定面の正面へカメラを向ける。
+      viewEngravingFace: (face: EngravingFace) => viewEngravingFaceRef.current?.(face) ?? false,
+      getEngravingViewFace: (): EngravingFace | null => engravingViewFaceRef.current,
+      // 動作確認用: 刻印3Dオーバーレイが表示中か。
+      getEngravingOverlayVisible: (): boolean => {
+        const svg = engravingOverlaySvgRef.current
+        return svg != null && svg.style.display !== 'none'
+      },
+      // 動作確認用: 直近に3D上ドラッグで通知した刻印ブロック中心。
+      getEngravingPosition: () => engravingPositionRef.current,
+      // 動作確認用/Appのボタン用: 刻印モードの自前ズーム（factor<1で拡大）。
+      zoomEngraving: (factor: number): boolean => applyEngravingZoomRef.current?.(factor) ?? false,
     }
   }, [isOrthographic, selectionBounds])
 
@@ -1399,6 +1569,9 @@ export default function Preview3D({
     }
     const clampCameraAboveGround = (): void => {
       if (viewer.isDestroyed()) return
+      // 刻印モード中・カメラアニメーション中は面ビュー/自前ズームのカメラ位置を
+      // 自前で制御するため、地面クランプは行わない（底面ビューの地下移動と干渉する）。
+      if (engravingCameraAnimatingRef.current || engravingEditActiveRef.current) return
       const sample = terrainSampleCacheRef.current
       if (!sample || !solidTerrainPrimitiveRef.current) return
       const carto = viewer.camera.positionCartographic
@@ -1446,6 +1619,13 @@ export default function Preview3D({
       }
     }
     viewer.scene.preRender.addEventListener(clampCameraAboveGround)
+
+    // 刻印3Dオーバーレイの射影行列を毎フレーム更新する。カメラ・形状の状態は
+    // ref 経由で読むため、リスナーは1回だけ登録すればよい。
+    const onEngravingOverlayPostRender = (): void => {
+      engravingOverlayUpdateRef.current?.()
+    }
+    viewer.scene.postRender.addEventListener(onEngravingOverlayPostRender)
 
     // 静止中は描画を停止してGPU負荷を抑える。シーンを変更した箇所で
     // scene.requestRender() を呼ぶ（カメラ移動・タイル読込はCesiumが自動で再描画する）。
@@ -1507,6 +1687,18 @@ export default function Preview3D({
         applyPresetViewRef.current?.(headingDeg, pitchDeg, opts),
       getProjection: () => (isOrthographicRef.current ? 'orthographic' : 'perspective'),
       isOrthographic: () => isOrthographicRef.current,
+      // 動作確認用: 完成形状表示中に指定面の正面へカメラを向ける。
+      viewEngravingFace: (face: EngravingFace) => viewEngravingFaceRef.current?.(face) ?? false,
+      getEngravingViewFace: (): EngravingFace | null => engravingViewFaceRef.current,
+      // 動作確認用: 刻印3Dオーバーレイが表示中か。
+      getEngravingOverlayVisible: (): boolean => {
+        const svg = engravingOverlaySvgRef.current
+        return svg != null && svg.style.display !== 'none'
+      },
+      // 動作確認用: 直近に3D上ドラッグで通知した刻印ブロック中心。
+      getEngravingPosition: () => engravingPositionRef.current,
+      // 動作確認用/Appのボタン用: 刻印モードの自前ズーム（factor<1で拡大）。
+      zoomEngraving: (factor: number): boolean => applyEngravingZoomRef.current?.(factor) ?? false,
     }
 
     gsiLayerRef.current = viewer.scene.globe.imageryLayers.addImageryProvider(
@@ -1619,6 +1811,9 @@ export default function Preview3D({
       cancelAnimationFrame(contourDebugRaf)
       try {
         viewer.scene.preRender.removeEventListener(clampCameraAboveGround)
+      } catch {}
+      try {
+        viewer.scene.postRender.removeEventListener(onEngravingOverlayPostRender)
       } catch {}
       orthoWheelCleanupRef.current?.()
       orthoWheelCleanupRef.current = null
@@ -2757,6 +2952,492 @@ export default function Preview3D({
     return new BoundingSphere(center, radius)
   }
 
+  // ---- 刻印モードのカメラ制御（面ビュー・自前ズーム・アニメーション）----
+
+  /** 現在のカメラ姿勢（ワールド座標）。 */
+  const captureCameraPose = (): CameraPose | null => {
+    const viewer = viewerRef.current
+    if (!viewer) return null
+    const camera = viewer.camera
+    return {
+      position: Cartesian3.clone(camera.positionWC),
+      direction: Cartesian3.clone(camera.directionWC),
+      up: Cartesian3.clone(camera.upWC),
+    }
+  }
+
+  /**
+   * カメラ姿勢を setView で即時適用する。
+   * setView は direction/up を heading/pitch/roll に変換するため、真上・真下を見る
+   * 特異点(pitch=±90°)では up が反転する。指定した up を必ず適用し直す。
+   */
+  const applyEngravingCameraPose = (pose: CameraPose): void => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    const camera = viewer.camera
+    camera.setView({
+      destination: pose.position,
+      orientation: { direction: pose.direction, up: pose.up },
+    })
+    camera.lookAtTransform(Matrix4.IDENTITY)
+    if (Cartesian3.dot(camera.up, pose.up) < 0) {
+      Cartesian3.clone(pose.up, camera.up)
+      Cartesian3.normalize(Cartesian3.cross(pose.direction, pose.up, camera.right), camera.right)
+    }
+    viewer.scene.requestRender()
+  }
+
+  /** カメラ姿勢を heading/pitch/roll を経由せず即時適用する（アニメーション用）。 */
+  const applyCameraPoseDirect = (pose: CameraPose): void => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    const camera = viewer.camera
+    camera.lookAtTransform(Matrix4.IDENTITY)
+    Cartesian3.clone(pose.position, camera.position)
+    Cartesian3.normalize(pose.direction, camera.direction)
+    // up は direction に直交化する（補間誤差でカメラ基底が崩れないように）。
+    Cartesian3.normalize(Cartesian3.cross(camera.direction, pose.up, camera.right), camera.right)
+    Cartesian3.normalize(Cartesian3.cross(camera.right, camera.direction, camera.up), camera.up)
+    viewer.scene.requestRender()
+  }
+
+  /**
+   * カメラ姿勢（right/up/direction の基底）を Quaternion に変換する。
+   * Cesium のカメラ基底は right = direction × up のため行列式が -1 になる。
+   * 回転行列として扱えるよう、3列目は -direction を使う（Matrix3 は列優先の引数）。
+   */
+  const cameraPoseToQuaternion = (pose: CameraPose): Quaternion => {
+    const right = Cartesian3.normalize(
+      Cartesian3.cross(pose.direction, pose.up, new Cartesian3()),
+      new Cartesian3(),
+    )
+    const up = Cartesian3.normalize(
+      Cartesian3.cross(right, pose.direction, new Cartesian3()),
+      new Cartesian3(),
+    )
+    const negativeDirection = Cartesian3.negate(pose.direction, new Cartesian3())
+    const matrix = new Matrix3(
+      right.x,
+      up.x,
+      negativeDirection.x,
+      right.y,
+      up.y,
+      negativeDirection.y,
+      right.z,
+      up.z,
+      negativeDirection.z,
+    )
+    return Quaternion.fromRotationMatrix(matrix)
+  }
+
+  /** 実行中のカメラアニメーションを止める。 */
+  const cancelEngravingCameraAnimation = (): void => {
+    if (engravingCameraAnimRef.current !== null) {
+      cancelAnimationFrame(engravingCameraAnimRef.current.raf)
+      engravingCameraAnimRef.current = null
+    }
+    engravingCameraAnimatingRef.current = false
+  }
+
+  /**
+   * カメラ姿勢を約500msで補間する。prefers-reduced-motion では即時適用。
+   * アニメーション中は clampCameraAboveGround をスキップさせる（底面ビュー対策）。
+   */
+  const animateEngravingCamera = (pose: CameraPose, onDone?: () => void): void => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    cancelEngravingCameraAnimation()
+    const from = captureCameraPose()
+    if (!from || prefersReducedMotion()) {
+      applyEngravingCameraPose(pose)
+      onDone?.()
+      return
+    }
+    const fromQuaternion = cameraPoseToQuaternion(from)
+    const toQuaternion = cameraPoseToQuaternion(pose)
+    const startTime = performance.now()
+    const scratchPosition = new Cartesian3()
+    const scratchMatrix = new Matrix3()
+    const scratchQuaternion = new Quaternion()
+    const step = (now: number): void => {
+      const activeViewer = viewerRef.current
+      if (!activeViewer || activeViewer.isDestroyed()) {
+        engravingCameraAnimRef.current = null
+        engravingCameraAnimatingRef.current = false
+        return
+      }
+      const t = Math.min(1, Math.max(0, (now - startTime) / ENGRAVING_CAMERA_ANIM_MS))
+      // easeInOutQuad
+      const eased = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
+      Cartesian3.lerp(from.position, pose.position, eased, scratchPosition)
+      Quaternion.slerp(fromQuaternion, toQuaternion, eased, scratchQuaternion)
+      Matrix3.fromQuaternion(scratchQuaternion, scratchMatrix)
+      applyCameraPoseDirect({
+        position: scratchPosition,
+        // 行列の3列目は -direction（cameraPoseToQuaternion の逆変換）。
+        direction: Cartesian3.negate(
+          Matrix3.getColumn(scratchMatrix, 2, new Cartesian3()),
+          new Cartesian3(),
+        ),
+        up: Matrix3.getColumn(scratchMatrix, 1, new Cartesian3()),
+      })
+      if (t >= 1) {
+        engravingCameraAnimRef.current = null
+        engravingCameraAnimatingRef.current = false
+        applyEngravingCameraPose(pose)
+        onDone?.()
+        return
+      }
+      engravingCameraAnimRef.current = { raf: requestAnimationFrame(step) }
+    }
+    engravingCameraAnimatingRef.current = true
+    engravingCameraAnimRef.current = { raf: requestAnimationFrame(step) }
+  }
+
+  /** 刻印面を正面から見るカメラ姿勢と自前ズーム状態を計算する。 */
+  const computeEngravingFaceTarget = (
+    face: EngravingFace,
+  ): { pose: CameraPose; zoom: EngravingZoomState; frustumWidth: number | null } | null => {
+    const viewer = viewerRef.current
+    if (!viewer || !finalShapeActiveRef.current) return null
+    const sphere = finalShapeCombinedSphere()
+    const fallback = terrainBoundingSphereRef.current
+    const center = sphere?.center ?? fallback?.center
+    if (!center) return null
+    const radius = Math.max(sphere?.radius ?? fallback?.radius ?? 0, 1)
+    // ENU→ECEF の回転。完成形状の描画に使った行列を優先し、無ければ範囲中心から作る。
+    const centerMatrix =
+      finalShapeRenderRef.current?.centerMatrix ??
+      terrainSampleCacheRef.current?.centerMatrix ??
+      (selectionBounds
+        ? Transforms.eastNorthUpToFixedFrame(
+            Cartesian3.fromDegrees(
+              (selectionBounds.west + selectionBounds.east) / 2,
+              (selectionBounds.south + selectionBounds.north) / 2,
+              0,
+            ),
+          )
+        : null)
+    if (!centerMatrix) return null
+    const { normal, up } = engravingFaceVectors(face)
+    const normalEnu = modelVectorToEnu(normal)
+    const upEnu = modelVectorToEnu(up)
+    const normalWorld = Matrix4.multiplyByPointAsVector(
+      centerMatrix,
+      new Cartesian3(normalEnu.x, normalEnu.y, normalEnu.z),
+      new Cartesian3(),
+    )
+    Cartesian3.normalize(normalWorld, normalWorld)
+    const upWorld = Matrix4.multiplyByPointAsVector(
+      centerMatrix,
+      new Cartesian3(upEnu.x, upEnu.y, upEnu.z),
+      new Cartesian3(),
+    )
+    Cartesian3.normalize(upWorld, upWorld)
+    const camera = viewer.camera
+    const orthographic = camera.frustum instanceof OrthographicFrustum
+    const aspectRatio =
+      (camera.frustum as OrthographicFrustum | PerspectiveFrustum).aspectRatio ?? 1
+    const distance = orthographic
+      ? faceViewOrthoDistance(radius)
+      : faceViewDistance(
+          radius,
+          (camera.frustum as PerspectiveFrustum).fovy ?? Math.PI / 3,
+          aspectRatio,
+        )
+    const direction = Cartesian3.negate(normalWorld, new Cartesian3())
+    const position = Cartesian3.add(
+      center,
+      Cartesian3.multiplyByScalar(normalWorld, distance, new Cartesian3()),
+      new Cartesian3(),
+    )
+    return {
+      pose: {
+        position,
+        direction,
+        up: Cartesian3.clone(upWorld),
+      },
+      zoom: {
+        centerWorld: Cartesian3.clone(center),
+        direction: Cartesian3.clone(direction),
+        up: Cartesian3.clone(upWorld),
+        distance,
+        radius,
+      },
+      frustumWidth: orthographic ? faceViewOrthoWidth(radius, aspectRatio) : null,
+    }
+  }
+
+  /**
+   * 刻印面ビュー: 完成形状を指定面の正面から見る（約500msのカメラアニメーション）。
+   * 完成形状が表示されていないときは何もしない（ベースプレビューの視点を壊さない）。
+   */
+  const viewEngravingFace = (face: EngravingFace): boolean => {
+    const viewer = viewerRef.current
+    const target = computeEngravingFaceTarget(face)
+    if (!viewer || !target) return false
+    engravingZoomRef.current = target.zoom
+    if (target.frustumWidth !== null) {
+      // 平行投影は setView 内で幅が再計算されるため、先に理想幅を入れておく。
+      ;(viewer.camera.frustum as OrthographicFrustum).width = target.frustumWidth
+    }
+    animateEngravingCamera(target.pose, () => {
+      engravingViewFaceRef.current = face
+    })
+    return true
+  }
+  viewEngravingFaceRef.current = viewEngravingFace
+
+  /**
+   * 刻印モードの自前ズーム。factor<1 で拡大、factor>1 で縮小。
+   * 面ビューで決めた注視点・向き・up を固定したまま距離だけを変える
+   * （Cesium既定ズームは pitch±90° で up が反転するため使わない）。
+   */
+  const applyEngravingZoom = (factor: number): boolean => {
+    const viewer = viewerRef.current
+    const state = engravingZoomRef.current
+    if (!viewer || !state || !Number.isFinite(factor) || factor <= 0) return false
+    cancelEngravingCameraAnimation()
+    const camera = viewer.camera
+    if (camera.frustum instanceof OrthographicFrustum) {
+      // 平行投影は見た目の拡大率が frustum.width だけで決まる。
+      const frustum = camera.frustum
+      const current =
+        typeof frustum.width === 'number' && frustum.width > 0 ? frustum.width : state.radius * 2.4
+      frustum.width = Math.min(Math.max(current * factor, state.radius * 0.6), state.radius * 20)
+      viewer.scene.requestRender()
+      return true
+    }
+    const distance = Math.min(
+      Math.max(state.distance * factor, state.radius * ENGRAVING_ZOOM_MIN_FACTOR),
+      state.radius * ENGRAVING_ZOOM_MAX_FACTOR,
+    )
+    state.distance = distance
+    applyEngravingCameraPose({
+      position: Cartesian3.add(
+        state.centerWorld,
+        Cartesian3.multiplyByScalar(state.direction, -distance, new Cartesian3()),
+        new Cartesian3(),
+      ),
+      direction: state.direction,
+      up: state.up,
+    })
+    return true
+  }
+  applyEngravingZoomRef.current = applyEngravingZoom
+
+  // ---- 刻印3Dオーバーレイ（完成モデル上の下書き表示とドラッグ位置決め）----
+
+  /** モデル空間メッシュのバウンディングボックス。 */
+  const meshBoundsOf = (mesh: import('@machimoki/core').RawMesh): MeshBounds | null => {
+    const positions = mesh.positions
+    if (positions.length === 0) return null
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    let minZ = Infinity
+    let maxZ = -Infinity
+    for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i]
+      const y = positions[i + 1]
+      const z = positions[i + 2]
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+      if (z < minZ) minZ = z
+      if (z > maxZ) maxZ = z
+    }
+    if (![minX, maxX, minY, maxY, minZ, maxZ].every(Number.isFinite)) return null
+    return { minX, maxX, minY, maxY, minZ, maxZ }
+  }
+
+  /**
+   * 刻印面のワールド幾何を返す。完成メッシュ・表示変換が変わらない間は
+   * bbox 走査と面フレーム計算をキャッシュする（毎フレームは再計算しない）。
+   */
+  const resolveEngravingOverlayGeometry = (): EngravingOverlayGeometry | null => {
+    const overlay = engravingOverlayRef.current
+    const render = finalShapeRenderRef.current
+    if (!overlay || !render || !finalShapeActiveRef.current) return null
+    const split = finalShapeSplitRef.current
+    // 分割表示の底面は刻印できない（core と同じ扱い）ため重ねない。
+    if (split && overlay.face === 'bottom') return null
+    const mesh = split ? split.frame : finalShapeMeshRef.current
+    if (!mesh) return null
+    const offsetX = split ? split.offsetFrame : 0
+    const offsetY = split ? split.offsetFrameY : 0
+    const cache = engravingOverlayGeometryCacheRef.current
+    if (
+      cache &&
+      cache.mesh === mesh &&
+      cache.split === split &&
+      cache.face === overlay.face &&
+      cache.widthMm === overlay.faceWidthMm &&
+      cache.heightMm === overlay.faceHeightMm &&
+      cache.centerMatrix === render.centerMatrix &&
+      cache.positionScale === render.positionScale
+    ) {
+      return cache.geometry
+    }
+    const bounds = meshBoundsOf(mesh)
+    const frame = bounds
+      ? buildOverlayFaceFrame(overlay.face, bounds, overlay.faceWidthMm, overlay.faceHeightMm)
+      : null
+    let geometry: EngravingOverlayGeometry | null = null
+    if (frame) {
+      const positionScale = render.positionScale
+      // 位置: 描画と同じ ENU = ((x+ox)*s, -z*s, (y+oy)*s) → centerMatrix。
+      const modelToWorld = (model: Vec3): Cartesian3 => {
+        const enu = modelToEnu(model, positionScale, offsetX, offsetY)
+        return Matrix4.multiplyByPoint(
+          render.centerMatrix,
+          new Cartesian3(enu[0], enu[1], enu[2]),
+          new Cartesian3(),
+        )
+      }
+      // 向き: 平行移動の影響を受けないよう ENU の線形部分だけを使う。
+      const modelDirectionToWorld = (direction: Vec3): Cartesian3 => {
+        const enu = modelToEnu(direction, positionScale)
+        const world = Matrix4.multiplyByPointAsVector(
+          render.centerMatrix,
+          new Cartesian3(enu[0], enu[1], enu[2]),
+          new Cartesian3(),
+        )
+        return Cartesian3.normalize(world, world)
+      }
+      const widthMm = overlay.faceWidthMm
+      const heightMm = overlay.faceHeightMm
+      geometry = {
+        faceWidthMm: widthMm,
+        faceHeightMm: heightMm,
+        positionScale,
+        sourcePoints: [
+          { x: 0, y: 0 },
+          { x: widthMm, y: 0 },
+          { x: widthMm, y: heightMm },
+          { x: 0, y: heightMm },
+        ],
+        originWorld: modelToWorld(faceLocalToModel(frame, 0, 0)),
+        centerWorld: modelToWorld(frame.center),
+        uWorld: modelDirectionToWorld(frame.u),
+        vWorld: modelDirectionToWorld(frame.v),
+        normalWorld: modelDirectionToWorld(frame.normal),
+        cornersWorld: [
+          modelToWorld(faceLocalToModel(frame, 0, heightMm)),
+          modelToWorld(faceLocalToModel(frame, widthMm, heightMm)),
+          modelToWorld(faceLocalToModel(frame, widthMm, 0)),
+          modelToWorld(faceLocalToModel(frame, 0, 0)),
+        ],
+      }
+    }
+    engravingOverlayGeometryCacheRef.current = {
+      mesh,
+      split,
+      face: overlay.face,
+      widthMm: overlay.faceWidthMm,
+      heightMm: overlay.faceHeightMm,
+      centerMatrix: render.centerMatrix,
+      positionScale: render.positionScale,
+      geometry,
+    }
+    return geometry
+  }
+
+  /** キャンバス座標 → 刻印面ローカルmm（面平面との交点）。 */
+  const engravingFaceLocalAtScreen = (
+    geometry: EngravingOverlayGeometry,
+    canvasX: number,
+    canvasY: number,
+  ): { uMm: number; vMm: number } | null => {
+    const viewer = viewerRef.current
+    if (!viewer) return null
+    const ray = viewer.camera.getPickRay(new Cartesian2(canvasX, canvasY))
+    if (!ray) return null
+    const plane = Plane.fromPointNormal(geometry.centerWorld, geometry.normalWorld)
+    const hit = IntersectionTests.rayPlane(ray, plane)
+    if (!hit) return null
+    const delta = Cartesian3.subtract(hit, geometry.originWorld, new Cartesian3())
+    return {
+      uMm: worldLengthToMm(Cartesian3.dot(delta, geometry.uWorld), geometry.positionScale),
+      vMm: worldLengthToMm(Cartesian3.dot(delta, geometry.vWorld), geometry.positionScale),
+    }
+  }
+
+  /**
+   * 刻印オーバーレイの表示状態と射影行列を更新する（scene.postRender から毎フレーム）。
+   * 面の4隅を画面座標へ投影し、SVG の transform にホモグラフィを反映する。
+   */
+  const updateEngravingOverlay = (): void => {
+    const svg = engravingOverlaySvgRef.current
+    const viewer = viewerRef.current
+    if (!svg || !viewer) return
+    const hide = (): void => {
+      if (svg.style.display !== 'none') {
+        svg.style.display = 'none'
+        // 次回表示時にフェードインをやり直せるようクラスを外す。
+        svg.classList.remove(ENGRAVING_OVERLAY_FADE_CLASS)
+      }
+    }
+    // 刻印モード中のみ表示する。
+    if (!engravingEditActiveRef.current) {
+      hide()
+      return
+    }
+    // 断面表示中は完成形状が切断されているため重ねない。
+    if (sectionOnRef.current) {
+      hide()
+      return
+    }
+    const geometry = resolveEngravingOverlayGeometry()
+    if (!geometry) {
+      hide()
+      return
+    }
+    const camera = viewer.camera
+    // カメラの後方にある・面が裏向きのときは表示しない。
+    const cameraToCenter = Cartesian3.subtract(
+      geometry.centerWorld,
+      camera.positionWC,
+      new Cartesian3(),
+    )
+    if (Cartesian3.dot(camera.directionWC, cameraToCenter) <= 0) {
+      hide()
+      return
+    }
+    const centerToCamera = Cartesian3.negate(cameraToCenter, new Cartesian3())
+    if (Cartesian3.dot(geometry.normalWorld, centerToCamera) <= 0) {
+      hide()
+      return
+    }
+    const destination: ScreenPoint[] = []
+    const screenScratch = new Cartesian2()
+    for (const corner of geometry.cornersWorld) {
+      const screen = SceneTransforms.worldToWindowCoordinates(viewer.scene, corner, screenScratch)
+      // カメラ後方（透視投影）では undefined になる。
+      if (!screen) {
+        hide()
+        return
+      }
+      destination.push({ x: screen.x, y: screen.y })
+    }
+    const homography = computeHomography(geometry.sourcePoints, destination)
+    if (!homography) {
+      hide()
+      return
+    }
+    if (svg.style.display !== 'block') {
+      // 表示に切り替わる瞬間だけフェードインを再生する（CSS側で reduced-motion を尊重）。
+      svg.style.display = 'block'
+      svg.classList.remove(ENGRAVING_OVERLAY_FADE_CLASS)
+      void svg.getBoundingClientRect()
+      svg.classList.add(ENGRAVING_OVERLAY_FADE_CLASS)
+    }
+    svg.style.transform = homographyToMatrix3d(homography)
+  }
+  engravingOverlayUpdateRef.current = updateEngravingOverlay
+
   // 永続キャッシュのキー（形状に影響するパラメータのみ。色は含めない）。
   const finalShapeGeometryKeyFor = (bounds: SelectionBounds): string =>
     finalShapeGeometryKey({
@@ -2774,6 +3455,7 @@ export default function Preview3D({
       shellThickness,
       hollowBuildings,
       splitAtGround,
+      engraving,
     })
 
   currentFinalShapeKeyRef.current = selectionBounds
@@ -2812,6 +3494,7 @@ export default function Preview3D({
     shellThickness,
     hollowBuildings,
     splitAtGround,
+    engraving: engraving?.enabled ? engraving : undefined,
   })
 
   // 分割表示用の2パーツ（frame=土台、buildings=建物）。空パーツは分割なし扱いにする。
@@ -3071,8 +3754,8 @@ export default function Preview3D({
     if (sectionOn) {
       // 断面だけを解除する（現在位置・側は既定に戻す）。
       resetFinalShapeSection()
-      if (openBottom && finalShapeActiveRef.current) {
-        // 底面開口ONなら完成メッシュ（全形・中空）を表示したまま維持する。
+      if ((openBottom || engravingOn) && finalShapeActiveRef.current) {
+        // 底面開口ON・刻印モード中なら完成メッシュ（全形・中空）を表示したまま維持する。
         setFinalShapePrimitivesShow(true)
         viewer.scene.requestRender()
         return
@@ -3140,6 +3823,8 @@ export default function Preview3D({
     finalShapeMeshRef.current = null
     finalShapeRenderRef.current = null
     finalShapeBuiltGeometryKeyRef.current = null
+    engravingViewFaceRef.current = null
+    engravingZoomRef.current = null
     setFinalShapeOn(false)
     setFinalShapeWarnings([])
     disposeFinalShapePrimitive()
@@ -3536,9 +4221,13 @@ export default function Preview3D({
           finalShapeInFlightKeyRef.current = null
         }
         // 生成中に届いた最新の幾何キーがあれば、そのキーで再生成する
-        // （中間値は捨て、最後の値だけ生成する）。断面OFFなら生成しない。
+        // （中間値は捨て、最後の値だけ生成する）。断面OFF・刻印OFFなら生成しない。
         const requestedKey = finalShapeRequestedKeyRef.current
-        if (sectionOnRef.current && requestedKey !== null && requestedKey !== geometryKey) {
+        if (
+          (sectionOnRef.current || engravingOnRef.current) &&
+          requestedKey !== null &&
+          requestedKey !== geometryKey
+        ) {
           if (finalShapeAutoTimerRef.current !== null) {
             clearTimeout(finalShapeAutoTimerRef.current)
           }
@@ -3647,16 +4336,16 @@ export default function Preview3D({
     })
   })
 
-  // 正確な最終形状の自動生成は「断面ON時のみ」。
+  // 正確な最終形状の自動生成は「断面ON・底面開口ON・刻印モードONのとき」。
   // 通常のプレビューはベース（タイル＋ソリッド地形）を表示し、外形は編集用の
   // 高速表示のままにする。断面ON中は幾何キーが変わるたびに再生成し、
   // 生成中は前の断面を表示し続ける（古い結果は requestId ガードで破棄）。
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer || !selectionBounds) return
-    // 底面開口ONまたは断面ONのときだけ最終形状を生成・表示する
-    // （どちらもOFFなら高速なベースプレビュー）。
-    if (!sectionOn && !openBottom) return
+    // 断面ON・底面開口ON・刻印モードONのときだけ最終形状を生成・表示する
+    // （どれもOFFなら高速なベースプレビュー）。
+    if (!sectionOn && !openBottom && !engravingOn) return
     // ベースプレビューの準備完了（地形ブーストの確定を含む）後に生成する。
     // 先に生成すると gridSize が後から変わり、地形メッシュを取り直す原因になる。
     if (!baseReadyRef.current) return
@@ -3702,10 +4391,41 @@ export default function Preview3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionOn])
 
-  // 底面開口OFFかつ断面OFFに戻ったら、完成メッシュを破棄して
+  // 刻印モード開始時のカメラ視点を保存し、終了時にアニメーションで戻す。
+  // （面ビューのアニメーションより先に宣言して、開始時の視点を確実に保存する）
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    if (engravingMode) {
+      cancelEngravingCameraAnimation()
+      engravingSavedPoseRef.current = captureCameraPose()
+      return
+    }
+    const saved = engravingSavedPoseRef.current
+    engravingSavedPoseRef.current = null
+    // モード中の面ビュー・ズーム状態は破棄する。
+    engravingZoomRef.current = null
+    if (!saved) return
+    animateEngravingCamera(saved)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engravingMode])
+
+  // 刻印面ビュー: 刻印モードで面が変わったとき、完成形状の面を正面から見る。
+  // 生成のたびに視点を動かさないよう、nonce / face の変化と完成形状の
+  // 非表示→表示の切替（false→true）、モード開始だけに反応する。
+  const engravingViewFace = engravingView?.face ?? null
+  const engravingViewNonce = engravingView?.nonce ?? null
+  useEffect(() => {
+    // モード終了時に面ビューへ戻してしまわないよう、面ビューはモード中のみ適用する。
+    if (!engravingMode) return
+    if (!finalShapeOn || engravingViewFace === null) return
+    viewEngravingFaceRef.current?.(engravingViewFace)
+  }, [finalShapeOn, engravingViewFace, engravingViewNonce, engravingMode])
+
+  // 底面開口OFF・断面OFF・刻印モードOFFに戻ったら、完成メッシュを破棄して
   // 高速なベースプレビュー（タイル＋ソリッド地形）へ復帰する。
   useEffect(() => {
-    if (openBottom || sectionOn) return
+    if (openBottom || sectionOn || engravingOn) return
     if (!finalShapeActiveRef.current && !finalShapeGeneratingRef.current) return
     // 進行中の生成結果を破棄する。
     finalShapeRequestIdRef.current += 1
@@ -3718,7 +4438,7 @@ export default function Preview3D({
     finalShapeRequestedKeyRef.current = null
     deactivateFinalShape()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openBottom, sectionOn])
+  }, [openBottom, sectionOn, engravingOn])
 
   // 初回のサイレント先読み。ベースプレビュー準備完了後に一度だけ実行し、
   // 永続キャッシュ・常駐Workerの入力データを温める（表示は変えない）。
@@ -3731,7 +4451,8 @@ export default function Preview3D({
     if (prefetchedFinalShapeRef.current && prefetchedFinalShapeRef.current.key !== geometryKey) {
       prefetchedFinalShapeRef.current = null
     }
-    if (sectionOn || openBottom || !baseReadyRef.current || finalShapeActiveRef.current) return
+    if (sectionOn || openBottom || engravingOn || !baseReadyRef.current) return
+    if (finalShapeActiveRef.current) return
     const boundsKey = JSON.stringify(selectionBounds)
     if (prefetchBoundsRef.current === boundsKey) return
     if (finalShapeBuiltGeometryKeyRef.current === geometryKey) return
@@ -3754,12 +4475,13 @@ export default function Preview3D({
       disposeFinalShapeSection()
       disposeFinalShapePrimitive()
       finalShapeActiveRef.current = false
+      // 進行中の刻印カメラアニメーションを停止する。
+      cancelEngravingCameraAnimation()
       // 保留中の生成結果を無効化してから Worker を終了する
       // （アンマウント後に catch 側の state 更新が走らないようにする）。
       finalShapeRequestIdRef.current += 1
       terminateFinalShapeWorker()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -3809,6 +4531,151 @@ export default function Preview3D({
     viewer.scene.requestRender()
   }, [quality, shadowsVisible])
 
+  // 刻印オーバーレイの内容（面・レイアウト）が変わったら即描画して射影を更新する。
+  useEffect(() => {
+    viewerRef.current?.scene.requestRender()
+  }, [engravingOverlay])
+
+  // 刻印モード中はカメラの回転・チルト・平行移動を無効化する
+  // （ドラッグがカメラ操作に奪われないようにする）。ズームは別effectで自前処理する。
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || !engravingEditActive) return
+    const controller = viewer.scene.screenSpaceCameraController
+    const saved = {
+      rotate: controller.enableRotate,
+      tilt: controller.enableTilt,
+      translate: controller.enableTranslate,
+    }
+    controller.enableRotate = false
+    controller.enableTilt = false
+    controller.enableTranslate = false
+    viewer.scene.requestRender()
+    return () => {
+      controller.enableRotate = saved.rotate
+      controller.enableTilt = saved.tilt
+      controller.enableTranslate = saved.translate
+      viewer.scene.requestRender()
+    }
+  }, [engravingEditActive])
+
+  // 刻印モード中は Cesium 既定のズームを使わず、面ビューの注視点・向き・up を
+  // 固定したまま距離だけを変える自前ズームにする。既定ズームは pitch±90° の
+  // 特異点で up を再計算するため、底面ビューで画面が上下反転する。
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || !engravingEditActive) return
+    const canvas = viewer.scene.canvas
+    const controller = viewer.scene.screenSpaceCameraController
+    const savedEnableZoom = controller.enableZoom
+    controller.enableZoom = false
+    const onWheel = (event: WheelEvent): void => {
+      if (!engravingEditActiveRef.current || engravingZoomRef.current === null) return
+      // 平行投影は既存の orthographic zoom ハンドラ（frustum.width）に任せる。
+      if (viewer.camera.frustum instanceof OrthographicFrustum) return
+      event.preventDefault()
+      // Firefox等の line 単位ホイールをピクセル相当へ揃える。
+      const delta = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * 40 : event.deltaY
+      applyEngravingZoomRef.current?.(Math.exp(delta * ENGRAVING_ZOOM_PER_PIXEL))
+    }
+    canvas.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    viewer.scene.requestRender()
+    return () => {
+      canvas.removeEventListener('wheel', onWheel, { capture: true })
+      controller.enableZoom = savedEnableZoom
+      viewer.scene.requestRender()
+    }
+  }, [engravingEditActive])
+
+  // 刻印モード中のドラッグ位置決め。canvas の capture 段階で拾い、
+  // 面平面との交点を面ローカルmmへ変換して centerX/centerY を通知する。
+  // 最新の状態はすべて ref から読むため、モードの開始/終了時だけ登録し直す。
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || !engravingEditActive) return
+    const canvas = viewer.scene.canvas
+    const canvasPoint = (event: PointerEvent): { x: number; y: number } => {
+      const rect = canvas.getBoundingClientRect()
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    }
+    const isFrontFacing = (geometry: EngravingOverlayGeometry): boolean => {
+      const centerToCamera = Cartesian3.subtract(
+        viewer.camera.positionWC,
+        geometry.centerWorld,
+        new Cartesian3(),
+      )
+      return Cartesian3.dot(geometry.normalWorld, centerToCamera) > 0
+    }
+    const hitAt = (
+      event: PointerEvent,
+    ): { uMm: number; vMm: number; overlay: EngravingOverlayData } | null => {
+      const overlay = engravingOverlayRef.current
+      if (!overlay || !engravingEditActiveRef.current || sectionOnRef.current) return null
+      const geometry = resolveEngravingOverlayGeometry()
+      if (!geometry || !isFrontFacing(geometry)) return null
+      const point = canvasPoint(event)
+      const local = engravingFaceLocalAtScreen(geometry, point.x, point.y)
+      if (!local) return null
+      return { ...local, overlay }
+    }
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.button !== 0) return
+      const hit = hitAt(event)
+      if (!hit) return
+      if (!pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)) return
+      engravingOverlayDragRef.current = { pointerId: event.pointerId }
+      try {
+        canvas.setPointerCapture(event.pointerId)
+      } catch {}
+      event.preventDefault()
+      event.stopPropagation()
+      canvas.style.cursor = 'grabbing'
+    }
+    const onPointerMove = (event: PointerEvent): void => {
+      const drag = engravingOverlayDragRef.current
+      if (!drag) {
+        // 非ドラッグ時は面の上だけ grab カーソルにする。
+        const hit = hitAt(event)
+        canvas.style.cursor =
+          hit && pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)
+            ? 'grab'
+            : 'default'
+        return
+      }
+      if (drag.pointerId !== event.pointerId) return
+      const hit = hitAt(event)
+      if (!hit) return
+      const center = faceLocalToCenter(hit.overlay.layout, hit.uMm, hit.vMm)
+      engravingPositionRef.current = { centerX: center.centerX, centerY: center.centerY }
+      onEngravingPositionChangeRef.current?.(center.centerX, center.centerY)
+      viewer.scene.requestRender()
+      event.preventDefault()
+    }
+    const finishDrag = (event: PointerEvent): void => {
+      const drag = engravingOverlayDragRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      engravingOverlayDragRef.current = null
+      try {
+        canvas.releasePointerCapture(event.pointerId)
+      } catch {}
+      canvas.style.cursor = 'default'
+      event.preventDefault()
+    }
+    canvas.addEventListener('pointerdown', onPointerDown, { capture: true })
+    canvas.addEventListener('pointermove', onPointerMove, { capture: true })
+    canvas.addEventListener('pointerup', finishDrag, { capture: true })
+    canvas.addEventListener('pointercancel', finishDrag, { capture: true })
+    return () => {
+      canvas.removeEventListener('pointerdown', onPointerDown, { capture: true })
+      canvas.removeEventListener('pointermove', onPointerMove, { capture: true })
+      canvas.removeEventListener('pointerup', finishDrag, { capture: true })
+      canvas.removeEventListener('pointercancel', finishDrag, { capture: true })
+      engravingOverlayDragRef.current = null
+      canvas.style.cursor = 'default'
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engravingEditActive])
+
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer) return
@@ -3836,7 +4703,10 @@ export default function Preview3D({
         const feature = asTileFeature(viewer.scene.pick(pos))
         if (feature === hoveredFeatureRef.current) return
         setHoveredFeature(feature && feature.show ? feature : null)
-        canvas.style.cursor = feature && feature.show ? 'pointer' : 'default'
+        // 刻印モード中はカーソルを grab/default で管理する（上書きしない）。
+        if (!engravingEditActiveRef.current) {
+          canvas.style.cursor = feature && feature.show ? 'pointer' : 'default'
+        }
       })
     }, ScreenSpaceEventType.MOUSE_MOVE)
 
@@ -3988,146 +4858,213 @@ export default function Preview3D({
   return (
     <div style={wrapperStyle}>
       <div ref={containerRef} data-testid="preview-canvas" style={containerStyle} />
-      <div
-        data-testid="preview-view-controls"
-        style={{
-          position: 'absolute',
-          top: '16px',
-          right: '16px',
-          zIndex: 20,
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'flex-end',
-          gap: '6px',
-          alignItems: 'center',
-          maxWidth: 'calc(100% - 32px)',
-        }}
-      >
-        <select
-          data-testid="gsi-style-select-preview"
-          value={gsiStyle}
-          onChange={(e) => {
-            const style = e.target.value as GsiTileStyle
-            setGsiStyle(style)
-            saveGsiStyle(style)
-          }}
+      {/* 刻印オーバーレイ: 面ローカルmm座標（原点=左下、y上向き）で描き、
+          transform は scene.postRender で毎フレーム matrix3d を設定する。 */}
+      {engravingEditActive && engravingOverlay && (
+        <svg
+          ref={engravingOverlaySvgRef}
+          data-testid="engraving-overlay"
+          width={engravingOverlay.faceWidthMm}
+          height={engravingOverlay.faceHeightMm}
+          viewBox={`0 0 ${engravingOverlay.faceWidthMm} ${engravingOverlay.faceHeightMm}`}
           style={{
-            background: 'var(--surface)',
-            color: 'var(--text)',
-            border: '1px solid var(--border-strong)',
-            borderRadius: '6px',
-            padding: '6px 8px',
-            fontSize: '11px',
-            cursor: 'pointer',
-            backdropFilter: 'blur(4px)',
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            zIndex: 5,
+            pointerEvents: 'none',
+            transformOrigin: '0 0',
+            overflow: 'visible',
+            display: 'none',
           }}
         >
-          {GSI_TILE_STYLES.map((s) => (
-            <option key={s} value={s}>
-              {GSI_TILE_LABELS[s]}
-            </option>
-          ))}
-        </select>
-        <button
-          data-testid="projection-toggle"
-          onClick={toggleProjection}
-          style={{
-            background: isOrthographic ? 'var(--accent)' : 'var(--surface)',
-            color: isOrthographic ? '#fff' : 'var(--text)',
-            border: '1px solid var(--border-strong)',
-            borderRadius: '6px',
-            padding: '6px 10px',
-            fontSize: '11px',
-            cursor: 'pointer',
-            backdropFilter: 'blur(4px)',
-            fontWeight: 600,
-            minWidth: '52px',
-          }}
-        >
-          {isOrthographic ? '透視' : '平行'}
-        </button>
+          <rect
+            x={0}
+            y={0}
+            width={engravingOverlay.faceWidthMm}
+            height={engravingOverlay.faceHeightMm}
+            fill="none"
+            stroke={engravingOverlay.overflow ? 'var(--error)' : 'rgba(255,255,255,0.25)'}
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+          <rect
+            data-testid="engraving-overlay-block"
+            x={engravingOverlay.layout.block.x}
+            y={
+              engravingOverlay.faceHeightMm -
+              engravingOverlay.layout.block.y -
+              engravingOverlay.layout.block.height
+            }
+            width={engravingOverlay.layout.block.width}
+            height={engravingOverlay.layout.block.height}
+            fill="none"
+            stroke="var(--accent)"
+            strokeWidth={1}
+            strokeDasharray="4 3"
+            vectorEffect="non-scaling-stroke"
+          />
+          {engravingOverlay.layout.lines.map((line, lineIndex) =>
+            line.glyphs.map((glyph, glyphIndex) => {
+              const path = engravingOverlay.glyphPaths.get(glyph.char)
+              if (!path) return null
+              return (
+                <g
+                  key={`${lineIndex}-${glyphIndex}`}
+                  transform={`translate(${line.x + glyph.x} ${
+                    engravingOverlay.faceHeightMm - line.baselineY
+                  }) scale(${line.sizeMm} ${-line.sizeMm})`}
+                >
+                  <path d={path} fill="var(--accent)" fillOpacity={0.55} fillRule="nonzero" />
+                </g>
+              )
+            }),
+          )}
+        </svg>
+      )}
+      {/* 刻印モード中はビュー操作・断面パネルを隠して専用UIに集中する。 */}
+      {!engravingMode && (
         <div
+          data-testid="preview-view-controls"
           style={{
+            position: 'absolute',
+            top: '16px',
+            right: '16px',
+            zIndex: 20,
             display: 'flex',
-            gap: '4px',
-            background: 'var(--surface)',
-            border: '1px solid var(--border-strong)',
-            borderRadius: '6px',
-            padding: '4px',
-            backdropFilter: 'blur(4px)',
+            flexWrap: 'wrap',
+            justifyContent: 'flex-end',
+            gap: '6px',
+            alignItems: 'center',
+            maxWidth: 'calc(100% - 32px)',
           }}
         >
-          {isCompact ? (
-            <select
-              data-testid="view-preset-select"
-              defaultValue="iso"
-              onChange={(e) => {
-                const preset = VIEW_PRESETS.find(([id]) => id === e.target.value)
-                if (!preset) return
-                const [, , h, p, top] = preset
-                applyPresetView(h, p, { useTop: !!top })
-              }}
-              style={{
-                background: 'var(--surface)',
-                color: 'var(--text)',
-                border: '1px solid var(--border-strong)',
-                borderRadius: '4px',
-                padding: '6px 8px',
-                fontSize: '12px',
-                cursor: 'pointer',
-                minHeight: 32,
-              }}
-            >
-              {VIEW_PRESETS.map(([id, label]) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          ) : (
-            VIEW_PRESETS.map(([id, label, h, p, top]) => (
-              <button
-                key={id}
-                data-testid={`view-preset-${id}`}
-                onClick={() => applyPresetView(h, p, { useTop: !!top })}
+          <select
+            data-testid="gsi-style-select-preview"
+            value={gsiStyle}
+            onChange={(e) => {
+              const style = e.target.value as GsiTileStyle
+              setGsiStyle(style)
+              saveGsiStyle(style)
+            }}
+            style={{
+              background: 'var(--surface)',
+              color: 'var(--text)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: '6px',
+              padding: '6px 8px',
+              fontSize: '11px',
+              cursor: 'pointer',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            {GSI_TILE_STYLES.map((s) => (
+              <option key={s} value={s}>
+                {GSI_TILE_LABELS[s]}
+              </option>
+            ))}
+          </select>
+          <button
+            data-testid="projection-toggle"
+            onClick={toggleProjection}
+            style={{
+              background: isOrthographic ? 'var(--accent)' : 'var(--surface)',
+              color: isOrthographic ? '#fff' : 'var(--text)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: '6px',
+              padding: '6px 10px',
+              fontSize: '11px',
+              cursor: 'pointer',
+              backdropFilter: 'blur(4px)',
+              fontWeight: 600,
+              minWidth: '52px',
+            }}
+          >
+            {isOrthographic ? '透視' : '平行'}
+          </button>
+          <div
+            style={{
+              display: 'flex',
+              gap: '4px',
+              background: 'var(--surface)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: '6px',
+              padding: '4px',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            {isCompact ? (
+              <select
+                data-testid="view-preset-select"
+                defaultValue="iso"
+                onChange={(e) => {
+                  const preset = VIEW_PRESETS.find(([id]) => id === e.target.value)
+                  if (!preset) return
+                  const [, , h, p, top] = preset
+                  applyPresetView(h, p, { useTop: !!top })
+                }}
                 style={{
                   background: 'var(--surface)',
                   color: 'var(--text)',
                   border: '1px solid var(--border-strong)',
                   borderRadius: '4px',
-                  padding: '4px 8px',
-                  fontSize: '11px',
+                  padding: '6px 8px',
+                  fontSize: '12px',
                   cursor: 'pointer',
-                  lineHeight: 1,
+                  minHeight: 32,
                 }}
               >
-                {label}
-              </button>
-            ))
-          )}
-          <button
-            data-testid="reset-view"
-            onClick={resetView}
-            title="カメラがモデルを見失ったときに既定の斜め視点へ戻す"
-            style={{
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              border: '1px solid var(--accent)',
-              borderRadius: '4px',
-              padding: '4px 8px',
-              fontSize: '11px',
-              cursor: 'pointer',
-              lineHeight: 1,
-              whiteSpace: 'nowrap',
-              minHeight: 32,
-            }}
-          >
-            表示リセット
-          </button>
+                {VIEW_PRESETS.map(([id, label]) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              VIEW_PRESETS.map(([id, label, h, p, top]) => (
+                <button
+                  key={id}
+                  data-testid={`view-preset-${id}`}
+                  onClick={() => applyPresetView(h, p, { useTop: !!top })}
+                  style={{
+                    background: 'var(--surface)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    lineHeight: 1,
+                  }}
+                >
+                  {label}
+                </button>
+              ))
+            )}
+            <button
+              data-testid="reset-view"
+              onClick={resetView}
+              title="カメラがモデルを見失ったときに既定の斜め視点へ戻す"
+              style={{
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--accent)',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                fontSize: '11px',
+                cursor: 'pointer',
+                lineHeight: 1,
+                whiteSpace: 'nowrap',
+                minHeight: 32,
+              }}
+            >
+              表示リセット
+            </button>
+          </div>
         </div>
-      </div>
+      )}
       {/* 断面パネルは範囲選択があれば常に表示する（ONで正確な形状を生成）。 */}
-      {selectionBounds && (
+      {!engravingMode && selectionBounds && (
         <div
           data-testid="final-shape-section-panel"
           style={{

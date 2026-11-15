@@ -5,6 +5,7 @@ import {
   hasMiterBase,
   MIN_FRAME_HEIGHT_MM,
 } from '../../../core/src/frameSplitConstants.ts'
+import type { EngravingOptions } from '../../../core/src/engraving/types.ts'
 import type { Lod } from '../lib/catalogApi'
 import { TERRAIN_GRID_PRESETS } from '../lib/previewBudget'
 import {
@@ -32,12 +33,18 @@ export interface Parameters {
   hollowBuildings: boolean
   /** 地形枠と建物部分に分割して出力する */
   splitAtGround: boolean
+  /** 側面・底面への刻印設定 */
+  engraving: EngravingOptions
 }
 
 interface ParameterPanelProps {
   parameters: Parameters
   onChange: (params: Parameters) => void
   onExport: () => void
+  /** 刻印モード（専用UI）を開始する。 */
+  onEnterEngravingMode: () => void
+  /** 適用済みの刻印を削除する。 */
+  onDeleteEngraving: () => void
   availableLods?: Lod[]
   autoTerrainGridSize?: number
   buildingsVisible: boolean
@@ -59,6 +66,8 @@ function ParameterPanel({
   parameters,
   onChange,
   onExport,
+  onEnterEngravingMode,
+  onDeleteEngraving,
   availableLods = ['lod1', 'lod2'],
   autoTerrainGridSize = 128,
   buildingsVisible,
@@ -872,6 +881,56 @@ function ParameterPanel({
               解像度が高いほど地形が細かくなり、処理時間とメッシュサイズが増えます
             </p>
           </div>
+        </div>
+
+        {/* Engraving */}
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+          <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>刻印</h4>
+          <button
+            type="button"
+            data-testid="engraving-mode-button"
+            disabled={!parameters.includeTerrain}
+            onClick={onEnterEngravingMode}
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              borderRadius: 6,
+              border: 'none',
+              background: parameters.includeTerrain ? 'var(--accent)' : 'var(--border-strong)',
+              color: parameters.includeTerrain ? '#fff' : 'var(--text-dim)',
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: parameters.includeTerrain ? 'pointer' : 'not-allowed',
+            }}
+          >
+            {parameters.engraving.enabled ? '刻印を編集' : '刻印モードを開始'}
+          </button>
+          {parameters.engraving.enabled && (
+            <button
+              type="button"
+              data-testid="engraving-delete-button"
+              onClick={onDeleteEngraving}
+              style={{
+                width: '100%',
+                marginTop: 6,
+                padding: '8px 12px',
+                borderRadius: 6,
+                border: '1px solid var(--border-strong)',
+                background: 'transparent',
+                color: 'var(--error)',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              刻印を削除
+            </button>
+          )}
+          <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '8px 0 0' }}>
+            {parameters.includeTerrain
+              ? '刻印モードに入ると専用UIになり、3Dモデル上でドラッグして位置を調整できます（モード中は視点回転をロック）。FDM 0.4mmノズル・0.2mmピッチが既定です。'
+              : '地形を含めない場合は刻印できません。'}
+          </p>
         </div>
 
         {/* Spanning Buildings Setting */}

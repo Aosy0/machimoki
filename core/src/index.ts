@@ -78,6 +78,45 @@ export type {
   ValidationResult,
 } from './types.js'
 
+export {
+  applyEngravingToManifold,
+  autoFitEngraving,
+  computeEngravingFaceDims,
+  DEFAULT_PRINT_PROFILE,
+  defaultEngravingDepthMm,
+  defaultEngravingOptions,
+  engravingMaxDepthMm,
+  engravingMinFontSizes,
+  engravingSideBandHeightMm,
+  formatAttribution,
+  formatCenterCoordinate,
+  formatDateLine,
+  formatMeshCodeLine,
+  formatScaleAndSize,
+  isCjkChar,
+  isCjkText,
+  jisMeshCode1km,
+  layoutEngraving,
+  parseEngravingFont,
+  setEngravingFontProvider,
+} from './engraving/index.js'
+export type {
+  EngravingApplyResult,
+  EngravingFace,
+  EngravingFaceDims,
+  EngravingFaceFrame,
+  EngravingFont,
+  EngravingFontBBox,
+  EngravingFontPoint,
+  EngravingLayout,
+  EngravingLayoutLine,
+  EngravingLine,
+  EngravingModelDims,
+  EngravingOptions,
+  EngravingTerrainContext,
+  PrintProfile,
+} from './engraving/index.js'
+
 export { buildPrintableModel } from './pipeline.js'
 
 export { buildBuildingMeshes } from './meshBuilder.js'

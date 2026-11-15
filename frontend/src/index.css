@@ -284,3 +284,80 @@ input[type="file"]::file-selector-button:hover {
     transition: none;
   }
 }
+
+/* 刻印モードのアニメーション */
+@keyframes machimoki-engraving-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes machimoki-engraving-glow-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes machimoki-engraving-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes machimoki-engraving-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.machimoki-engraving-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(0, 188, 212, 0.8);
+  animation: machimoki-engraving-dot-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .machimoki-engraving-dot {
+    animation: none;
+  }
+}
+
+/* 刻印モード: 3Dオーバーレイのフェードイン（Preview3D）。 */
+@keyframes machimoki-engraving-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.machimoki-engraving-overlay-in {
+  animation: machimoki-engraving-overlay-in 220ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .machimoki-engraving-overlay-in {
+    animation: none;
+  }
+}

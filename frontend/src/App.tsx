@@ -16,6 +16,17 @@ import { runWorkerExport, runWorkerSerialize, triggerDownload } from './lib/work
 import { finalShapeGeometryKey } from './lib/finalShapeKey'
 import { loadFinalShapeCache } from './lib/finalShapeCache'
 import { loadBuildingMeshes, loadTerrainMesh } from './lib/meshDataCache'
+import EngravingPanel from './components/EngravingPanel'
+import type { EngravingOptions } from '../../core/src/engraving/types.ts'
+import { defaultEngravingOptions } from '../../core/src/engraving/types.ts'
+import type { EngravingFont } from '../../core/src/engraving/font.ts'
+import type { EngravingLayout } from '../../core/src/engraving/layout.ts'
+import { layoutEngraving } from '../../core/src/engraving/layout.ts'
+import { computeEngravingFaceDims } from '../../core/src/engraving/faces.ts'
+import { buildAutoTexts, defaultEngravingLines, resolvePlaceName } from './lib/engravingContent'
+import { loadEngravingFont } from './lib/engravingFontClient'
+import { buildGlyphPathMap } from './lib/engravingSvg'
+import type { EngravingOverlayData } from './lib/engraving3dOverlay'
 import {
   useMapLibreRectangleSelection,
   type MapInteractionMode,
@@ -49,6 +60,7 @@ import {
   type ResizeHandle,
 } from './lib/mapSelectionResize'
 import { coercePresetBounds, parseManualCoords } from './lib/mapSelectionInput'
+import { computeModelDimensions } from './lib/selectionBounds'
 
 type Tab = 'map' | 'preview'
 
@@ -75,6 +87,7 @@ const DEFAULT_PARAMETERS: Parameters = {
   shellThickness: 1.6,
   hollowBuildings: true,
   splitAtGround: false,
+  engraving: defaultEngravingOptions(),
 }
 
 /** 保存済みの選択範囲を読む（不正値は null）。 */
@@ -110,7 +123,21 @@ function loadStoredParameters(): Parameters {
     if (!raw) return DEFAULT_PARAMETERS
     const parsed: unknown = JSON.parse(raw)
     if (parsed && typeof parsed === 'object') {
-      return { ...DEFAULT_PARAMETERS, ...(parsed as Partial<Parameters>) }
+      const stored = parsed as Partial<Parameters>
+      const storedEngraving = stored.engraving
+      return {
+        ...DEFAULT_PARAMETERS,
+        ...stored,
+        engraving: {
+          ...DEFAULT_PARAMETERS.engraving,
+          ...(storedEngraving ?? {}),
+          lines: Array.isArray(storedEngraving?.lines) ? storedEngraving.lines : [],
+          printProfile: {
+            ...DEFAULT_PARAMETERS.engraving.printProfile,
+            ...(storedEngraving?.printProfile ?? {}),
+          },
+        },
+      }
     }
   } catch {
     void 0
@@ -167,6 +194,16 @@ function App() {
   const handleMetrics = hasCoarsePointer ? COARSE_HANDLE_METRICS : FINE_HANDLE_METRICS
 
   const [parameters, setParameters] = useState<Parameters>(loadStoredParameters)
+  // 刻印エディタの下書き（「反映」まで完成形状には適用しない）。
+  const [engravingDraft, setEngravingDraft] = useState<EngravingOptions>(() => parameters.engraving)
+  // 選択範囲の地名（刻印の自動内容用。取得できなければ null）。
+  const [placeName, setPlaceName] = useState<string | null>(null)
+  // 刻印面ビューの再実行用カウンタ（面切替・刻印モード開始で増やす）。
+  const [engravingViewNonce, setEngravingViewNonce] = useState(0)
+  // 刻印モード（専用UI）。適用済み設定（parameters.engraving）とは別に持つ。
+  const [engravingMode, setEngravingMode] = useState(false)
+  // 3Dオーバーレイ用の刻印フォント（刻印モードON時に遅延読み込み）。
+  const [engravingFont, setEngravingFont] = useState<EngravingFont | null>(null)
 
   // 設定とタブを保存する（リロードで復元する）。
   useEffect(() => {
@@ -331,6 +368,55 @@ function App() {
     }
   }, [selectionBounds])
 
+  // 適用済みの刻印設定が変わったら下書きを追従させる（反映・解除・リロード時）。
+  const appliedEngravingRef = useRef(parameters.engraving)
+  useEffect(() => {
+    if (appliedEngravingRef.current === parameters.engraving) return
+    appliedEngravingRef.current = parameters.engraving
+    setEngravingDraft(parameters.engraving)
+  }, [parameters.engraving])
+
+  // 刻印モード中は面が変わるたびに3Dプレビューのカメラをその面へ向ける。
+  useEffect(() => {
+    if (!engravingMode) return
+    setEngravingViewNonce((nonce) => nonce + 1)
+  }, [engravingMode, engravingDraft.face])
+
+  // 3Dオーバーレイ用の刻印フォントを刻印モードON時に読み込む（初回のみ）。
+  useEffect(() => {
+    if (!engravingMode || engravingFont) return
+    let cancelled = false
+    loadEngravingFont()
+      .then((font) => {
+        if (!cancelled) setEngravingFont(font)
+      })
+      .catch(() => {
+        // フォント読込エラーはエディタ側で表示する。
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [engravingMode, engravingFont])
+
+  // 選択範囲の地名を取得する（刻印の既定タイトル用）。
+  useEffect(() => {
+    if (!selectionBounds) {
+      setPlaceName(null)
+      return
+    }
+    let cancelled = false
+    resolvePlaceName(selectionBounds)
+      .then((name) => {
+        if (!cancelled) setPlaceName(name)
+      })
+      .catch(() => {
+        if (!cancelled) setPlaceName(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectionBounds])
+
   useEffect(() => {
     if (!selectionBounds) return
     if (isLargeRange(selectionBounds)) return
@@ -423,6 +509,133 @@ function App() {
     return resolveTerrainGridSize(parameters.terrainGridSize, boundsMaxDimMeters(selectionBounds))
   }, [selectionBounds, parameters.terrainGridSize, terrainResolutionBoost])
 
+  // 刻印エディタ用の面寸法・自動内容。
+  const engravingModelDims = useMemo(() => {
+    const dims = selectionBounds ? computeModelDimensions(selectionBounds, scale) : null
+    return {
+      widthMm: dims?.widthMm ?? 0,
+      depthMm: dims?.depthMm ?? 0,
+      terrainThicknessMm: parameters.terrainThickness,
+      shellThicknessMm: parameters.shellThickness,
+      hasTerrain: parameters.includeTerrain,
+      flatBottom: parameters.flattenBottom || parameters.reflectActualElevation,
+      openBottom: parameters.openBottom,
+      splitAtGround: parameters.openBottom && parameters.splitAtGround,
+    }
+  }, [
+    selectionBounds,
+    scale,
+    parameters.terrainThickness,
+    parameters.shellThickness,
+    parameters.includeTerrain,
+    parameters.flattenBottom,
+    parameters.reflectActualElevation,
+    parameters.openBottom,
+    parameters.splitAtGround,
+  ])
+  const engravingFaces = useMemo(
+    () => computeEngravingFaceDims(engravingModelDims),
+    [engravingModelDims],
+  )
+  const engravingAutoTexts = useMemo(
+    () =>
+      selectionBounds
+        ? buildAutoTexts(
+            selectionBounds,
+            scale,
+            engravingModelDims.widthMm,
+            engravingModelDims.depthMm,
+            parameters.terrainThickness,
+            placeName,
+          )
+        : {},
+    [selectionBounds, scale, engravingModelDims, parameters.terrainThickness, placeName],
+  )
+  const engravingApplied = useMemo(
+    () => JSON.stringify(parameters.engraving) === JSON.stringify(engravingDraft),
+    [parameters.engraving, engravingDraft],
+  )
+  // 3Dオーバーレイ用: 下書きのレイアウトとグリフ輪郭（3D上での位置調整に使う）。
+  const engravingDraftFaceDims = useMemo(
+    () => engravingFaces.find((dims) => dims.face === engravingDraft.face) ?? null,
+    [engravingFaces, engravingDraft.face],
+  )
+  const engravingDraftLayout = useMemo<EngravingLayout | null>(
+    () =>
+      engravingFont && engravingDraftFaceDims
+        ? layoutEngraving(engravingDraftFaceDims, engravingDraft, engravingFont)
+        : null,
+    [engravingFont, engravingDraftFaceDims, engravingDraft],
+  )
+  const engravingOverlay = useMemo<EngravingOverlayData | null>(() => {
+    if (!engravingMode || !engravingDraftLayout) return null
+    if (!engravingFont) return null
+    const glyphPaths = buildGlyphPathMap(engravingFont, engravingDraftLayout)
+    return {
+      face: engravingDraft.face,
+      faceWidthMm: engravingDraftLayout.faceWidthMm,
+      faceHeightMm: engravingDraftLayout.faceHeightMm,
+      layout: engravingDraftLayout,
+      glyphPaths,
+      overflow:
+        engravingDraftLayout.overflowX ||
+        engravingDraftLayout.overflowY ||
+        engravingDraftLayout.unsupportedChars.length > 0,
+    }
+  }, [engravingMode, engravingDraft.face, engravingDraftLayout, engravingFont])
+  // 3Dモデル上のドラッグで決まったブロック中心（使用可能領域内の0..1）。
+  const handleEngravingPositionChange = useCallback((centerX: number, centerY: number) => {
+    setEngravingDraft((prev) =>
+      prev.centerX === centerX && prev.centerY === centerY ? prev : { ...prev, centerX, centerY },
+    )
+  }, [])
+  // 刻印モードのズーム（タッチ端末でも使えるようにボタンから呼ぶ）。
+  const zoomEngravingView = useCallback((factor: number) => {
+    const controls = (
+      window as unknown as {
+        __previewControls?: { zoomEngraving?: (value: number) => boolean }
+      }
+    ).__previewControls
+    controls?.zoomEngraving?.(factor)
+  }, [])
+  const handleEngravingApply = useCallback(() => {
+    setParameters((prev) => ({ ...prev, engraving: { ...engravingDraft, enabled: true } }))
+  }, [engravingDraft])
+  // 刻印モード開始: 適用済み設定（無ければ既定の内容）を下書きにして専用UIへ。
+  const enterEngravingMode = useCallback(() => {
+    const applied = parameters.engraving
+    const base = applied.enabled ? applied : defaultEngravingOptions()
+    const lines = base.lines.length > 0 ? base.lines : defaultEngravingLines(engravingAutoTexts)
+    setEngravingDraft({ ...base, lines, enabled: true })
+    setEngravingMode(true)
+    setEngravingViewNonce((nonce) => nonce + 1)
+    setSettingsOpen(false)
+  }, [parameters.engraving, engravingAutoTexts])
+  // 刻印モード終了: 未反映の変更は破棄し、適用済み設定に戻す。
+  const exitEngravingMode = useCallback(() => {
+    setEngravingMode(false)
+    setEngravingDraft(parameters.engraving)
+  }, [parameters.engraving])
+  // 適用済みの刻印を削除する（通常の設定パネルから）。
+  const handleEngravingDelete = useCallback(() => {
+    setEngravingMode(false)
+    setParameters((prev) => ({ ...prev, engraving: { ...prev.engraving, enabled: false } }))
+  }, [])
+  // 刻印ONにした直後に内容が空なら既定の内容（地名・座標など）を入れる。
+  const handleParametersChange = useCallback(
+    (params: Parameters) => {
+      if (params.engraving.enabled && params.engraving.lines.length === 0) {
+        setParameters({
+          ...params,
+          engraving: { ...params.engraving, lines: defaultEngravingLines(engravingAutoTexts) },
+        })
+        return
+      }
+      setParameters(params)
+    },
+    [engravingAutoTexts],
+  )
+
   const handleExport = useCallback(async () => {
     if (!selectionBounds) {
       setErrorMessage('エクスポートする前に地図で範囲を選択してください')
@@ -456,6 +669,7 @@ function App() {
       splitAtGround: parameters.openBottom && parameters.splitAtGround,
       pickPoints,
       excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
+      engraving: parameters.engraving.enabled ? parameters.engraving : undefined,
     }
     const useWorker = exportOptions.format !== 'machimoki'
     let workerError: unknown = null
@@ -487,6 +701,7 @@ function App() {
           shellThickness: exportOptions.shellThickness,
           hollowBuildings: exportOptions.hollowBuildings,
           splitAtGround: exportOptions.splitAtGround,
+          engraving: exportOptions.engraving,
         })
         const cached = await loadFinalShapeCache(geometryKey)
         if (cached) {
@@ -644,6 +859,7 @@ function App() {
         splitAtGround: parameters.openBottom && parameters.splitAtGround,
         pickPoints,
         excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
+        engraving: parameters.engraving.enabled ? parameters.engraving : undefined,
       })
       setPipelineState({ phase: 'complete', progress: 100, message: '完了', error: null })
       setTimeout(
@@ -1230,7 +1446,210 @@ function App() {
                 onBuildingsVisibleChange={setBuildingsVisible}
                 shadowsVisible={shadowsVisible}
                 onBusyChange={setPreviewBusy}
+                engraving={parameters.engraving.enabled ? parameters.engraving : null}
+                engravingMode={engravingMode}
+                engravingView={
+                  engravingMode ? { face: engravingDraft.face, nonce: engravingViewNonce } : null
+                }
+                engravingOverlay={engravingOverlay}
+                onEngravingPositionChange={handleEngravingPositionChange}
               />
+            )}
+            {engravingMode && (
+              <>
+                {/* 刻印モード中であることを示す外周グロー */}
+                <div
+                  data-testid="engraving-mode-glow"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    zIndex: 15,
+                    pointerEvents: 'none',
+                    boxShadow:
+                      'inset 0 0 0 2px var(--accent), inset 0 0 90px rgba(0, 188, 212, 0.14)',
+                    animation: 'machimoki-engraving-glow-in 260ms ease-out',
+                  }}
+                />
+                {/* 刻印モード専用バナー（モード表示・エクスポート・終了） */}
+                <div
+                  data-testid="engraving-mode-banner"
+                  style={{
+                    position: 'absolute',
+                    top: isCompact ? 8 : 12,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    zIndex: 70,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: isCompact ? 8 : 12,
+                    padding: isCompact ? '6px 10px' : '8px 14px',
+                    background: 'rgba(0, 188, 212, 0.16)',
+                    border: '1px solid var(--accent)',
+                    borderRadius: 999,
+                    backdropFilter: 'blur(8px)',
+                    WebkitBackdropFilter: 'blur(8px)',
+                    color: 'var(--text)',
+                    fontSize: isCompact ? 11 : 12,
+                    boxShadow: '0 6px 24px rgba(0, 0, 0, 0.35)',
+                    animation: 'machimoki-engraving-banner-in 240ms ease-out',
+                    maxWidth: 'calc(100% - 32px)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span className="machimoki-engraving-dot" />
+                    刻印モード
+                  </span>
+                  {!isCompact && (
+                    <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
+                      3D上でドラッグして位置を調整 ・ 視点回転はロック中
+                    </span>
+                  )}
+                  <span style={{ display: 'inline-flex', gap: 4 }}>
+                    <button
+                      type="button"
+                      data-testid="engraving-zoom-in"
+                      onClick={() => zoomEngravingView(0.8)}
+                      title="拡大"
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: '50%',
+                        border: '1px solid var(--border-strong)',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        fontSize: 14,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        lineHeight: 1,
+                      }}
+                    >
+                      ＋
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="engraving-zoom-out"
+                      onClick={() => zoomEngravingView(1.25)}
+                      title="縮小"
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: '50%',
+                        border: '1px solid var(--border-strong)',
+                        background: 'transparent',
+                        color: 'var(--text)',
+                        fontSize: 14,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        lineHeight: 1,
+                      }}
+                    >
+                      −
+                    </button>
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="engraving-export-button"
+                    onClick={handleExport}
+                    disabled={!engravingApplied || isExporting}
+                    title={
+                      engravingApplied
+                        ? 'エクスポート'
+                        : '変更を反映してからエクスポートしてください'
+                    }
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: 999,
+                      border: 'none',
+                      background: engravingApplied ? 'var(--accent)' : 'var(--border-strong)',
+                      color: engravingApplied ? '#fff' : 'var(--text-dim)',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: engravingApplied ? 'pointer' : 'not-allowed',
+                      minHeight: 28,
+                    }}
+                  >
+                    エクスポート
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="engraving-exit-button"
+                    onClick={exitEngravingMode}
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: 999,
+                      border: '1px solid var(--border-strong)',
+                      background: 'transparent',
+                      color: 'var(--text)',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      minHeight: 28,
+                    }}
+                  >
+                    終了
+                  </button>
+                </div>
+              </>
+            )}
+            {engravingMode && selectionBounds && (
+              <div
+                style={
+                  isCompact
+                    ? {
+                        position: 'absolute',
+                        left: 8,
+                        right: 8,
+                        bottom: 'calc(64px + env(safe-area-inset-bottom))',
+                        maxHeight: '70dvh',
+                        zIndex: 260,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        borderRadius: 12,
+                        overflow: 'hidden',
+                        // 背後のW/D表示などが透けないよう不透明にする。
+                        background: 'var(--bg)',
+                        boxShadow: '0 -8px 24px rgba(0, 0, 0, 0.35)',
+                        animation: 'machimoki-engraving-panel-in 220ms ease-out',
+                      }
+                    : {
+                        position: 'absolute',
+                        left: 16,
+                        top: 16,
+                        bottom: 16,
+                        width: 340,
+                        // モデルサイズ表示（z-index 50）より手前に出す。
+                        zIndex: 60,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        borderRadius: 8,
+                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+                        animation: 'machimoki-engraving-panel-in 220ms ease-out',
+                      }
+                }
+              >
+                <EngravingPanel
+                  options={engravingDraft}
+                  faces={engravingFaces}
+                  autoTexts={engravingAutoTexts}
+                  placeName={placeName}
+                  busy={previewBusy}
+                  applied={engravingApplied}
+                  isCompact={isCompact}
+                  onChange={setEngravingDraft}
+                  onApply={handleEngravingApply}
+                  onDisable={exitEngravingMode}
+                  onClose={isCompact ? exitEngravingMode : undefined}
+                />
+              </div>
             )}
             <LoadingOverlay
               message={previewBusyFallback ? '処理中...' : pipelineState.message || '処理中...'}
@@ -1293,7 +1712,7 @@ function App() {
               message="エクスポート中..."
               visible={isExporting && pipelineState.phase === 'idle'}
             />
-            {isCompact && !settingsOpen && (
+            {isCompact && !settingsOpen && !engravingMode && (
               <button
                 type="button"
                 data-testid="open-settings"
@@ -1324,16 +1743,13 @@ function App() {
               onClose={closeHelp}
             />
           </div>
-          {!isCompact && (
+          {!isCompact && !engravingMode && (
             <ParameterPanel
               parameters={parameters}
-              onChange={(params) => {
-                setParameters(params)
-                if (params.lod === 'lod2') {
-                  // LOD2 warning is shown in the panel itself
-                }
-              }}
+              onChange={handleParametersChange}
               onExport={handleExport}
+              onEnterEngravingMode={enterEngravingMode}
+              onDeleteEngraving={handleEngravingDelete}
               availableLods={availableLods}
               autoTerrainGridSize={autoTerrainGridSize}
               buildingsVisible={buildingsVisible}
@@ -1345,7 +1761,7 @@ function App() {
               onPreviewQualityOverrideChange={previewQuality.setOverride}
             />
           )}
-          {isCompact && settingsOpen && (
+          {isCompact && settingsOpen && !engravingMode && (
             <>
               <div
                 onClick={() => setSettingsOpen(false)}
@@ -1360,13 +1776,10 @@ function App() {
                 mobile
                 onClose={() => setSettingsOpen(false)}
                 parameters={parameters}
-                onChange={(params) => {
-                  setParameters(params)
-                  if (params.lod === 'lod2') {
-                    // LOD2 warning is shown in the panel itself
-                  }
-                }}
+                onChange={handleParametersChange}
                 onExport={handleExport}
+                onEnterEngravingMode={enterEngravingMode}
+                onDeleteEngraving={handleEngravingDelete}
                 availableLods={availableLods}
                 autoTerrainGridSize={autoTerrainGridSize}
                 buildingsVisible={buildingsVisible}

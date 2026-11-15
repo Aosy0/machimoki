@@ -1,11 +1,12 @@
 import type { Bounds } from '@machimoki/core'
+import type { EngravingOptions } from '../../../core/src/engraving/types.ts'
 import type { Lod } from './catalogApi'
 
 /**
  * 完成メッシュキャッシュのバージョン。形状生成ロジックが変わったら上げる。
  * バージョンが違うキーは一致しないため、古いキャッシュを誤って使わない。
  */
-export const FINAL_SHAPE_CACHE_VERSION = 11
+export const FINAL_SHAPE_CACHE_VERSION = 12
 
 /** 完成メッシュのジオメトリに影響するパラメータのみ（色は含めない）。 */
 export interface FinalShapeGeometryParams {
@@ -23,6 +24,8 @@ export interface FinalShapeGeometryParams {
   shellThickness?: number
   hollowBuildings?: boolean
   splitAtGround?: boolean
+  /** 刻印設定（enabled のときだけ形状に影響する） */
+  engraving?: EngravingOptions | null
 }
 
 /**
@@ -50,5 +53,6 @@ export function finalShapeGeometryKey(params: FinalShapeGeometryParams): string 
     shellThickness: params.shellThickness ?? null,
     hollowBuildings: params.hollowBuildings ?? true,
     splitAtGround: params.splitAtGround ?? false,
+    engraving: params.engraving?.enabled ? params.engraving : null,
   })
 }

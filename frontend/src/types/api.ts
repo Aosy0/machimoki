@@ -1,3 +1,5 @@
+import type { EngravingOptions } from '../../../core/src/engraving/types.ts'
+
 export interface Bounds {
   west: number
   south: number
@@ -33,6 +35,8 @@ export interface ExportOptions {
   hollowBuildings?: boolean
   /** 地形枠と建物部分に分割して ZIP で出力する */
   splitAtGround?: boolean
+  /** 側面・底面への刻印設定（enabled のときだけ適用） */
+  engraving?: EngravingOptions
 }
 
 export interface ValidationResult {

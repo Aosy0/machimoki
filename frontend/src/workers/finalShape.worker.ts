@@ -1,10 +1,19 @@
 import { setWasmUrl } from 'manifold-3d/lib/wasm.js'
 import wasmUrl from 'manifold-3d/manifold.wasm?url'
+import engravingFontUrl from '../../../core/assets/MPLUS1p-Bold.ttf?url'
 import { buildPrintableGeometryFromMeshes } from '../../../core/src/pipelineUtils.ts'
+import { setEngravingFontProvider } from '../../../core/src/engraving/fontProvider.ts'
 import { buildTerrainSlabFromSample, type TerrainSample } from '../../../core/src/terrainSample.ts'
 import type { Bounds, ExportOptions, RawMesh } from '../../../core/src/types.ts'
 
 setWasmUrl(wasmUrl)
+
+// 刻印用フォント（M PLUS 1p Bold, SIL OFL 1.1）は刻印使用時だけ取得する。
+setEngravingFontProvider(async () => {
+  const response = await fetch(engravingFontUrl)
+  if (!response.ok) throw new Error(`刻印フォントの取得に失敗しました: ${response.status}`)
+  return response.arrayBuffer()
+})
 
 export type FinalShapeWorkerRequest = {
   type: 'build'

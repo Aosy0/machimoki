@@ -2,6 +2,8 @@
  * Core type definitions for the machimoki pipeline
  */
 
+import type { EngravingOptions } from './engraving/types.js'
+
 export interface Bounds {
   west: number
   south: number
@@ -54,6 +56,8 @@ export interface ExportOptions {
   // に分割して出力する。openBottom かつ地形ありが必須。デフォルト false。
   // 結果の buffer は 2 パーツを格納した ZIP になり、split に各パーツが入る。
   splitAtGround?: boolean
+  // 側面・底面への刻印設定。enabled のときだけ完成形状に彫り込む。
+  engraving?: EngravingOptions
 }
 
 export interface ExportRequest {
