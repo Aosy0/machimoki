@@ -232,6 +232,9 @@ function App() {
   const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ map: null, preview: null })
   // モバイルの設定シートを <dialog> として開くための参照。
   const settingsDialogRef = useRef<HTMLDialogElement | null>(null)
+  // 閉じたあとにフォーカスを戻すための、設定を開くボタンの参照。
+  const openSettingsButtonRef = useRef<HTMLButtonElement | null>(null)
+  const restoreSettingsFocusRef = useRef(false)
   const coverageAvailableRef = useRef(false)
   const coverageProbedMapRef = useRef<MapLibreMap | null>(null)
   // ピックUIは廃止したため常に空。エクスポート引数の形は維持する。
@@ -255,10 +258,22 @@ function App() {
     const dialog = settingsDialogRef.current
     if (!dialog) return
     if (!dialog.open) dialog.showModal()
-    const handleClose = () => setSettingsOpen(false)
+    const handleClose = () => {
+      // ダイアログ内の要素は閉じると消えるため、ブラウザ任せのフォーカス復帰は
+      // body に落ちる。開いたボタンへ明示的に戻す。
+      restoreSettingsFocusRef.current = true
+      setSettingsOpen(false)
+    }
     dialog.addEventListener('close', handleClose)
     return () => dialog.removeEventListener('close', handleClose)
   }, [isCompact, settingsOpen, engravingMode])
+
+  // 設定シートを閉じたあと、開いたボタンが再表示されてからフォーカスを戻す。
+  useEffect(() => {
+    if (settingsOpen || !restoreSettingsFocusRef.current) return
+    restoreSettingsFocusRef.current = false
+    openSettingsButtonRef.current?.focus()
+  }, [settingsOpen])
 
   // ヘッドレス動作確認（frontend/scripts/verify-ui.mjs）から完了状態を参照するための公開。
   useEffect(() => {
@@ -1766,6 +1781,7 @@ function App() {
             {isCompact && !settingsOpen && !engravingMode && (
               <button
                 type="button"
+                ref={openSettingsButtonRef}
                 data-testid="open-settings"
                 onClick={() => setSettingsOpen(true)}
                 style={{
