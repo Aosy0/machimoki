@@ -1,4 +1,4 @@
-import React, { useRef } from 'react'
+import React, { useId, useRef } from 'react'
 import {
   BASE_EXTENSION_MM,
   FRAME_MITER_DEPTH_RATIO,
@@ -80,6 +80,9 @@ function ParameterPanel({
   previewQualityOverride,
   onPreviewQualityOverrideChange,
 }: ParameterPanelProps) {
+  // ラベルと入力部品を関連付ける id の接頭辞。インスタンスごとに一意になる。
+  const baseId = useId()
+
   const handleChange = <K extends keyof Parameters>(key: K, value: Parameters[K]) => {
     onChange({ ...parameters, [key]: value })
   }
@@ -193,6 +196,7 @@ function ParameterPanel({
         {/* Preview quality */}
         <div>
           <label
+            htmlFor={`${baseId}-preview-quality`}
             style={{
               display: 'block',
               fontSize: '12px',
@@ -203,6 +207,7 @@ function ParameterPanel({
             3Dプレビュー画質
           </label>
           <select
+            id={`${baseId}-preview-quality`}
             data-testid="preview-quality-select"
             value={previewQualityOverride}
             onChange={(e) =>
@@ -259,6 +264,7 @@ function ParameterPanel({
             <input
               ref={buildingColorRef}
               type="color"
+              aria-label="建物の色"
               value={parameters.buildingColor}
               onChange={(e) => handleChange('buildingColor', e.target.value)}
               style={{
@@ -298,6 +304,7 @@ function ParameterPanel({
             <input
               ref={terrainColorRef}
               type="color"
+              aria-label="地形の色"
               value={parameters.terrainColor}
               onChange={(e) => handleChange('terrainColor', e.target.value)}
               style={{
@@ -326,6 +333,7 @@ function ParameterPanel({
               <button
                 type="button"
                 role="switch"
+                aria-label="建物を表示"
                 aria-checked={buildingsVisible}
                 onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
                 style={{
@@ -376,6 +384,7 @@ function ParameterPanel({
               <button
                 type="button"
                 role="switch"
+                aria-label="影を表示"
                 aria-checked={shadowsOn}
                 data-testid="shadows-toggle"
                 disabled={!shadowsAvailable}
@@ -450,6 +459,7 @@ function ParameterPanel({
         {/* Export Format */}
         <div>
           <label
+            htmlFor={`${baseId}-export-format`}
             style={{
               display: 'block',
               fontSize: '12px',
@@ -460,6 +470,7 @@ function ParameterPanel({
             出力形式
           </label>
           <select
+            id={`${baseId}-export-format`}
             value={parameters.exportFormat}
             onChange={(e) =>
               handleChange('exportFormat', e.target.value as Parameters['exportFormat'])
@@ -483,6 +494,7 @@ function ParameterPanel({
         {/* Up Axis */}
         <div>
           <label
+            htmlFor={`${baseId}-up-axis`}
             style={{
               display: 'block',
               fontSize: '12px',
@@ -493,6 +505,7 @@ function ParameterPanel({
             上方向の軸
           </label>
           <select
+            id={`${baseId}-up-axis`}
             value={parameters.upAxis}
             onChange={(e) => handleChange('upAxis', e.target.value as Parameters['upAxis'])}
             style={{
@@ -513,6 +526,7 @@ function ParameterPanel({
         {/* LOD Selector */}
         <div>
           <label
+            htmlFor={`${baseId}-lod`}
             style={{
               display: 'block',
               fontSize: '12px',
@@ -523,6 +537,7 @@ function ParameterPanel({
             建物詳細度（LOD）
           </label>
           <select
+            id={`${baseId}-lod`}
             value={parameters.lod}
             onChange={(e) => handleChange('lod', e.target.value as Parameters['lod'])}
             style={{
@@ -608,6 +623,7 @@ function ParameterPanel({
             }}
           >
             <label
+              htmlFor={`${baseId}-terrain-thickness`}
               style={{
                 display: 'block',
                 fontSize: '12px',
@@ -618,6 +634,7 @@ function ParameterPanel({
               地形厚み: {parameters.terrainThickness} mm
             </label>
             <input
+              id={`${baseId}-terrain-thickness`}
               type="range"
               min={1}
               max={50}
@@ -708,6 +725,7 @@ function ParameterPanel({
                 }}
               >
                 <label
+                  htmlFor={`${baseId}-shell-thickness`}
                   style={{
                     display: 'block',
                     fontSize: '12px',
@@ -718,6 +736,7 @@ function ParameterPanel({
                   シェル厚み: {parameters.shellThickness.toFixed(1)} mm
                 </label>
                 <input
+                  id={`${baseId}-shell-thickness`}
                   type="range"
                   min={0.8}
                   max={Math.min(

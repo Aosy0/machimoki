@@ -4941,6 +4941,7 @@ export default function Preview3D({
         >
           <select
             data-testid="gsi-style-select-preview"
+            aria-label="地図スタイル"
             value={gsiStyle}
             onChange={(e) => {
               const style = e.target.value as GsiTileStyle
@@ -4996,6 +4997,7 @@ export default function Preview3D({
             {isCompact ? (
               <select
                 data-testid="view-preset-select"
+                aria-label="視点プリセット"
                 defaultValue="iso"
                 onChange={(e) => {
                   const preset = VIEW_PRESETS.find(([id]) => id === e.target.value)
