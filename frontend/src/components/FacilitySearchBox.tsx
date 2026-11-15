@@ -30,12 +30,12 @@ const ROOT_STYLE: React.CSSProperties = {
   left: '8px',
   width: 'min(360px, calc(100% - 16px))',
   zIndex: 2,
-  background: 'rgba(255, 255, 255, 0.95)',
-  border: '1px solid #ccc',
+  background: 'rgba(34, 34, 34, 0.95)',
+  border: '1px solid var(--border)',
   borderRadius: '4px',
-  boxShadow: '0 1px 4px rgba(0, 0, 0, 0.15)',
+  boxShadow: '0 1px 4px rgba(0, 0, 0, 0.4)',
   fontSize: '16px',
-  color: '#333',
+  color: 'var(--text)',
 }
 
 const INPUT_ROW_STYLE: React.CSSProperties = {
@@ -50,9 +50,8 @@ const INPUT_STYLE: React.CSSProperties = {
   minWidth: 0,
   fontSize: '16px',
   border: 'none',
-  outline: 'none',
   background: 'transparent',
-  color: '#333',
+  color: 'var(--text)',
   padding: '6px 0',
 }
 
@@ -62,7 +61,7 @@ const CLEAR_BUTTON_STYLE: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
-  color: '#666',
+  color: 'var(--text-dim)',
   padding: '4px 8px',
   lineHeight: 1,
 }
@@ -72,7 +71,7 @@ const SEARCH_BUTTON_STYLE: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
-  color: '#666',
+  color: 'var(--text-dim)',
   padding: '4px 8px',
   lineHeight: 1,
   display: 'flex',
@@ -81,17 +80,17 @@ const SEARCH_BUTTON_STYLE: React.CSSProperties = {
 }
 
 const POPUP_STYLE: React.CSSProperties = {
-  borderTop: '1px solid #ddd',
+  borderTop: '1px solid var(--border)',
   overflowY: 'auto',
   overscrollBehavior: 'contain',
-  background: 'rgba(255, 255, 255, 0.98)',
+  background: 'rgba(34, 34, 34, 0.97)',
   borderRadius: '0 0 4px 4px',
 }
 
 const SECTION_TITLE_STYLE: React.CSSProperties = {
   fontSize: '13px',
-  color: '#666',
-  background: '#f3f3f3',
+  color: 'var(--text-dim)',
+  background: '#2a2a2a',
   padding: '5px 12px',
 }
 
@@ -104,14 +103,14 @@ const ITEM_BUTTON_STYLE: React.CSSProperties = {
   cursor: 'pointer',
   padding: '8px 12px',
   fontSize: '15px',
-  color: '#333',
+  color: 'var(--text)',
   lineHeight: 1.4,
 }
 
 const ITEM_SUB_STYLE: React.CSSProperties = {
   display: 'block',
   fontSize: '13px',
-  color: '#777',
+  color: 'var(--text-dim)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -120,13 +119,13 @@ const ITEM_SUB_STYLE: React.CSSProperties = {
 const META_STYLE: React.CSSProperties = {
   padding: '8px 12px',
   fontSize: '14px',
-  color: '#666',
+  color: 'var(--text-dim)',
 }
 
 const ERROR_STYLE: React.CSSProperties = {
   padding: '8px 12px',
   fontSize: '14px',
-  color: '#555',
+  color: 'var(--text-dim)',
 }
 
 const RESULTS_HEADER_STYLE: React.CSSProperties = {
@@ -136,8 +135,8 @@ const RESULTS_HEADER_STYLE: React.CSSProperties = {
   gap: '8px',
   padding: '8px 12px',
   fontSize: '14px',
-  color: '#333',
-  background: '#f3f3f3',
+  color: 'var(--text)',
+  background: '#2a2a2a',
 }
 
 /**
@@ -266,7 +265,9 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   const flyToHit = useCallback((hit: PoiHit) => {
     const m = mapRef.current
     try {
-      m.flyTo({ center: [hit.lng, hit.lat], zoom: 16, duration: 800 })
+      // 視差効果を減らす設定ではアニメーションせず即座に移動する
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      m.flyTo({ center: [hit.lng, hit.lat], zoom: 16, duration: reduceMotion ? 0 : 800 })
     } catch {
       // flyTo 失敗時はマーカー設置のみ継続
     }
@@ -430,6 +431,8 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Enter') {
+        // IME の変換確定 Enter で検索を発火させない
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return
         e.preventDefault()
         runFullSearch(query)
       } else if (e.key === 'Escape') {
@@ -514,7 +517,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
         {query.length > 0 && (
           <button
             type="button"
-            aria-label="検索文字をクリア"
+            aria-label="検索をクリア"
             onClick={handleClear}
             style={CLEAR_BUTTON_STYLE}
           >
@@ -529,10 +532,10 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
           disabled={submitDisabled}
           onClick={() => runFullSearch(query)}
           onMouseEnter={(e) => {
-            if (!submitDisabled) e.currentTarget.style.color = '#333'
+            if (!submitDisabled) e.currentTarget.style.color = 'var(--text)'
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = '#666'
+            e.currentTarget.style.color = 'var(--text-dim)'
           }}
           style={{
             ...SEARCH_BUTTON_STYLE,
