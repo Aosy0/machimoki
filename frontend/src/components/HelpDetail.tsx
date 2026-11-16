@@ -223,6 +223,15 @@ export default function HelpDetail({ mode, isOpen, onClose }: HelpDetailProps) {
           <div>選択範囲は自動で長辺150mmになります。</div>
           <div>設定はプレビューと書き出しの両方に反映されます。</div>
           <div>3MFは色を保持できます（推奨）。</div>
+          <p style={{ margin: '12px 0 0' }}>
+            <a href="/guide/" target="_blank" rel="noreferrer">
+              3Dプリントの手順ガイド
+            </a>
+            {' / '}
+            <a href="/faq/" target="_blank" rel="noreferrer">
+              よくある質問
+            </a>
+          </p>
         </section>
       </div>
       {(isCompact || mode === 'map') && (

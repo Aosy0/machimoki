@@ -263,6 +263,16 @@ input[type="file"]::file-selector-button:hover {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+.help-detail-body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.help-detail-body a:hover {
+  text-decoration-thickness: 2px;
+}
+
 .help-detail-body::-webkit-scrollbar {
   width: 8px;
 }
