@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#141414" />
+    <title>PLATEAUの3D都市モデルを3Dプリント用に無料変換｜Machimoki</title>
+    <meta
+      name="description"
+      content="国土交通省PLATEAUの3D都市モデルから、3Dプリンター用のSTL / 3MFを無料で作成。地図で範囲を選ぶだけ、登録不要・料金なし。地形・建物・刻印・中空シェルまでブラウザ内で処理します。"
+    />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <link rel="canonical" href="https://machimoki.aosy.f5.si/plateau-3dprint/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/seo.css" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Machimoki" />
+    <meta property="og:locale" content="ja_JP" />
+    <meta property="og:title" content="PLATEAUの3D都市モデルを3Dプリント用に無料変換｜Machimoki" />
+    <meta
+      property="og:description"
+      content="地図で範囲を選ぶだけで、PLATEAUの3D都市モデルから3Dプリント用のSTL / 3MFを無料で生成。登録不要、ブラウザ内で処理します。"
+    />
+    <meta property="og:url" content="https://machimoki.aosy.f5.si/plateau-3dprint/" />
+    <meta property="og:image" content="https://machimoki.aosy.f5.si/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PLATEAUの3D都市モデルを3Dプリント用に無料変換｜Machimoki" />
+    <meta
+      name="twitter:description"
+      content="地図で範囲を選ぶだけで、PLATEAUの3D都市モデルから3Dプリント用のSTL / 3MFを無料で生成します。"
+    />
+    <meta name="twitter:image" content="https://machimoki.aosy.f5.si/og.png" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Machimoki","url":"https://machimoki.aosy.f5.si/","applicationCategory":"DesignApplication","operatingSystem":"Web","inLanguage":"ja","description":"国土交通省PLATEAUの3D都市モデルから、3Dプリント用のSTL / 3MFを無料で作成できるWebツール。","offers":{"@type":"Offer","price":"0","priceCurrency":"JPY"}}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Machimokiは本当に無料ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。料金はかかりません。アカウント登録も不要で、地図で範囲を選んでそのままSTL / 3MFを書き出せます。"}},{"@type":"Question","name":"PLATEAUのデータはどこから取得していますか？","acceptedAnswer":{"@type":"Answer","text":"国土交通省 Project PLATEAU が公開している3D Tiles（建築物モデル）と、PLATEAUの地形タイル、背景地図に国土地理院の地理院タイルを使用しています。"}},{"@type":"Question","name":"3Dプリントした模型は届きますか？","acceptedAnswer":{"@type":"Answer","text":"いいえ。このサイトは3Dプリント用のデータ（STL / 3MF）を作るツールです。印刷はお手持ちの3Dプリンター、または印刷サービスで行ってください。"}},{"@type":"Question","name":"生成したデータは商用利用できますか？","acceptedAnswer":{"@type":"Answer","text":"はい。PLATEAUの3D都市モデルはCC BY 4.0で提供されており、出典（© PLATEAU）を表示すれば商用利用できます。"}},{"@type":"Question","name":"3MFとSTLはどちらを選べばよいですか？","acceptedAnswer":{"@type":"Answer","text":"通常は3MFをおすすめします。単位（mm）やメタデータを保持でき、スライサーでの取り扱いも安定します。STLは最も一般的な形式で、ほぼすべてのスライサーで開けます。"}}]}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Machimoki","item":"https://machimoki.aosy.f5.si/"},{"@type":"ListItem","position":2,"name":"PLATEAU 3Dプリント","item":"https://machimoki.aosy.f5.si/plateau-3dprint/"}]}</script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">
+          <img class="brand__mark" src="/favicon.svg" alt="" width="20" height="20" />
+          Machimoki
+        </a>
+        <nav class="site-nav" aria-label="サイト内メニュー">
+          <a href="/plateau-3dprint/" aria-current="page">PLATEAU 3Dプリント</a>
+          <a href="/guide/">使い方</a>
+          <a href="/faq/">よくある質問</a>
+        </nav>
+        <a class="header-cta" href="/">無料でつくる</a>
+      </div>
+    </header>
+
+    <main>
+      <div class="hero">
+        <div class="wrap">
+          <p class="hero__eyebrow">国土交通省 Project PLATEAU 対応</p>
+          <h1>
+            PLATEAUの3D都市モデルを<br />
+            <span class="accent">3Dプリント用データ</span>に、無料で。
+          </h1>
+          <p class="hero__lead">
+            地図で範囲を選ぶだけ。国土交通省PLATEAUの建物モデルと地形から、
+            3Dプリンターで使える水密な <strong>STL / 3MF</strong> を生成します。
+            アカウント登録も料金も不要、生成処理はブラウザ内で完結します。
+          </p>
+          <div class="cta-row">
+            <a class="button" href="/">無料でつくる</a>
+            <a class="button button--ghost" href="/guide/">使い方を見る</a>
+          </div>
+          <p class="hero__note">
+            出力形式: 3MF（推奨） / STL ／ 対応: PLATEAUが3D都市モデルを公開している自治体
+          </p>
+        </div>
+      </div>
+
+      <div class="wrap">
+        <nav class="breadcrumb" aria-label="パンくず">
+          <ol>
+            <li><a href="/">Machimoki</a></li>
+            <li aria-current="page">PLATEAU 3Dプリント</li>
+          </ol>
+        </nav>
+
+        <section id="what">
+          <h2>PLATEAUの3D都市モデルを、そのまま3Dプリントできる形に</h2>
+          <p>
+            <a href="https://www.mlit.go.jp/plateau/" rel="noopener">PLATEAU（プラトー）</a>は、
+            国土交通省が全国の都市を3Dモデル化して公開しているオープンデータです。
+            建物の形や高さ、地形の起伏まで含まれているため、3Dプリントすると
+            そのまま「街の模型」になります。
+          </p>
+          <p>
+            ただし公開されているデータは3D Tiles形式で、建物が個別のメッシュに分かれていたり、
+            地面との間に隙間があったりと、3Dプリンター向けのデータとしてはそのままでは使えません。
+            Machimoki は、指定した範囲の建物と地形を読み込み、<strong>ブール演算で1つの水密なメッシュに結合</strong>し、
+            スライサーでそのまま開ける STL / 3MF として書き出します。
+          </p>
+        </section>
+
+        <section id="how">
+          <h2>使い方は3ステップ</h2>
+          <figure class="figure">
+            <img
+              src="/images/map-selection.jpg"
+              width="1200"
+              height="549"
+              loading="lazy"
+              decoding="async"
+              alt="地図上で3Dプリントする範囲を選ぶ画面。水色の枠はPLATEAUの3D都市モデルが整備されている建物を示す（東京都新宿区の例）"
+            />
+            <figcaption>
+              地図をドラッグして範囲を選びます。水色で示された建物が、3Dデータの整備済みエリアです（例: 東京都新宿区）。
+              地図は国土地理院の地理院タイルを使用しています。
+            </figcaption>
+          </figure>
+
+          <ol class="steps">
+            <li>
+              <h3>地図で範囲を選ぶ</h3>
+              <p>
+                地図上をドラッグして、模型にしたい範囲を矩形で選択します。
+                選択した範囲の実寸（m）と、書き出し時の模型サイズ（mm）がその場で表示されます。
+              </p>
+            </li>
+            <li>
+              <h3>地形・建物・刻印を調整する</h3>
+              <p>
+                地形の厚み、底面のフラット化、LOD（建物の詳細度）、中空シェル、土台と建物の分割、
+                底面・側面への文字の刻印などを設定します。3Dプレビューで仕上がりを確認できます。
+              </p>
+            </li>
+            <li>
+              <h3>3MF / STL をダウンロード</h3>
+              <p>
+                そのままスライサー（Bambu Studio、PrusaSlicer、Cura、OrcaSlicer など）で開けます。
+                3MFは単位がmmで保持されるため、スライサー側での倍率指定が不要です。
+              </p>
+            </li>
+          </ol>
+        </section>
+
+        <section id="features">
+          <h2>できること</h2>
+          <ul class="cards">
+            <li class="card">
+              <h3>水密なメッシュに結合</h3>
+              <p>
+                建物ごとに分かれたメッシュと地形を、manifold-3d のブール演算で1つのソリッドに結合。
+                穴あきや非多様体エッジが残りにくく、スライサーのエラーを避けられます。
+              </p>
+            </li>
+            <li class="card">
+              <h3>3MF / STL の両対応</h3>
+              <p>
+                3MFは単位・メタデータ・複数パーツを保持できるため、寸法通りの出力に向いています。
+                STLは汎用性重視の場合に。どちらもワンクリックで書き出せます。
+              </p>
+            </li>
+            <li class="card">
+              <h3>刻印（底面・側面）</h3>
+              <p>
+                地名・座標・メッシュコード・縮尺・出典・作成年などを、模型の底面や側面に彫り込めます。
+                日本語対応フォントを同梱しており、FDM向けの線幅・深さに自動で調整します。
+              </p>
+            </li>
+            <li class="card">
+              <h3>中空シェル（底面開口）</h3>
+              <p>
+                底面を開けた中空構造にできます。LEDやタッチセンサーを内蔵する工作や、
+                フィラメントと印刷時間の節約に向いています。壁の厚みはmm指定です。
+              </p>
+            </li>
+            <li class="card">
+              <h3>土台と建物に分割</h3>
+              <p>
+                地形枠と建物部分を2パーツに分けて出力できます。向きを変えて印刷できるため、
+                サポート材を減らし、屋根の表面をきれいに保てます。
+              </p>
+            </li>
+            <li class="card">
+              <h3>建物の取捨選択</h3>
+              <p>
+                3Dプレビュー上で建物をクリックして除外できます。目立たせたい建物だけを残したり、
+                印刷しやすいボリュームに調整したりできます。
+              </p>
+            </li>
+          </ul>
+        </section>
+
+        <section id="pricing">
+          <h2>料金は0円。データの従量課金はありません</h2>
+          <p>
+            このサイトは無料で公開しています。1データごとの課金や、生成回数の制限はありません。
+            何度でも範囲や設定を変えて試せるので、「この範囲で印刷したらどうなるか」を
+            確認しながら納得のいく模型を作れます。
+          </p>
+          <ul>
+            <li><strong>料金</strong>: 0円（アカウント登録・クレジットカード不要）</li>
+            <li><strong>生成</strong>: ブラウザ内のWebAssemblyで処理（サーバーにモデルを預けない）</li>
+            <li><strong>出力</strong>: 3MF / STL。ダウンロード期限なし</li>
+            <li><strong>商用利用</strong>: 可能（PLATEAUの出典表示「© PLATEAU」が必要）</li>
+          </ul>
+          <div class="callout">
+            <p>
+              処理はお使いのブラウザ内で実行されるため、生成したモデルがサーバーに保存されることはありません。
+              データの取得のみ、PLATEAUと国土地理院の配信サーバーにアクセスします。
+            </p>
+          </div>
+        </section>
+
+        <section id="compare">
+          <h2>有料の作成サービスとの違い</h2>
+          <p>
+            同種のサービスとして、範囲を指定すると3Dプリント用データを作成してくれる有料サービスもあります。
+            向き不向きが分かれるため、違いを整理しました。
+          </p>
+          <div class="table-scroll">
+            <table>
+              <caption>2026年11月時点の公開情報にもとづく比較（各サービスの仕様は変更される場合があります）</caption>
+              <thead>
+                <tr>
+                  <th scope="col">項目</th>
+                  <th scope="col">Machimoki</th>
+                  <th scope="col">3DCity.jp（有料サービス）</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">料金</th>
+                  <td>無料</td>
+                  <td>1データ 1,000円（税込）</td>
+                </tr>
+                <tr>
+                  <th scope="row">作業</th>
+                  <td>自分で範囲を選び、その場で生成</td>
+                  <td>申込み → 作成 → 支払い → ダウンロード</td>
+                </tr>
+                <tr>
+                  <th scope="row">出力形式</th>
+                  <td>3MF / STL</td>
+                  <td>STL</td>
+                </tr>
+                <tr>
+                  <th scope="row">刻印（文字入れ）</th>
+                  <td>対応（底面・側面、日本語可）</td>
+                  <td>公開情報に記載なし</td>
+                </tr>
+                <tr>
+                  <th scope="row">中空シェル・2パーツ分割</th>
+                  <td>対応</td>
+                  <td>公開情報に記載なし</td>
+                </tr>
+                <tr>
+                  <th scope="row">含められる地物</th>
+                  <td>地形・建物（LOD1 / LOD2）</td>
+                  <td>地形・建物・植生・道路・橋梁・鉄道・水部</td>
+                </tr>
+                <tr>
+                  <th scope="row">ダウンロード期限</th>
+                  <td>なし</td>
+                  <td>作成後7日間</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            道路・植生・鉄道まで含めたい場合や、自分で作業せずデータだけ受け取りたい場合は、
+            有料サービスが向いています。一方、<strong>地形と建物を自分の用途に合わせて加工したい</strong>、
+            <strong>刻印や中空化まで自分でコントロールしたい</strong>、<strong>何度も試したい</strong>場合は
+            Machimoki が向いています。
+          </p>
+        </section>
+
+        <section id="data">
+          <h2>対応データと地域について</h2>
+          <p>
+            利用できるのは、PLATEAUが3D都市モデル（建築物モデル）を公開している自治体・地域です。
+            全国すべての地域をカバーしているわけではありません。地図上には対応範囲を重ねて表示できるので、
+            選択前に確認できます。
+          </p>
+          <ul>
+            <li>建物: PLATEAU 建築物モデル（LOD1 / LOD2）</li>
+            <li>地形: PLATEAU 地形モデル（quantized-mesh）</li>
+            <li>背景地図: 国土地理院 地理院タイル</li>
+          </ul>
+          <p class="meta-note">
+            データの精度・収録範囲・更新時期は、国土交通省が公開している元データに依存します。
+          </p>
+        </section>
+
+        <section id="faq">
+          <h2>よくある質問</h2>
+          <div class="faq">
+            <details>
+              <summary>Machimokiは本当に無料ですか？</summary>
+              <div class="faq__answer">
+                <p>はい。料金はかかりません。アカウント登録も不要で、地図で範囲を選んでそのままSTL / 3MFを書き出せます。</p>
+              </div>
+            </details>
+            <details>
+              <summary>PLATEAUのデータはどこから取得していますか？</summary>
+              <div class="faq__answer">
+                <p>国土交通省 Project PLATEAU が公開している3D Tiles（建築物モデル）とPLATEAUの地形タイル、背景地図に国土地理院の地理院タイルを使用しています。</p>
+              </div>
+            </details>
+            <details>
+              <summary>3Dプリントした模型は届きますか？</summary>
+              <div class="faq__answer">
+                <p>いいえ。このサイトは3Dプリント用のデータ（STL / 3MF）を作るツールです。印刷はお手持ちの3Dプリンター、または印刷サービスで行ってください。</p>
+              </div>
+            </details>
+            <details>
+              <summary>生成したデータは商用利用できますか？</summary>
+              <div class="faq__answer">
+                <p>はい。PLATEAUの3D都市モデルはCC BY 4.0で提供されており、出典（© PLATEAU）を表示すれば商用利用できます。</p>
+              </div>
+            </details>
+            <details>
+              <summary>3MFとSTLはどちらを選べばよいですか？</summary>
+              <div class="faq__answer">
+                <p>通常は3MFをおすすめします。単位（mm）やメタデータを保持でき、スライサーでの取り扱いも安定します。STLは最も一般的な形式で、ほぼすべてのスライサーで開けます。</p>
+              </div>
+            </details>
+          </div>
+          <p style="margin-top: 24px"><a href="/faq/">よくある質問をすべて見る →</a></p>
+        </section>
+
+        <section id="start">
+          <h2>まずは地図で範囲を選んでみてください</h2>
+          <p>
+            登録もインストールも不要です。ブラウザで開いて、模型にしたい街をドラッグするだけ。
+            気になる範囲を何度でも試せます。
+          </p>
+          <div class="cta-row">
+            <a class="button" href="/">Machimokiを開く</a>
+            <a class="button button--ghost" href="/guide/">3Dプリントのコツを読む</a>
+          </div>
+        </section>
+      </div>
+    </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <nav aria-label="フッターメニュー">
+        <a href="/">アプリ（無料）</a>
+        <a href="/plateau-3dprint/">PLATEAU 3Dプリント</a>
+        <a href="/guide/">使い方</a>
+        <a href="/faq/">よくある質問</a>
+        <a href="https://github.com/Aosy0/machimoki" rel="noopener">GitHub</a>
+      </nav>
+      <p>
+        本アプリは国土交通省「Project PLATEAU」の3D都市モデル、国土地理院の地理院タイル、
+        CesiumJS（Apache License 2.0）を使用しています。
+      </p>
+      <p>© PLATEAU（国土交通省） / © 国土地理院 / © Cesium</p>
+    </div>
+  </footer>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Machimoki">
+  <rect width="32" height="32" rx="7" fill="#141414"/>
+  <g stroke="#141414" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M16 4.6 27 10.7 16 16.8 5 10.7Z" fill="#7fe3ef"/>
+    <path d="M5 10.7 16 16.8V27.4L5 21.3Z" fill="#00bcd4"/>
+    <path d="M27 10.7 16 16.8V27.4L27 21.3Z" fill="#00838f"/>
+  </g>
+</svg>

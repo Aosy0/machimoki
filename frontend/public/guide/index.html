@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#141414" />
+    <title>PLATEAUを3Dプリントする手順と設定｜範囲・スライサー・コツ｜Machimoki</title>
+    <meta
+      name="description"
+      content="PLATEAUの3D都市モデルを3Dプリントする手順を解説。範囲の決め方、地形厚み・LOD・刻印・中空シェルの設定、3MF/STLのスライサー設定、つまずきやすい点と対処までまとめました。"
+    />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <link rel="canonical" href="https://machimoki.aosy.f5.si/guide/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/seo.css" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Machimoki" />
+    <meta property="og:locale" content="ja_JP" />
+    <meta property="og:title" content="PLATEAUを3Dプリントする手順と設定｜範囲・スライサー・コツ" />
+    <meta
+      property="og:description"
+      content="PLATEAUの3D都市モデルを3Dプリントする手順を、範囲選びからスライサー設定、つまずきやすい点まで解説します。"
+    />
+    <meta property="og:url" content="https://machimoki.aosy.f5.si/guide/" />
+    <meta property="og:image" content="https://machimoki.aosy.f5.si/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PLATEAUを3Dプリントする手順と設定｜範囲・スライサー・コツ" />
+    <meta
+      name="twitter:description"
+      content="PLATEAUの3D都市モデルを3Dプリントする手順を、範囲選びからスライサー設定まで解説します。"
+    />
+    <meta name="twitter:image" content="https://machimoki.aosy.f5.si/og.png" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"PLATEAUの3D都市モデルを3Dプリントする手順と設定ガイド","description":"PLATEAUの3D都市モデルを3Dプリント用データにする手順、範囲の決め方、スライサー設定、つまずきやすい点をまとめた実践ガイド。","inLanguage":"ja","mainEntityOfPage":"https://machimoki.aosy.f5.si/guide/","author":{"@type":"Organization","name":"Machimoki"},"publisher":{"@type":"Organization","name":"Machimoki"}}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Machimoki","item":"https://machimoki.aosy.f5.si/"},{"@type":"ListItem","position":2,"name":"使い方","item":"https://machimoki.aosy.f5.si/guide/"}]}</script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">
+          <img class="brand__mark" src="/favicon.svg" alt="" width="20" height="20" />
+          Machimoki
+        </a>
+        <nav class="site-nav" aria-label="サイト内メニュー">
+          <a href="/plateau-3dprint/">PLATEAU 3Dプリント</a>
+          <a href="/guide/" aria-current="page">使い方</a>
+          <a href="/faq/">よくある質問</a>
+        </nav>
+        <a class="header-cta" href="/">無料でつくる</a>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <nav class="breadcrumb" aria-label="パンくず">
+        <ol>
+          <li><a href="/">Machimoki</a></li>
+          <li aria-current="page">使い方</li>
+        </ol>
+      </nav>
+
+      <article>
+        <h1>PLATEAUの3D都市モデルを3Dプリントする手順</h1>
+        <p class="lead">
+          国土交通省PLATEAUの3D都市モデルは、そのままでも形は取り出せますが、
+          3Dプリンターで失敗せずに印刷するには「範囲の選び方」「地形の扱い」「スライサー設定」の3点が効きます。
+          ここでは、Machimoki を使う前提で、迷いやすいポイントを順に整理します。
+        </p>
+
+        <nav class="toc" aria-label="目次">
+          <p class="toc__title">目次</p>
+          <ol>
+            <li><a href="#prepare">1. 準備するもの</a></li>
+            <li><a href="#range">2. 範囲の決め方</a></li>
+            <li><a href="#settings">3. 設定の決め方</a></li>
+            <li><a href="#slicer">4. 書き出しとスライサー設定</a></li>
+            <li><a href="#trouble">5. つまずきやすい点と対処</a></li>
+            <li><a href="#glossary">6. 用語ミニ辞典</a></li>
+          </ol>
+        </nav>
+
+        <section id="prepare">
+          <h2>1. 準備するもの</h2>
+          <ul>
+            <li><strong>PCのブラウザ</strong>: Chrome または Edge の最新版を推奨します。WebAssembly と WebGL を使うため、古いブラウザでは動作しない場合があります。</li>
+            <li><strong>メモリ</strong>: 広い範囲を選ぶとメモリ使用量が増えます。8GB以上を推奨します。</li>
+            <li><strong>3Dプリンターとスライサー</strong>: Bambu Studio、PrusaSlicer、OrcaSlicer、Cura など、3MF か STL を読み込めるものであれば何でも構いません。</li>
+            <li><strong>フィラメント</strong>: 地形の起伏を表現するなら PLA が扱いやすく、細部の刻印も出やすいです。</li>
+          </ul>
+          <p>インストール作業はありません。ブラウザで <a href="/">Machimoki</a> を開けばすぐに始められます。</p>
+        </section>
+
+        <section id="range">
+          <h2>2. 範囲の決め方</h2>
+          <p>
+            最初に決めるのは「どの範囲を、どのくらいの大きさで印刷するか」です。
+            範囲を広げるほど情報量は増えますが、印刷サイズが大きくなり、造形時間と失敗率も上がります。
+          </p>
+          <h3>ベッドサイズから逆算する</h3>
+          <p>
+            一般的な家庭用プリンターのベッドは 180〜256mm 四方です。
+            余白を考えると、<strong>一辺 150〜200mm に収まる範囲</strong>から始めるのが無難です。
+            範囲選択時に表示される実寸（m）と模型サイズ（mm）を見ながら、
+            縮尺がおよそ <strong>1/5,000〜1/10,000</strong> になるように調整すると、街並みが読み取れる大きさになります。
+          </p>
+          <h3>地形の起伏を見る</h3>
+          <p>
+            坂や川沿い、埋め立て地など起伏のある場所は、模型としての見栄えが大きく変わります。
+            平坦な市街地を選ぶと「板にビルが並んだだけ」に見えやすいので、
+            高低差のある地形を含めると満足度が上がります。
+          </p>
+          <h3>対応範囲を確認する</h3>
+          <p>
+            PLATEAUの3D都市モデルは全国すべての地域に整備されているわけではありません。
+            地図上にカバレッジを重ねて表示できるので、選択前に目的の地域が含まれているか確認してください。
+            建物が表示されない場合は、その範囲のデータが未整備である可能性が高いです。
+          </p>
+        </section>
+
+        <section id="settings">
+          <h2>3. 設定の決め方</h2>
+          <p>
+            範囲を選んだら、右側のパネルで仕上がりを調整します。よく使う設定と、その選び方の目安です。
+          </p>
+          <dl class="deflist">
+            <dt>地形の厚み</dt>
+            <dd>
+              地形モデルは面データなので、そのままでは薄いシートになります。
+              厚みを持たせると自立し、底面を平らにできます。印刷サイズ 200mm 程度なら 2〜4mm が目安です。
+              薄すぎると反り、厚すぎるとフィラメントと時間を消費します。
+            </dd>
+            <dt>底面をフラット化</dt>
+            <dd>
+              地形の凸凹を底面側で切り落とし、平らな面を作ります。
+              ベッドへの密着が安定し、反りを抑えられます。机に置いて飾る用途なら実質必須です。
+            </dd>
+            <dt>実際の標高を反映する</dt>
+            <dd>
+              オンにすると、範囲内の標高差をそのまま模型の高さに反映します。
+              山間部や海沿いでは差が出ますが、起伏が大きすぎて縦に伸びる場合は、
+              厚みや範囲を調整するか、オフにして平坦な模型にすると安定します。
+            </dd>
+            <dt>LOD（詳細度）</dt>
+            <dd>
+              LOD1 は建物を直方体で表す簡略モデル、LOD2 は屋根形状などを含む詳細モデルです。
+              広い範囲を小さく印刷するなら LOD1 で十分見栄えがします。狭い範囲を大きく印刷するなら LOD2 が向いています。
+            </dd>
+            <dt>白模型レンダリング</dt>
+            <dd>
+              建物の色を付けず、単色の模型として出力します。
+              塗装する前提の場合や、影で形を見せたい場合に向いています。
+            </dd>
+            <dt>刻印</dt>
+            <dd>
+              地名や座標、縮尺、出典などを底面や側面に彫り込めます。
+              FDMプリンターの 0.4mm ノズルでは、線幅が細すぎると潰れます。
+              Machimoki は最小サイズを考慮して自動で調整しますが、文字数を減らすとより確実です。
+            </dd>
+            <dt>中空シェル・土台と建物の分割</dt>
+            <dd>
+              底面を開口した中空構造にすると、LEDを仕込んだりフィラメントを節約できます。
+              土台と建物を2パーツに分けると、屋根を上に向けて印刷できるためサポート材を減らせます。
+            </dd>
+          </dl>
+        </section>
+
+        <section id="slicer">
+          <h2>4. 書き出しとスライサー設定</h2>
+          <p>
+            設定が決まったら「3MF（推奨）」または「STL」でダウンロードします。
+            3MF は単位がmmで保持されるため、スライサー側で倍率を指定する必要がなく、複数パーツもまとめて扱えます。
+          </p>
+          <h3>主なスライサーでの開き方</h3>
+          <ul>
+            <li><strong>Bambu Studio / OrcaSlicer</strong>: 「ファイル → インポート」から3MFを選択。パーツ分割されている場合はそのまま配置されます。</li>
+            <li><strong>PrusaSlicer</strong>: 3MFをドラッグ＆ドロップ。単位はmmとして読み込まれます。</li>
+            <li><strong>Cura</strong>: 「ファイル → 開く」からSTLを選択。単位がインチになっている場合は設定でmmに変更してください。</li>
+          </ul>
+          <h3>印刷設定の目安（0.4mmノズル・PLA）</h3>
+          <div class="table-scroll">
+            <table>
+              <caption>街の模型を印刷するときの出発点。実際は造形物の大きさに合わせて調整してください</caption>
+              <thead>
+                <tr><th scope="col">項目</th><th scope="col">目安</th></tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row">レイヤー高さ</th><td>0.16〜0.2mm（刻印をくっきり出したいなら0.12〜0.16mm）</td></tr>
+                <tr><th scope="row">壁の数</th><td>2〜3</td></tr>
+                <tr><th scope="row">インフィル</th><td>10〜15%（強度より表面のきれいさを優先）</td></tr>
+                <tr><th scope="row">サポート</th><td>基本的に不要。分割した建物を寝かせる場合のみツリーサポートを検討</td></tr>
+                <tr><th scope="row">ビルドプレート密着</th><td>ブリム（5mm程度）を付けると反りを抑えやすい</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            模型は底面が平らなので、そのまま置けば安定します。
+            細い塔や張り出した屋根がある場合は、分割出力を使って向きを変えるのが確実です。
+          </p>
+        </section>
+
+        <section id="trouble">
+          <h2>5. つまずきやすい点と対処</h2>
+          <dl class="deflist">
+            <dt>建物が表示されない</dt>
+            <dd>
+              選択した範囲のPLATEAUデータが未整備の可能性があります。
+              カバレッジ表示で対応範囲を確認し、別の地域を選んでみてください。
+            </dd>
+            <dt>動作が重い・固まる</dt>
+            <dd>
+              範囲が広すぎるか、LOD2で建物が多いエリアを選んでいます。
+              範囲を狭めるかLOD1に切り替えてください。生成はブラウザ内で行うため、他のタブを閉じると安定します。
+            </dd>
+            <dt>切片が薄くて反る</dt>
+            <dd>
+              地形の厚みを増やし、底面をフラット化してください。印刷時はブリムを付け、1層目をゆっくり印刷すると改善します。</dd>
+            <dt>刻印の文字が潰れる</dt>
+            <dd>
+              文字を大きくするか、文字数を減らしてください。0.4mmノズルでは線幅0.4mm未満の溝は埋まりやすいです。
+              0.2mmノズルを使うと細かい文字も出ますが、印刷時間は延びます。
+            </dd>
+            <dt>スライサーで「非多様体」と警告が出る</dt>
+            <dd>
+              通常はMachimoki側で結合済みのため出ません。STLで読み込んだ場合に警告が出るなら、3MFで再出力してみてください。
+            </dd>
+            <dt>サイズが想定と違う</dt>
+            <dd>
+              STLには単位情報がないため、スライサーがインチとして解釈している可能性があります。
+              3MFを使うか、スライサーの単位設定をmmに変更してください。
+            </dd>
+          </dl>
+        </section>
+
+        <section id="glossary">
+          <h2>6. 用語ミニ辞典</h2>
+          <dl class="deflist">
+            <dt>PLATEAU（プラトー）</dt>
+            <dd>国土交通省が主導する3D都市モデル整備・オープンデータ化プロジェクト。全国の都市の建物・地形などが公開されています。</dd>
+            <dt>3D Tiles</dt>
+            <dd>大量の3Dデータを段階的に読み込むための配信形式。表示範囲に応じて必要な分だけ取得します。</dd>
+            <dt>LOD</dt>
+            <dd>Level of Detail の略。LOD1は直方体の簡略モデル、LOD2は屋根形状などを含む詳細モデルです。</dd>
+            <dt>水密（ウォータータイト）</dt>
+            <dd>メッシュに穴や隙間がなく、中身が詰まった状態。スライサーが「中身のある物体」として正しく扱えます。</dd>
+            <dt>3MF / STL</dt>
+            <dd>3Dプリント用のファイル形式。3MFは単位・色・複数パーツを保持でき、STLは形状のみのシンプルな形式です。</dd>
+            <dt>スライサー</dt>
+            <dd>3Dモデルをプリンターが動ける指示（G-code）に変換するソフト。Bambu Studio、PrusaSlicer、Cura などがあります。</dd>
+          </dl>
+        </section>
+
+        <section id="next">
+          <h2>実際に作ってみる</h2>
+          <p>
+            ここまでの設定は、すべてブラウザ上で試せます。範囲を変えて何度でも生成できるので、
+            まずは小さめの範囲で1つ印刷し、成功したら範囲を広げていくのがおすすめです。
+          </p>
+          <div class="cta-row">
+            <a class="button" href="/">Machimokiを開く</a>
+            <a class="button button--ghost" href="/faq/">よくある質問を見る</a>
+          </div>
+        </section>
+      </article>
+    </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <nav aria-label="フッターメニュー">
+        <a href="/">アプリ（無料）</a>
+        <a href="/plateau-3dprint/">PLATEAU 3Dプリント</a>
+        <a href="/guide/">使い方</a>
+        <a href="/faq/">よくある質問</a>
+        <a href="https://github.com/Aosy0/machimoki" rel="noopener">GitHub</a>
+      </nav>
+      <p>
+        本アプリは国土交通省「Project PLATEAU」の3D都市モデル、国土地理院の地理院タイル、
+        CesiumJS（Apache License 2.0）を使用しています。
+      </p>
+      <p>© PLATEAU（国土交通省） / © 国土地理院 / © Cesium</p>
+    </div>
+  </footer>
+  </body>
+</html>

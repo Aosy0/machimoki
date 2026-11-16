@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#141414" />
+    <title>よくある質問｜PLATEAUの3D都市モデルを3Dプリント｜Machimoki</title>
+    <meta
+      name="description"
+      content="PLATEAUの3D都市モデルを3Dプリント用のSTL / 3MFに変換するMachimokiについて、料金・データの出典・出力形式・商用利用・対応地域・刻印の設定など、よくある質問をまとめました。"
+    />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <link rel="canonical" href="https://machimoki.aosy.f5.si/faq/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/seo.css" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Machimoki" />
+    <meta property="og:locale" content="ja_JP" />
+    <meta property="og:title" content="よくある質問｜PLATEAUの3D都市モデルを3Dプリント" />
+    <meta
+      property="og:description"
+      content="料金・データの出典・出力形式・商用利用・対応地域など、Machimokiについてのよくある質問をまとめました。"
+    />
+    <meta property="og:url" content="https://machimoki.aosy.f5.si/faq/" />
+    <meta property="og:image" content="https://machimoki.aosy.f5.si/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="よくある質問｜PLATEAUの3D都市モデルを3Dプリント" />
+    <meta
+      name="twitter:description"
+      content="料金・データの出典・出力形式・商用利用・対応地域など、Machimokiについてのよくある質問をまとめました。"
+    />
+    <meta name="twitter:image" content="https://machimoki.aosy.f5.si/og.png" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Machimokiは本当に無料ですか？","acceptedAnswer":{"@type":"Answer","text":"無料です。料金はかからず、アカウント登録もクレジットカードも不要です。1データごとの課金や生成回数の制限もありません。"}},{"@type":"Question","name":"PLATEAUのデータはどこから取得していますか？","acceptedAnswer":{"@type":"Answer","text":"国土交通省 Project PLATEAU が公開している3D Tiles（建築物モデル）、PLATEAUの地形タイル、背景地図に国土地理院の地理院タイルを使用しています。"}},{"@type":"Question","name":"3Dプリントした模型は届きますか？","acceptedAnswer":{"@type":"Answer","text":"いいえ。このサイトは3Dプリント用データ（STL / 3MF）を作るツールで、印刷や発送は行いません。お手持ちの3Dプリンター、または印刷サービスで出力してください。"}},{"@type":"Question","name":"3MFとSTLはどちらを選べばよいですか？","acceptedAnswer":{"@type":"Answer","text":"通常は3MFをおすすめします。単位（mm）や複数パーツの情報を保持できるため、スライサーで寸法通りに読み込まれます。STLは互換性重視の場合に選んでください。"}},{"@type":"Question","name":"どのくらいの範囲を選べばきれいに印刷できますか？","acceptedAnswer":{"@type":"Answer","text":"一辺 1〜2km 程度の範囲を、模型サイズ 150〜200mm に収めると街並みが読み取りやすいです。家庭用プリンターのベッドサイズから逆算して決めてください。"}},{"@type":"Question","name":"建物が表示されない地域があります","acceptedAnswer":{"@type":"Answer","text":"PLATEAUの3D都市モデルは全国すべての地域に整備されているわけではありません。地図上のカバレッジ表示で対応範囲を確認してください。"}},{"@type":"Question","name":"生成したデータは商用利用できますか？","acceptedAnswer":{"@type":"Answer","text":"はい。PLATEAUの3D都市モデルはCC BY 4.0で提供されているため、出典（© PLATEAU）を表示すれば商用利用できます。生成物を販売する場合も同様です。"}},{"@type":"Question","name":"選択した範囲や生成したモデルはサーバーに保存されますか？","acceptedAnswer":{"@type":"Answer","text":"保存されません。メッシュの生成はブラウザ内のWebAssemblyで実行されます。外部アクセスは、PLATEAUと国土地理院の配信サーバーからのデータ取得に限られます。"}},{"@type":"Question","name":"スマートフォンやタブレットでも使えますか？","acceptedAnswer":{"@type":"Answer","text":"PCでの利用を推奨します。3D表示にWebGLと相応のメモリを使うため、モバイル端末では動作が重くなる場合があります。"}},{"@type":"Question","name":"刻印の文字が潰れてしまいます","acceptedAnswer":{"@type":"Answer","text":"0.4mmノズルでは線幅が細い溝が埋まりやすいため、文字を大きくするか文字数を減らしてください。レイヤー高さを0.12〜0.16mmにすると出やすくなります。"}},{"@type":"Question","name":"中空シェルや土台と建物の分割は何に使いますか？","acceptedAnswer":{"@type":"Answer","text":"中空シェルはLEDやセンサーを内蔵する工作、フィラメントと印刷時間の節約に使えます。土台と建物の分割は、向きを変えてサポート材を減らしたい場合に便利です。"}},{"@type":"Question","name":"ソースコードは公開されていますか？","acceptedAnswer":{"@type":"Answer","text":"GitHub（https://github.com/Aosy0/machimoki）で公開しています。使用している地図・3Dデータのライセンスは、それぞれの提供元の条件に従います。"}}]}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Machimoki","item":"https://machimoki.aosy.f5.si/"},{"@type":"ListItem","position":2,"name":"よくある質問","item":"https://machimoki.aosy.f5.si/faq/"}]}</script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="/">
+          <img class="brand__mark" src="/favicon.svg" alt="" width="20" height="20" />
+          Machimoki
+        </a>
+        <nav class="site-nav" aria-label="サイト内メニュー">
+          <a href="/plateau-3dprint/">PLATEAU 3Dプリント</a>
+          <a href="/guide/">使い方</a>
+          <a href="/faq/" aria-current="page">よくある質問</a>
+        </nav>
+        <a class="header-cta" href="/">無料でつくる</a>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <nav class="breadcrumb" aria-label="パンくず">
+        <ol>
+          <li><a href="/">Machimoki</a></li>
+          <li aria-current="page">よくある質問</li>
+        </ol>
+      </nav>
+
+      <h1>よくある質問</h1>
+      <p class="lead">
+        PLATEAUの3D都市モデルを3Dプリント用データにするときの疑問をまとめました。
+        手順の詳細は<a href="/guide/">使い方ガイド</a>、サービス全体の説明は
+        <a href="/plateau-3dprint/">PLATEAU 3Dプリント</a>のページをご覧ください。
+      </p>
+
+      <section>
+        <div class="faq">
+            <details open>
+              <summary><span class="faq__cat">料金</span>Machimokiは本当に無料ですか？</summary>
+              <div class="faq__answer">
+                <p>無料です。料金はかからず、アカウント登録もクレジットカードも不要です。1データごとの課金や生成回数の制限もありません。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">データ</span>PLATEAUのデータはどこから取得していますか？</summary>
+              <div class="faq__answer">
+                <p>国土交通省 Project PLATEAU が公開している3D Tiles（建築物モデル）、PLATEAUの地形タイル、背景地図に国土地理院の地理院タイルを使用しています。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">出力</span>3Dプリントした模型は届きますか？</summary>
+              <div class="faq__answer">
+                <p>いいえ。このサイトは3Dプリント用データ（STL / 3MF）を作るツールで、印刷や発送は行いません。お手持ちの3Dプリンター、または印刷サービスで出力してください。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">出力</span>3MFとSTLはどちらを選べばよいですか？</summary>
+              <div class="faq__answer">
+                <p>通常は3MFをおすすめします。単位（mm）や複数パーツの情報を保持できるため、スライサーで寸法通りに読み込まれます。STLは互換性重視の場合に選んでください。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">範囲</span>どのくらいの範囲を選べばきれいに印刷できますか？</summary>
+              <div class="faq__answer">
+                <p>一辺 1〜2km 程度の範囲を、模型サイズ 150〜200mm に収めると街並みが読み取りやすいです。家庭用プリンターのベッドサイズから逆算して決めてください。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">範囲</span>建物が表示されない地域があります</summary>
+              <div class="faq__answer">
+                <p>PLATEAUの3D都市モデルは全国すべての地域に整備されているわけではありません。地図上のカバレッジ表示で対応範囲を確認してください。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">ライセンス</span>生成したデータは商用利用できますか？</summary>
+              <div class="faq__answer">
+                <p>はい。PLATEAUの3D都市モデルはCC BY 4.0で提供されているため、出典（© PLATEAU）を表示すれば商用利用できます。生成物を販売する場合も同様です。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">プライバシー</span>選択した範囲や生成したモデルはサーバーに保存されますか？</summary>
+              <div class="faq__answer">
+                <p>保存されません。メッシュの生成はブラウザ内のWebAssemblyで実行されます。外部アクセスは、PLATEAUと国土地理院の配信サーバーからのデータ取得に限られます。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">環境</span>スマートフォンやタブレットでも使えますか？</summary>
+              <div class="faq__answer">
+                <p>PCでの利用を推奨します。3D表示にWebGLと相応のメモリを使うため、モバイル端末では動作が重くなる場合があります。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">設定</span>刻印の文字が潰れてしまいます</summary>
+              <div class="faq__answer">
+                <p>0.4mmノズルでは線幅が細い溝が埋まりやすいため、文字を大きくするか文字数を減らしてください。レイヤー高さを0.12〜0.16mmにすると出やすくなります。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">設定</span>中空シェルや土台と建物の分割は何に使いますか？</summary>
+              <div class="faq__answer">
+                <p>中空シェルはLEDやセンサーを内蔵する工作、フィラメントと印刷時間の節約に使えます。土台と建物の分割は、向きを変えてサポート材を減らしたい場合に便利です。</p>
+              </div>
+            </details>
+            <details>
+              <summary><span class="faq__cat">ソフトウェア</span>ソースコードは公開されていますか？</summary>
+              <div class="faq__answer">
+                <p>GitHub（https://github.com/Aosy0/machimoki）で公開しています。使用している地図・3Dデータのライセンスは、それぞれの提供元の条件に従います。</p>
+              </div>
+            </details>
+        </div>
+      </section>
+
+      <section id="contact">
+        <h2>解決しない場合</h2>
+        <p>
+          不具合の報告や要望は、GitHubのリポジトリ
+          （<a href="https://github.com/Aosy0/machimoki" rel="noopener">Aosy0/machimoki</a>）のIssueで受け付けています。
+          個人で運営しているため、返信まで時間がかかる場合があります。
+        </p>
+        <div class="cta-row">
+          <a class="button" href="/">Machimokiを開く</a>
+          <a class="button button--ghost" href="/guide/">使い方を見る</a>
+        </div>
+      </section>
+    </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <nav aria-label="フッターメニュー">
+        <a href="/">アプリ（無料）</a>
+        <a href="/plateau-3dprint/">PLATEAU 3Dプリント</a>
+        <a href="/guide/">使い方</a>
+        <a href="/faq/">よくある質問</a>
+        <a href="https://github.com/Aosy0/machimoki" rel="noopener">GitHub</a>
+      </nav>
+      <p>
+        本アプリは国土交通省「Project PLATEAU」の3D都市モデル、国土地理院の地理院タイル、
+        CesiumJS（Apache License 2.0）を使用しています。
+      </p>
+      <p>© PLATEAU（国土交通省） / © 国土地理院 / © Cesium</p>
+    </div>
+  </footer>
+  </body>
+</html>

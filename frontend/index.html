@@ -5,10 +5,74 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#1a1a1a" />
-    <title>Machimoki</title>
+    <title>Machimoki｜PLATEAUの3D都市モデルを3MF / STLに無料変換</title>
+    <meta
+      name="description"
+      content="国土交通省PLATEAUの3D都市モデルから、3Dプリント用のSTL / 3MFを無料で作成。地図で範囲を選ぶだけ、登録不要。地形・建物・刻印・中空シェルまでブラウザ内で処理します。"
+    />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <link rel="canonical" href="https://machimoki.aosy.f5.si/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Machimoki" />
+    <meta property="og:locale" content="ja_JP" />
+    <meta property="og:title" content="Machimoki｜PLATEAUの3D都市モデルを3MF / STLに無料変換" />
+    <meta
+      property="og:description"
+      content="地図で範囲を選ぶだけで、PLATEAUの3D都市モデルから3Dプリント用のSTL / 3MFを無料で生成します。"
+    />
+    <meta property="og:url" content="https://machimoki.aosy.f5.si/" />
+    <meta property="og:image" content="https://machimoki.aosy.f5.si/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Machimoki｜PLATEAUの3D都市モデルを3MF / STLに無料変換" />
+    <meta
+      name="twitter:description"
+      content="地図で範囲を選ぶだけで、PLATEAUの3D都市モデルから3Dプリント用のSTL / 3MFを無料で生成します。"
+    />
+    <meta name="twitter:image" content="https://machimoki.aosy.f5.si/og.png" />
+    <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"SoftwareApplication","@id":"https://machimoki.aosy.f5.si/#app","name":"Machimoki","url":"https://machimoki.aosy.f5.si/","applicationCategory":"DesignApplication","applicationSubCategory":"3D printing","operatingSystem":"Web","browserRequirements":"WebGL と WebAssembly に対応したブラウザ","inLanguage":"ja","description":"国土交通省PLATEAUの3D都市モデルから、3Dプリント用のSTL / 3MFを無料で作成できるWebツール。","featureList":["PLATEAUの建物モデル（LOD1 / LOD2）と地形から水密なメッシュを生成","3MF / STL での書き出し","底面・側面への文字の刻印（日本語対応）","底面を開口した中空シェル","土台と建物の2パーツ分割"],"offers":{"@type":"Offer","price":"0","priceCurrency":"JPY"}},{"@type":"WebSite","@id":"https://machimoki.aosy.f5.si/#website","url":"https://machimoki.aosy.f5.si/","name":"Machimoki","inLanguage":"ja","publisher":{"@id":"https://machimoki.aosy.f5.si/#app"}}]}</script>
+    <style>
+      .nojs {
+        margin: 0 auto;
+        max-width: 720px;
+        padding: 40px 20px 64px;
+        color: #f2f2f2;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kaku Gothic ProN',
+          'Noto Sans JP', 'Yu Gothic', Meiryo, sans-serif;
+        font-size: 16px;
+        line-height: 1.9;
+      }
+      .nojs h1 { margin: 0 0 16px; font-size: 24px; line-height: 1.4; }
+      .nojs a { color: #00bcd4; }
+      .nojs ul { padding-left: 1.3em; }
+      .nojs li { margin-bottom: 8px; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <div class="nojs">
+        <h1>Machimoki — PLATEAUの3D都市モデルを3Dプリント用データに変換</h1>
+        <p>
+          国土交通省PLATEAUの3D都市モデル（建物・地形）から、3Dプリンターで使える
+          STL / 3MF を生成する無料のWebアプリです。地図で範囲を選び、仕上がりを確認して書き出します。
+          利用に料金やアカウント登録は不要です。
+        </p>
+        <p>
+          このアプリは地図と3Dプレビューの描画にJavaScript（WebGL / WebAssembly）を使用しているため、
+          JavaScriptが無効な環境では起動できません。ブラウザの設定でJavaScriptを有効にしてください。
+        </p>
+        <h2>内容を確認する</h2>
+        <ul>
+          <li><a href="/plateau-3dprint/">PLATEAUの3D都市モデルを3Dプリントする（概要・料金・比較）</a></li>
+          <li><a href="/guide/">範囲の選び方とスライサー設定の手順</a></li>
+          <li><a href="/faq/">よくある質問</a></li>
+        </ul>
+        <p>出典: © PLATEAU（国土交通省） / © 国土地理院</p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
