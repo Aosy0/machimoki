@@ -231,6 +231,10 @@ export default function HelpDetail({ mode, isOpen, onClose }: HelpDetailProps) {
             <a href="/faq/" target="_blank" rel="noreferrer">
               よくある質問
             </a>
+            {' / '}
+            <a href="/plateau-3dprint/" target="_blank" rel="noreferrer">
+              このサイトについて
+            </a>
           </p>
         </section>
       </div>
