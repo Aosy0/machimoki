@@ -186,4 +186,21 @@ app.post('/api/validate', async (c) => {
   return fetch(originUrl(c.env.ORIGIN_URL, '/api/validate'), c.req.raw)
 })
 
+// 未知のパスは静的404ページを404ステータスで返す。
+// SPAのフォールバック（どのパスも200でindex.html）をやめると、
+// 存在しないURLが「別ページの重複」としてクロールされるのを避けられる。
+app.all('*', async (c) => {
+  if (c.req.path.startsWith('/api/')) {
+    return c.json({ error: 'Not Found' }, 404)
+  }
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    return c.text('Not Found', 404)
+  }
+  const res = await c.env.ASSETS.fetch(new URL('/404.html', c.req.url))
+  return new Response(res.body, {
+    status: 404,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  })
+})
+
 export default app
