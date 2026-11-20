@@ -162,7 +162,6 @@ async function main() {
     longPressSelection: null,
     selectModeChanged: null,
     twoFingerSelectionUnchanged: null,
-    modeHint: null,
     consoleErrors: [],
     consoleWarnings: [],
     pageErrors: [],
@@ -354,8 +353,6 @@ async function main() {
 
       // 2) 範囲選択モード: 1本指ドラッグで矩形選択
       await page.locator('[data-testid="map-mode-select"]').click()
-      result.modeHint =
-        (await page.locator('[data-testid="map-mode-hint"]').textContent()) ?? null
       const beforeSelect = await readBounds()
       await dispatch('touchStart', [pt(0.3, 0.2)])
       await dispatch('touchMove', [pt(0.7, 0.5)])
