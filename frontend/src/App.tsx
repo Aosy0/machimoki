@@ -354,7 +354,6 @@ function App() {
     if (storedSelectionBounds && selectionBounds === null) {
       setSelectionBounds(storedSelectionBounds)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 選択範囲を保存する（リロードで失われないように）。

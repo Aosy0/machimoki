@@ -2745,7 +2745,6 @@ export default function Preview3D({
         finalShapeAutoTimerRef.current = null
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectionBounds,
     lod,
@@ -4259,7 +4258,6 @@ export default function Preview3D({
     if (!finalShapeActiveRef.current || !finalShapeMeshRef.current) return
     if (finalShapeSectionPrimitiveRef.current.length > 0) return
     showFinalShapeSection()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionOn])
 
   // 刻印モード開始時のカメラ視点を保存し、終了時にアニメーションで戻す。
@@ -4278,7 +4276,6 @@ export default function Preview3D({
     engravingZoomRef.current = null
     if (!saved) return
     animateEngravingCamera(saved)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engravingMode])
 
   // 刻印面ビュー: 刻印モードで面が変わったとき、完成形状の面を正面から見る。
@@ -4308,7 +4305,6 @@ export default function Preview3D({
     }
     finalShapeRequestedKeyRef.current = null
     deactivateFinalShape()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openBottom, sectionOn, engravingOn])
 
   // 初回のサイレント先読み。ベースプレビュー準備完了後に一度だけ実行し、
@@ -4524,7 +4520,6 @@ export default function Preview3D({
       engravingOverlayDragRef.current = null
       canvas.style.cursor = 'default'
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engravingEditActive])
 
   useEffect(() => {
@@ -4579,7 +4574,6 @@ export default function Preview3D({
       hoveredFeatureRef.current = null
       canvas.style.cursor = 'default'
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectionBounds])
 
   // タッチ用の取り消し。キーボード（Ctrl+Z）と同じ処理を共有する。
@@ -4604,7 +4598,6 @@ export default function Preview3D({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -4617,7 +4610,6 @@ export default function Preview3D({
     restoreFiltersAndColors()
     setExcludedCount(next.size)
     setExcludedIdsState([...next])
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [excludedBuildingIds])
 
   useEffect(() => {
@@ -4694,7 +4686,6 @@ export default function Preview3D({
       console.error('[Preview3D] Terrain update failed:', err)
     }
     viewer.scene.requestRender()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     terrainThickness,
     flattenBottom,

@@ -102,11 +102,11 @@ await assertNoOverlap(page, 'facility-search-dropdown', DEFAULT_OTHER_UI(page))
 
 | ツール | 役割 | コマンド |
 |--------|------|---------|
-| Biome | 整形（format）＋基本 lint | `npm run format` / `npm run format:check` / `npm run lint:biome` |
-| Biome | 検査＋自動修正 | `npm run lint:biome:fix` |
-| ESLint | React 固有（hooks 等、frontend のみ） | `npm run lint -w frontend` |
+| Biome | 整形（format） | `npm run format` / `npm run format:check` |
+| Biome | lint（検査＋自動修正） | `npm run lint` / `npm run lint:fix` |
 
 - コード流儀: セミコロンなし・シングルクォート・2スペースインデント・行幅100（`biome.json`）。
+- 対象は `frontend/src` `frontend/e2e` `frontend/playwright.config.ts` `core/src` `worker/src`。CSS と JSON は対象外。
 - 変更後は `npm run format` を当ててからコミットする。
 
 ## Notes
