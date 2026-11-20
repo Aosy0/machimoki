@@ -1,4 +1,5 @@
-import React, { useId, useRef } from 'react'
+import React, { useId } from 'react'
+import Icon from './ui/Icon'
 import {
   BASE_EXTENSION_MM,
   FRAME_MITER_DEPTH_RATIO,
@@ -71,10 +72,11 @@ const labelStyle: React.CSSProperties = {
 
 const selectStyle: React.CSSProperties = {
   width: '100%',
-  padding: 8,
+  height: 32,
+  padding: '0 8px',
   background: 'var(--border)',
   border: '1px solid var(--border-strong)',
-  borderRadius: 4,
+  borderRadius: 'var(--radius-control)',
   color: 'var(--text)',
   fontSize: 14,
 }
@@ -107,11 +109,112 @@ const valueStyle: React.CSSProperties = {
   fontVariantNumeric: 'tabular-nums',
 }
 
-const checkboxRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  cursor: 'pointer',
+interface SwitchProps {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  label: string
+  disabled?: boolean
+  testId?: string
+}
+
+function Switch({ checked, onChange, label, disabled = false, testId }: SwitchProps) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      data-testid={testId}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        width: '100%',
+        height: 32,
+        padding: 0,
+        border: 'none',
+        background: 'transparent',
+        color: disabled ? 'var(--text-dim)' : 'var(--text)',
+        fontSize: 14,
+        textAlign: 'left',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          position: 'relative',
+          width: 44,
+          height: 20,
+          flexShrink: 0,
+          borderRadius: 'var(--radius-control)',
+          border: '1px solid',
+          borderColor: checked ? 'var(--border-strong)' : 'var(--border)',
+          background: checked
+            ? 'var(--border-strong)'
+            : disabled
+              ? 'var(--bg)'
+              : 'var(--border)',
+          transition: 'background-color 150ms ease, border-color 150ms ease',
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute',
+            top: 2,
+            left: 2,
+            width: 14,
+            height: 14,
+            borderRadius: 'var(--radius-control)',
+            background: disabled ? 'var(--text-muted)' : 'var(--text)',
+            transform: checked ? 'translateX(24px)' : 'translateX(0)',
+            transition: 'transform 150ms ease, background-color 150ms ease',
+          }}
+        />
+      </span>
+      <span>{label}</span>
+    </button>
+  )
+}
+
+interface CheckRowProps {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  label: string
+  disabled?: boolean
+}
+
+function CheckRow({ checked, onChange, label, disabled = false }: CheckRowProps) {
+  return (
+    <label
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        minHeight: 32,
+        fontSize: 14,
+        color: disabled ? 'var(--text-dim)' : 'var(--text)',
+        cursor: disabled ? 'default' : 'pointer',
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{
+          width: 16,
+          height: 16,
+          margin: 0,
+          flexShrink: 0,
+          accentColor: 'var(--border-strong)',
+          cursor: disabled ? 'default' : 'pointer',
+        }}
+      />
+      <span>{label}</span>
+    </label>
+  )
 }
 
 function ParameterPanel({
@@ -167,9 +270,6 @@ function ParameterPanel({
   const shadowsAvailable = PREVIEW_QUALITY_PROFILES[previewQuality].shadows
   const shadowsOn = shadowsAvailable && shadowsVisible
 
-  const buildingColorRef = useRef<HTMLInputElement>(null)
-  const terrainColorRef = useRef<HTMLInputElement>(null)
-
   return (
     <div
       style={{
@@ -184,8 +284,7 @@ function ParameterPanel({
         background: 'var(--bg)',
         borderLeft: mobile ? 'none' : '1px solid var(--border)',
         borderTop: mobile ? '1px solid var(--border-strong)' : undefined,
-        borderRadius: mobile ? '16px 16px 0 0' : undefined,
-        boxShadow: mobile ? '0 -12px 32px rgba(0, 0, 0, 0.45)' : undefined,
+        borderRadius: mobile ? 'var(--radius-panel) var(--radius-panel) 0 0' : undefined,
         paddingBottom: mobile ? 'env(safe-area-inset-bottom)' : undefined,
         color: 'var(--text)',
         display: 'flex',
@@ -199,7 +298,7 @@ function ParameterPanel({
           style={{
             display: 'flex',
             justifyContent: 'center',
-            padding: '8px 0 2px',
+            padding: '8px 0',
             flexShrink: 0,
           }}
         >
@@ -207,7 +306,7 @@ function ParameterPanel({
             style={{
               width: 40,
               height: 4,
-              borderRadius: 999,
+              borderRadius: 'var(--radius-control)',
               background: 'var(--border-strong)',
             }}
           />
@@ -227,18 +326,22 @@ function ParameterPanel({
             <button
               type="button"
               onClick={onClose}
+              aria-label="閉じる"
               style={{
-                minWidth: 64,
-                minHeight: 36,
-                borderRadius: 6,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 32,
+                height: 32,
+                padding: 0,
                 border: '1px solid var(--border-strong)',
+                borderRadius: 'var(--radius-control)',
                 background: 'transparent',
                 color: 'var(--text-dim)',
                 cursor: 'pointer',
-                fontSize: 13,
               }}
             >
-              閉じる
+              <Icon name="close" size={16} />
             </button>
           )}
         </div>
@@ -268,160 +371,51 @@ function ParameterPanel({
           </div>
 
           <div>
-            <label style={labelStyle}>建物色</label>
-            <div
-              onClick={() => buildingColorRef.current?.click()}
+            <label htmlFor={baseId + '-building-color'} style={labelStyle}>
+              建物色
+            </label>
+            <input
+              id={baseId + '-building-color'}
+              type="color"
+              value={parameters.buildingColor}
+              onChange={(e) => handleChange('buildingColor', e.target.value)}
               style={{
+                display: 'block',
                 width: '100%',
                 height: 32,
-                borderRadius: 6,
-                background: parameters.buildingColor,
-                border: '1px solid var(--border-strong)',
-                cursor: 'pointer',
-                position: 'relative',
-                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
+                borderRadius: 'var(--radius-control)',
               }}
-              title="クリックして色を変更"
-            >
-              <input
-                ref={buildingColorRef}
-                type="color"
-                aria-label="建物の色"
-                value={parameters.buildingColor}
-                onChange={(e) => handleChange('buildingColor', e.target.value)}
-                style={{
-                  position: 'absolute',
-                  width: 0,
-                  height: 0,
-                  opacity: 0,
-                  pointerEvents: 'none',
-                }}
-              />
-            </div>
+            />
           </div>
 
           <div>
-            <label style={labelStyle}>地形色</label>
-            <div
-              onClick={() => terrainColorRef.current?.click()}
+            <label htmlFor={baseId + '-terrain-color'} style={labelStyle}>
+              地形色
+            </label>
+            <input
+              id={baseId + '-terrain-color'}
+              type="color"
+              value={parameters.terrainColor}
+              onChange={(e) => handleChange('terrainColor', e.target.value)}
               style={{
+                display: 'block',
                 width: '100%',
                 height: 32,
-                borderRadius: 6,
-                background: parameters.terrainColor,
-                border: '1px solid var(--border-strong)',
-                cursor: 'pointer',
-                position: 'relative',
-                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
+                borderRadius: 'var(--radius-control)',
               }}
-              title="クリックして色を変更"
-            >
-              <input
-                ref={terrainColorRef}
-                type="color"
-                aria-label="地形の色"
-                value={parameters.terrainColor}
-                onChange={(e) => handleChange('terrainColor', e.target.value)}
-                style={{
-                  position: 'absolute',
-                  width: 0,
-                  height: 0,
-                  opacity: 0,
-                  pointerEvents: 'none',
-                }}
-              />
-            </div>
+            />
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button
-              type="button"
-              role="switch"
-              aria-label="建物"
-              aria-checked={buildingsVisible}
-              onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
-              style={{
-                width: 36,
-                height: 20,
-                borderRadius: 999,
-                border: '1px solid var(--border-strong)',
-                background: buildingsVisible ? 'var(--accent)' : 'var(--border)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                padding: 2,
-                cursor: 'pointer',
-                flexShrink: 0,
-                transition: 'background-color 150ms ease',
-              }}
-            >
-              <span
-                style={{
-                  width: 14,
-                  height: 14,
-                  borderRadius: '50%',
-                  background: '#fff',
-                  transform: buildingsVisible ? 'translateX(16px)' : 'translateX(0)',
-                  transition: 'transform 150ms ease',
-                }}
-              />
-            </button>
-            <span
-              onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
-              style={{ fontSize: 14, cursor: 'pointer' }}
-            >
-              建物
-            </span>
-          </div>
+          <Switch checked={buildingsVisible} onChange={onBuildingsVisibleChange} label="建物" />
 
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button
-                type="button"
-                role="switch"
-                aria-label="影"
-                aria-checked={shadowsOn}
-                data-testid="shadows-toggle"
-                disabled={!shadowsAvailable}
-                onClick={() => onShadowsVisibleChange(!shadowsVisible)}
-                style={{
-                  width: 36,
-                  height: 20,
-                  borderRadius: 999,
-                  border: '1px solid var(--border-strong)',
-                  background: shadowsOn ? 'var(--accent)' : 'var(--border)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: 2,
-                  cursor: shadowsAvailable ? 'pointer' : 'not-allowed',
-                  opacity: shadowsAvailable ? 1 : 0.45,
-                  flexShrink: 0,
-                  transition: 'background-color 150ms ease',
-                }}
-              >
-                <span
-                  style={{
-                    width: 14,
-                    height: 14,
-                    borderRadius: '50%',
-                    background: '#fff',
-                    transform: shadowsOn ? 'translateX(16px)' : 'translateX(0)',
-                    transition: 'transform 150ms ease',
-                  }}
-                />
-              </button>
-              <span
-                onClick={() => {
-                  if (shadowsAvailable) onShadowsVisibleChange(!shadowsVisible)
-                }}
-                style={{
-                  fontSize: 14,
-                  cursor: shadowsAvailable ? 'pointer' : 'not-allowed',
-                  opacity: shadowsAvailable ? 1 : 0.45,
-                }}
-              >
-                影
-              </span>
-            </div>
+            <Switch
+              checked={shadowsOn}
+              onChange={onShadowsVisibleChange}
+              label="影"
+              disabled={!shadowsAvailable}
+              testId="shadows-toggle"
+            />
             {!shadowsAvailable && (
               <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}>
                 軽量画質では影を表示できません
@@ -429,14 +423,17 @@ function ParameterPanel({
             )}
           </div>
 
-          <label style={checkboxRowStyle}>
-            <input
-              type="checkbox"
-              checked={parameters.whiteModel}
-              onChange={(e) => handleChange('whiteModel', e.target.checked)}
-            />
-            <span style={{ fontSize: 14 }}>白模型</span>
-          </label>
+          <Switch
+            checked={parameters.whiteModel}
+            onChange={(checked) => handleChange('whiteModel', checked)}
+            label="白模型"
+          />
+
+          <Switch
+            checked={parameters.showTerrainImagery}
+            onChange={(checked) => handleChange('showTerrainImagery', checked)}
+            label="航空写真"
+          />
         </section>
 
         <section style={sectionStyle}>
@@ -497,42 +494,23 @@ function ParameterPanel({
             )}
           </div>
 
-          <label style={checkboxRowStyle}>
-            <input
-              type="checkbox"
-              checked={parameters.includeSpanningBuildings}
-              onChange={(e) => handleChange('includeSpanningBuildings', e.target.checked)}
-            />
-            <span style={{ fontSize: 14 }}>領域をまたぐ建物を含める</span>
-          </label>
+          <CheckRow
+            checked={parameters.includeSpanningBuildings}
+            onChange={(checked) => handleChange('includeSpanningBuildings', checked)}
+            label="領域をまたぐ建物を含める"
+          />
         </section>
 
         <section style={sectionStyle}>
           <h4 style={groupTitleStyle}>地形</h4>
 
-          <label style={checkboxRowStyle}>
-            <input
-              type="checkbox"
-              checked={parameters.includeTerrain}
-              onChange={(e) => handleChange('includeTerrain', e.target.checked)}
-            />
-            <span style={{ fontSize: 14 }}>地形を含める</span>
-          </label>
+          <CheckRow
+            checked={parameters.includeTerrain}
+            onChange={(checked) => handleChange('includeTerrain', checked)}
+            label="地形を含める"
+          />
 
-          <label style={checkboxRowStyle}>
-            <input
-              type="checkbox"
-              checked={parameters.showTerrainImagery}
-              onChange={(e) => handleChange('showTerrainImagery', e.target.checked)}
-            />
-            <span style={{ fontSize: 14 }}>航空写真</span>
-          </label>
-
-          <div
-            style={{
-              opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1,
-            }}
-          >
+          <div>
             <label htmlFor={`${baseId}-terrain-thickness`} style={rangeLabelStyle}>
               <span>地形厚み</span>
               <span style={valueStyle}>{parameters.terrainThickness.toFixed(1)} mm</span>
@@ -549,69 +527,35 @@ function ParameterPanel({
             />
           </div>
 
-          <label
-            style={{
-              ...checkboxRowStyle,
-              cursor:
-                parameters.reflectActualElevation || !parameters.includeTerrain
-                  ? 'default'
-                  : 'pointer',
-              opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={parameters.flattenBottom}
-              onChange={(e) => handleChange('flattenBottom', e.target.checked)}
-              disabled={parameters.reflectActualElevation || !parameters.includeTerrain}
-            />
-            <span style={{ fontSize: 14 }}>底面をフラット化</span>
-          </label>
+          <CheckRow
+            checked={parameters.flattenBottom}
+            onChange={(checked) => handleChange('flattenBottom', checked)}
+            label="底面をフラット化"
+            disabled={parameters.reflectActualElevation || !parameters.includeTerrain}
+          />
 
-          <label
-            style={{
-              ...checkboxRowStyle,
-              cursor: !parameters.includeTerrain ? 'default' : 'pointer',
-              opacity: !parameters.includeTerrain ? 0.5 : 1,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={parameters.reflectActualElevation}
-              onChange={(e) => handleChange('reflectActualElevation', e.target.checked)}
-              disabled={!parameters.includeTerrain}
-            />
-            <span style={{ fontSize: 14 }}>実際の標高を反映する</span>
-          </label>
+          <CheckRow
+            checked={parameters.reflectActualElevation}
+            onChange={(checked) => handleChange('reflectActualElevation', checked)}
+            label="実際の標高を反映する"
+            disabled={!parameters.includeTerrain}
+          />
           {parameters.reflectActualElevation && parameters.includeTerrain && (
             <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
               谷などの低地は土台が厚くなり、材料と印刷時間が増えます
             </p>
           )}
 
-          <label
-            style={{
-              ...checkboxRowStyle,
-              cursor: !parameters.includeTerrain ? 'default' : 'pointer',
-              opacity: !parameters.includeTerrain ? 0.5 : 1,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={parameters.openBottom}
-              onChange={(e) => handleOpenBottomChange(e.target.checked)}
-              disabled={!parameters.includeTerrain}
-            />
-            <span style={{ fontSize: 14 }}>底面を開口（中空シェル）</span>
-          </label>
+          <CheckRow
+            checked={parameters.openBottom}
+            onChange={handleOpenBottomChange}
+            label="底面を開口（中空シェル）"
+            disabled={!parameters.includeTerrain}
+          />
 
           {parameters.openBottom && (
             <div style={{ marginLeft: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div
-                style={{
-                  opacity: !parameters.includeTerrain ? 0.5 : 1,
-                }}
-              >
+              <div>
                 <label htmlFor={`${baseId}-shell-thickness`} style={rangeLabelStyle}>
                   <span>シェル厚み</span>
                   <span style={valueStyle}>{parameters.shellThickness.toFixed(1)} mm</span>
@@ -643,21 +587,12 @@ function ParameterPanel({
                 )}
               </div>
 
-              <label
-                style={{
-                  ...checkboxRowStyle,
-                  cursor: !parameters.includeTerrain ? 'default' : 'pointer',
-                  opacity: !parameters.includeTerrain ? 0.5 : 1,
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={parameters.hollowBuildings}
-                  onChange={(e) => handleChange('hollowBuildings', e.target.checked)}
-                  disabled={!parameters.includeTerrain}
-                />
-                <span style={{ fontSize: 14 }}>建物内部も中空化</span>
-              </label>
+              <CheckRow
+                checked={parameters.hollowBuildings}
+                onChange={(checked) => handleChange('hollowBuildings', checked)}
+                label="建物内部も中空化"
+                disabled={!parameters.includeTerrain}
+              />
 
               {parameters.hollowBuildings && parameters.includeTerrain && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -686,28 +621,19 @@ function ParameterPanel({
             </div>
           )}
 
-          <label
-            style={{
-              ...checkboxRowStyle,
-              cursor: !parameters.includeTerrain ? 'default' : 'pointer',
-              opacity: !parameters.includeTerrain ? 0.5 : 1,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={parameters.splitAtGround}
-              onChange={(e) => handleSplitAtGroundChange(e.target.checked)}
-              disabled={!parameters.includeTerrain}
-            />
-            <span style={{ fontSize: 14 }}>土台と建物に分割</span>
-          </label>
+          <CheckRow
+            checked={parameters.splitAtGround}
+            onChange={handleSplitAtGroundChange}
+            label="土台と建物に分割"
+            disabled={!parameters.includeTerrain}
+          />
           {parameters.splitAtGround && parameters.includeTerrain && (
             <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
               底面開口も自動でON
             </p>
           )}
 
-          <div style={{ opacity: parameters.includeTerrain ? 1 : 0.5 }}>
+          <div>
             <div
               style={{
                 display: 'flex',
@@ -728,16 +654,21 @@ function ParameterPanel({
                 type="button"
                 onClick={() => handleChange('terrainGridSize', null)}
                 disabled={!parameters.includeTerrain}
-                title={`範囲の広さから自動決定（現在 ${autoTerrainGridSize}分割）`}
                 style={{
                   flex: '1 1 0',
-                  padding: '6px 0',
-                  fontSize: 12,
-                  borderRadius: 4,
-                  cursor: parameters.includeTerrain ? 'pointer' : 'default',
+                  height: 32,
+                  padding: 0,
+                  fontSize: 13,
+                  fontVariantNumeric: 'tabular-nums',
+                  borderRadius: 'var(--radius-control)',
                   background:
-                    parameters.terrainGridSize == null ? 'var(--accent)' : 'var(--border)',
-                  color: parameters.terrainGridSize == null ? 'var(--text)' : 'var(--text-dim)',
+                    parameters.terrainGridSize == null && parameters.includeTerrain
+                      ? 'var(--accent)'
+                      : 'var(--border)',
+                  color:
+                    parameters.terrainGridSize == null && parameters.includeTerrain
+                      ? 'var(--text)'
+                      : 'var(--text-dim)',
                   border: '1px solid var(--border-strong)',
                   fontWeight: parameters.terrainGridSize == null ? 500 : 400,
                 }}
@@ -752,15 +683,19 @@ function ParameterPanel({
                     type="button"
                     onClick={() => handleChange('terrainGridSize', preset.value)}
                     disabled={!parameters.includeTerrain}
-                    title={`${preset.value}分割`}
                     style={{
                       flex: '1 1 0',
-                      padding: '6px 0',
-                      fontSize: 12,
-                      borderRadius: 4,
-                      cursor: parameters.includeTerrain ? 'pointer' : 'default',
-                      background: active ? 'var(--accent)' : 'var(--border)',
-                      color: active ? 'var(--text)' : 'var(--text-dim)',
+                      height: 32,
+                      padding: 0,
+                      fontSize: 13,
+                      fontVariantNumeric: 'tabular-nums',
+                      borderRadius: 'var(--radius-control)',
+                      background:
+                        active && parameters.includeTerrain ? 'var(--accent)' : 'var(--border)',
+                      color:
+                        active && parameters.includeTerrain
+                          ? 'var(--text)'
+                          : 'var(--text-dim)',
                       border: '1px solid var(--border-strong)',
                       fontWeight: active ? 500 : 400,
                     }}
@@ -785,8 +720,9 @@ function ParameterPanel({
             onClick={onEnterEngravingMode}
             style={{
               width: '100%',
-              padding: '10px 12px',
-              borderRadius: 6,
+              height: 32,
+              padding: '0 12px',
+              borderRadius: 'var(--radius-control)',
               border: 'none',
               background: parameters.includeTerrain ? 'var(--accent)' : 'var(--border-strong)',
               color: parameters.includeTerrain ? '#fff' : 'var(--text-dim)',
@@ -804,12 +740,13 @@ function ParameterPanel({
               onClick={onDeleteEngraving}
               style={{
                 width: '100%',
-                padding: '8px 12px',
-                borderRadius: 6,
+                height: 32,
+                padding: '0 12px',
+                borderRadius: 'var(--radius-control)',
                 border: '1px solid var(--border-strong)',
                 background: 'transparent',
                 color: 'var(--error)',
-                fontSize: 12,
+                fontSize: 13,
                 fontWeight: 500,
                 cursor: 'pointer',
               }}
@@ -839,12 +776,13 @@ function ParameterPanel({
           onClick={onExport}
           style={{
             width: '100%',
-            padding: 14,
+            height: 40,
+            padding: 0,
             background: 'var(--accent)',
             color: 'var(--text)',
             border: 'none',
-            borderRadius: 6,
-            fontSize: 16,
+            borderRadius: 'var(--radius-control)',
+            fontSize: 14,
             fontWeight: 500,
             cursor: 'pointer',
           }}
