@@ -1,4 +1,5 @@
 import React, { useId } from 'react'
+import Icon from './ui/Icon'
 
 export interface ManualCoords {
   west: string
@@ -38,37 +39,39 @@ export default function CoordinateSelectionPanel({
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '8px',
-          marginBottom: '6px',
+          marginBottom: '8px',
         }}
       >
-        <div style={{ fontWeight: 'bold' }}>座標で選択</div>
+        <div style={{ fontSize: '13px', fontWeight: 500 }}>座標で選択</div>
         {onClose && (
           <button
             type="button"
+            className="help-detail-close"
             onClick={onClose}
             aria-label="座標パネルを閉じる"
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 6,
-              border: '1px solid var(--border-strong)',
-              background: 'transparent',
-              color: 'var(--text-dim)',
-              cursor: 'pointer',
-              fontSize: 16,
-              lineHeight: 1,
-            }}
           >
-            ×
+            <Icon name="close" size={16} />
           </button>
+        )}
+      </div>
+      <div
+        data-testid="map2d-drag-hint"
+        style={{ marginBottom: '8px', fontSize: '12px', color: 'var(--text-dim)' }}
+      >
+        {hasCoarsePointer ? (
+          '長押し＋ドラッグで範囲選択'
+        ) : (
+          <>
+            <kbd style={kbdStyle}>Shift</kbd>＋ドラッグで範囲選択
+          </>
         )}
       </div>
       <div
         style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
-          gap: '6px',
-          marginBottom: '6px',
+          gap: '8px',
+          marginBottom: '8px',
         }}
       >
         {(
@@ -85,9 +88,8 @@ export default function CoordinateSelectionPanel({
               style={{
                 display: 'block',
                 fontSize: '12px',
-                color: 'var(--text-muted)',
-                marginBottom: '2px',
-                letterSpacing: '0.05em',
+                color: 'var(--text-dim)',
+                marginBottom: '4px',
               }}
             >
               {label}
@@ -109,20 +111,21 @@ export default function CoordinateSelectionPanel({
               onChange={(e) => onCoordChange(key, e.target.value)}
               style={{
                 width: '100%',
-                padding: '4px',
+                padding: '4px 8px',
                 fontSize: '13px',
                 background: 'var(--border)',
                 color: 'var(--text)',
                 border: '1px solid var(--border-strong)',
-                borderRadius: '3px',
+                borderRadius: 'var(--radius-control)',
               }}
             />
           </div>
         ))}
       </div>
       {isDevMode && (
-        <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
+        <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
           <button
+            type="button"
             data-testid="preset-adachi"
             onClick={() =>
               applyPreset({ west: 139.8053, south: 35.747, east: 139.808, north: 35.7495 })
@@ -132,6 +135,7 @@ export default function CoordinateSelectionPanel({
             足立区
           </button>
           <button
+            type="button"
             data-testid="preset-shinjuku"
             onClick={() =>
               applyPreset({ west: 139.6899, south: 35.7029, east: 139.6932, north: 35.707 })
@@ -141,6 +145,7 @@ export default function CoordinateSelectionPanel({
             新宿
           </button>
           <button
+            type="button"
             data-testid="preset-tokyo"
             onClick={() =>
               applyPreset({ west: 139.7639, south: 35.6764, east: 139.7708, north: 35.6855 })
@@ -152,40 +157,46 @@ export default function CoordinateSelectionPanel({
         </div>
       )}
       <button
+        type="button"
         onClick={onApply}
         style={{
           width: '100%',
-          minHeight: 40,
-          padding: '6px',
+          minHeight: '40px',
+          padding: '0 12px',
           fontSize: '13px',
-          background: 'var(--accent)',
+          fontWeight: 500,
+          background: 'transparent',
           color: 'var(--text)',
-          border: 'none',
-          borderRadius: '3px',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-control)',
           cursor: 'pointer',
-          fontWeight: 600,
         }}
       >
         適用
       </button>
-      <div
-        data-testid="map2d-drag-hint"
-        style={{ marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)' }}
-      >
-        {hasCoarsePointer ? '長押し→ドラッグ で範囲選択' : 'Shift + ドラッグ で範囲選択'}
-      </div>
     </div>
   )
 }
 
+const kbdStyle: React.CSSProperties = {
+  fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
+  fontSize: '12px',
+  padding: '0 4px',
+  border: '1px solid var(--border-strong)',
+  borderBottomWidth: '2px',
+  borderRadius: 'var(--radius-control)',
+  color: 'var(--text)',
+  background: 'var(--border)',
+}
+
 const presetStyle: React.CSSProperties = {
   flex: 1,
-  minHeight: 36,
-  padding: '4px',
+  minHeight: 32,
+  padding: '0 8px',
   fontSize: '12px',
   background: 'var(--border)',
   color: 'var(--text)',
   border: 'none',
-  borderRadius: '3px',
+  borderRadius: 'var(--radius-control)',
   cursor: 'pointer',
 }

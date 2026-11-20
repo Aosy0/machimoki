@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react'
+import Icon from './ui/Icon'
 import { LOD_CATEGORY_ORDER, LOD_CATEGORY_STYLES } from '../lib/coverageCategories'
 
 interface CoverageLegendPanelProps {
@@ -7,7 +9,28 @@ interface CoverageLegendPanelProps {
   onClose?: () => void
 }
 
-/** カバレッジ表示のON/OFFとLoD凡例。スマホではシート内に表示する。 */
+const switchTrackStyle = (on: boolean): CSSProperties => ({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: on ? 'flex-end' : 'flex-start',
+  width: '28px',
+  height: '16px',
+  padding: '3px',
+  boxSizing: 'border-box',
+  border: '1px solid var(--border)',
+  borderRadius: '4px',
+  background: on ? 'var(--border)' : 'transparent',
+  transition: 'background-color 120ms',
+})
+
+const switchHandleStyle = (on: boolean): CSSProperties => ({
+  width: '8px',
+  height: '8px',
+  borderRadius: '4px',
+  background: on ? 'var(--text)' : 'var(--text-dim)',
+})
+
+/** 凡例のON/OFFとLoD凡例。スマホではシート内に表示する。 */
 export default function CoverageLegendPanel({
   coverageVisible,
   onToggle,
@@ -20,82 +43,73 @@ export default function CoverageLegendPanel({
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
           gap: '8px',
           marginBottom: '8px',
         }}
       >
-        <span style={{ fontWeight: 'bold' }}>カバレッジ表示</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={coverageVisible}
+          aria-label="凡例"
+          onClick={onToggle}
+          style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px',
+            minHeight: '32px',
+            padding: 0,
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            color: coverageVisible ? 'var(--text)' : 'var(--text-dim)',
+            fontSize: '13px',
+            fontWeight: 500,
+          }}
+        >
+          <span>凡例</span>
+          <span aria-hidden="true" style={switchTrackStyle(coverageVisible)}>
+            <span style={switchHandleStyle(coverageVisible)} />
+          </span>
+        </button>
+        {onClose && (
           <button
-            onClick={onToggle}
-            title={coverageVisible ? 'カバレッジ表示をオフにする' : 'カバレッジ表示をオンにする'}
-            style={{
-              minHeight: 32,
-              padding: '4px 10px',
-              fontSize: '13px',
-              cursor: 'pointer',
-              background: coverageVisible ? 'var(--accent)' : 'var(--border)',
-              color: 'var(--text)',
-              border: coverageVisible
-                ? '1px solid var(--accent)'
-                : '1px solid var(--border-strong)',
-              borderRadius: '3px',
-              fontWeight: 600,
-            }}
+            type="button"
+            className="help-detail-close"
+            onClick={onClose}
+            aria-label="凡例パネルを閉じる"
           >
-            {coverageVisible ? 'ON' : 'OFF'}
+            <Icon name="close" size={16} />
           </button>
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="凡例パネルを閉じる"
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 6,
-                border: '1px solid var(--border-strong)',
-                background: 'transparent',
-                color: 'var(--text-dim)',
-                cursor: 'pointer',
-                fontSize: 16,
-                lineHeight: 1,
-              }}
-            >
-              ×
-            </button>
-          )}
-        </div>
+        )}
       </div>
       {coverageLoading && (
-        <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '6px' }}>
-          カバレッジデータを読み込み中...
+        <div style={{ color: 'var(--text-dim)', fontSize: '12px', marginBottom: '8px' }}>
+          読み込み中…
         </div>
       )}
       {coverageVisible && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           {LOD_CATEGORY_ORDER.map((category) => {
             const style = LOD_CATEGORY_STYLES[category]
             return (
-              <div key={category} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div key={category} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div
                   style={{
                     width: '18px',
                     height: '12px',
+                    flexShrink: 0,
                     background: style.fill,
                     border: `2px solid ${style.outline}`,
-                    borderRadius: '2px',
-                    flexShrink: 0,
+                    borderRadius: '4px',
                   }}
                 />
                 <span style={{ color: 'var(--text-dim)', fontSize: '13px' }}>{style.label}</span>
               </div>
             )
           })}
-          <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-            整備状況をLoD別に色分けしています
-          </div>
         </div>
       )}
     </div>
