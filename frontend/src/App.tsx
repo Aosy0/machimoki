@@ -189,7 +189,6 @@ function App() {
   const [previewBusy, setPreviewBusy] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [coverageVisible, setCoverageVisible] = useState(true)
-  const [coverageLoading, setCoverageLoading] = useState(false)
   const [mapLibreMap, setMapLibreMap] = useState<MapLibreMap | null>(null)
   const [mapFailed, setMapFailed] = useState(false)
   const isCompact = useIsCompactLayout()
@@ -1035,7 +1034,6 @@ function App() {
     if (coverageProbedMapRef.current !== map) {
       coverageProbedMapRef.current = map
       coverageAvailableRef.current = false
-      setCoverageLoading(true)
       const init = (): void => {
         if (!map.isStyleLoaded()) return
         fetch(`${coverageApiBase()}/api/coverage`)
@@ -1050,9 +1048,6 @@ function App() {
           })
           .catch(() => {
             /* カバレッジ取得の失敗は表示のみ。exportはブロックしない */
-          })
-          .finally(() => {
-            if (!disposed) setCoverageLoading(false)
           })
       }
       try {
@@ -1069,7 +1064,7 @@ function App() {
           if (!disposed) init()
         })
       } catch {
-        setCoverageLoading(false)
+        /* スタイル未完了などで購読できなくても表示だけの問題に留める */
       }
     }
 
@@ -1318,10 +1313,9 @@ function App() {
                 bottom: 'calc(104px + env(safe-area-inset-bottom))',
                 maxHeight: '52dvh',
                 overflowY: 'auto',
-                background: 'var(--surface)',
+                background: 'var(--surface-solid)',
                 color: 'var(--text)',
                 border: '1px solid var(--border)',
-                backdropFilter: 'blur(8px)',
                 padding: 12,
                 borderRadius: 'var(--radius-panel)',
                 fontSize: 14,
@@ -1359,11 +1353,7 @@ function App() {
                 width: '220px',
               }}
             >
-              <CoverageLegendPanel
-                coverageVisible={coverageVisible}
-                onToggle={toggleCoverage}
-                coverageLoading={coverageLoading}
-              />
+              <CoverageLegendPanel coverageVisible={coverageVisible} onToggle={toggleCoverage} />
             </div>
           )}
           {isCompact && mapSheet === 'legend' && (
@@ -1376,10 +1366,9 @@ function App() {
                 bottom: 'calc(104px + env(safe-area-inset-bottom))',
                 maxHeight: '52dvh',
                 overflowY: 'auto',
-                background: 'var(--surface)',
+                background: 'var(--surface-solid)',
                 color: 'var(--text)',
                 border: '1px solid var(--border)',
-                backdropFilter: 'blur(8px)',
                 padding: 12,
                 borderRadius: 'var(--radius-panel)',
                 fontSize: 14,
@@ -1389,7 +1378,6 @@ function App() {
               <CoverageLegendPanel
                 coverageVisible={coverageVisible}
                 onToggle={toggleCoverage}
-                coverageLoading={coverageLoading}
                 onClose={() => setMapSheet(null)}
               />
             </div>
