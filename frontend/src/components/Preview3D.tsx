@@ -20,7 +20,6 @@ import {
   Credit,
   CreditDisplay,
   DirectionalLight,
-  GridImageryProvider,
   HeadingPitchRange,
   IntersectionTests,
   LightingModel,
@@ -969,8 +968,9 @@ export default function Preview3D({
   // 断面の陰影切替（false=向きによる陰影、true=フラット固定）。設定はリセットしない。
   const [sectionFlatShading, setSectionFlatShading] = useState(false)
   const sectionFlatShadingRef = useRef(false)
-  const gridLayerRef = useRef<any>(null)
   const gsiLayerRef = useRef<any>(null)
+  // 画像レイヤーに実際に貼ったスタイル。貼り直しの要否判定に使う。
+  const appliedImageryStyleRef = useRef<GsiTileStyle | null>(null)
   const terrainSampleCacheRef = useRef<TerrainSampleData | null>(null)
   const buildingMinYCacheRef = useRef<Map<string, number | null>>(new Map())
   const appliedTerrainParamsRef = useRef<{
@@ -992,10 +992,19 @@ export default function Preview3D({
   const cameraFramedForRef = useRef<SelectionBounds | null>(null)
   const [isOrthographic, setIsOrthographic] = useState(false)
   const [gsiStyle, setGsiStyle] = useState<GsiTileStyle>(() => loadGsiStyle())
-  const gsiStyleRef = useRef(gsiStyle)
+  // 地形を含めるとき（＝航空写真ON）は、地図スタイルの選択より航空写真を優先する。
+  const imageryStyle: GsiTileStyle = showTerrainImagery ? 'seamlessphoto' : gsiStyle
+  const imageryStyleRef = useRef(imageryStyle)
   useEffect(() => {
-    gsiStyleRef.current = gsiStyle
-  }, [gsiStyle])
+    imageryStyleRef.current = imageryStyle
+  }, [imageryStyle])
+  // 地形を含めると globe.show=false で画像が描かれず、航空写真ONでは選択が上書きされる。
+  const mapStyleLocked = includeTerrain || showTerrainImagery
+  const mapStyleTitle = includeTerrain
+    ? '地形を含めるときは地図を表示しません'
+    : showTerrainImagery
+      ? '航空写真を表示中'
+      : undefined
   const terrainBoundingSphereRef = useRef<BoundingSphere | null>(null)
   const [debugInfo, setDebugInfo] = useState<{
     isFallback: boolean
@@ -1744,13 +1753,14 @@ export default function Preview3D({
     }
 
     gsiLayerRef.current = viewer.scene.globe.imageryLayers.addImageryProvider(
-      createGsiImageryProvider(gsiStyle),
+      createGsiImageryProvider(imageryStyle),
     )
+    appliedImageryStyleRef.current = imageryStyle
 
-    applyContour(viewer, gsiStyle)
+    applyContour(viewer, imageryStyle)
     const onMoveEnd = () => {
       if ((viewerRef.current as any)?.isDestroyed?.()) return
-      if (isContourStyle(gsiStyleRef.current)) applyContour(viewer, gsiStyleRef.current)
+      if (isContourStyle(imageryStyleRef.current)) applyContour(viewer, imageryStyleRef.current)
     }
     viewer.camera.moveEnd.addEventListener(onMoveEnd)
     ;(viewer as any)._machimokiContourCleanup = () =>
@@ -1761,7 +1771,7 @@ export default function Preview3D({
     let lastContourDebugJson = ''
     const updateContourDebug = () => {
       if (!viewer.isDestroyed() && isDevModeRef.current) {
-        const info = collectContourDebugInfo(viewer, gsiStyleRef.current)
+        const info = collectContourDebugInfo(viewer, imageryStyleRef.current)
         const json = JSON.stringify(info)
         if (json !== lastContourDebugJson) {
           lastContourDebugJson = json
@@ -1786,7 +1796,7 @@ export default function Preview3D({
         if (viewerRef.current) {
           viewer.scene.terrainProvider = terrainProvider
           setTerrainProvider(terrainProvider)
-          if (isContourStyle(gsiStyleRef.current)) applyContour(viewer, gsiStyleRef.current)
+          if (isContourStyle(imageryStyleRef.current)) applyContour(viewer, imageryStyleRef.current)
           console.log('[Preview3D] Terrain set successfully')
         }
       } catch (err) {
@@ -1864,55 +1874,22 @@ export default function Preview3D({
     }
   }, [])
 
+  // 実効スタイルが変わったとき（地図スタイルの変更・航空写真のON/OFF）に画像レイヤーを差し替える。
   useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer) return
-
-    const imageryLayers = viewer.scene.globe.imageryLayers
-
-    // GSIレイヤーは showTerrainImagery とは独立に常時表示し、
-    // Gridレイヤーの表示切替（showTerrainImagery=false で表示）は維持する
-    for (let i = 0; i < imageryLayers.length; i++) {
-      const layer = imageryLayers.get(i)
-      if (layer === gridLayerRef.current) {
-        layer.show = !showTerrainImagery
-      } else {
-        layer.show = true
-      }
-    }
-
-    if (!showTerrainImagery && !gridLayerRef.current) {
-      const gridProvider = new GridImageryProvider({
-        cells: 8,
-        color: Color.fromCssColorString('#ffffff'),
-        glowColor: Color.fromCssColorString('#00bcd4'),
-        backgroundColor: Color.fromCssColorString('#00000000'),
-      })
-      gridLayerRef.current = imageryLayers.addImageryProvider(gridProvider)
-      gridLayerRef.current.alpha = 0.4
-    }
-
-    console.log(`[Preview3D] Imagery layers visibility set to: ${showTerrainImagery}`)
-    viewer.scene.requestRender()
-  }, [showTerrainImagery])
-
-  // gsiStyle変更時にGSIレイヤーを差し替える（Gridレイヤーには触れない）
-  useEffect(() => {
-    const viewer = viewerRef.current
-    if (!viewer) return
+    if (appliedImageryStyleRef.current === imageryStyle) return
     const oldLayer = gsiLayerRef.current
     if (oldLayer) {
       viewer.scene.globe.imageryLayers.remove(oldLayer, true)
     }
     gsiLayerRef.current = viewer.scene.globe.imageryLayers.addImageryProvider(
-      createGsiImageryProvider(gsiStyle),
+      createGsiImageryProvider(imageryStyle),
     )
-    if (whiteModelRef.current) {
-      applyWhiteModelLook(viewer, true, gsiLayerRef, whiteModelSavedRef.current, quality)
-    }
-    applyContour(viewer, gsiStyle)
+    appliedImageryStyleRef.current = imageryStyle
+    applyContour(viewer, imageryStyle)
     viewer.scene.requestRender()
-  }, [gsiStyle])
+  }, [imageryStyle])
 
   // 他タブ（App.tsx等）とlocalStorage経由でスタイルを同期する
   useEffect(() => {
@@ -4965,12 +4942,18 @@ export default function Preview3D({
             data-testid="gsi-style-select-preview"
             aria-label="地図スタイル"
             value={gsiStyle}
+            disabled={mapStyleLocked}
+            title={mapStyleTitle}
             onChange={(e) => {
               const style = e.target.value as GsiTileStyle
               setGsiStyle(style)
               saveGsiStyle(style)
             }}
-            style={VIEW_CONTROL_STYLE}
+            style={{
+              ...VIEW_CONTROL_STYLE,
+              color: mapStyleLocked ? 'var(--text-muted)' : 'var(--text)',
+              cursor: mapStyleLocked ? 'not-allowed' : 'pointer',
+            }}
           >
             {GSI_TILE_STYLES.map((s) => (
               <option key={s} value={s}>
