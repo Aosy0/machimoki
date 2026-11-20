@@ -62,6 +62,58 @@ interface ParameterPanelProps {
   onPreviewQualityOverrideChange: (value: PreviewQualityOverride) => void
 }
 
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  marginBottom: 8,
+  fontSize: 12,
+  color: 'var(--text-dim)',
+}
+
+const selectStyle: React.CSSProperties = {
+  width: '100%',
+  padding: 8,
+  background: 'var(--border)',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 4,
+  color: 'var(--text)',
+  fontSize: 14,
+}
+
+const sectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+}
+
+const groupTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 16,
+  fontWeight: 500,
+}
+
+const rangeLabelStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  justifyContent: 'space-between',
+  marginBottom: 8,
+  fontSize: 12,
+  color: 'var(--text-dim)',
+}
+
+const valueStyle: React.CSSProperties = {
+  color: 'var(--text)',
+  fontSize: 13,
+  fontWeight: 500,
+  fontVariantNumeric: 'tabular-nums',
+}
+
+const checkboxRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  cursor: 'pointer',
+}
+
 function ParameterPanel({
   parameters,
   onChange,
@@ -104,10 +156,10 @@ function ParameterPanel({
   }
 
   const lodLabels: Record<Lod, string> = {
-    lod1: 'LOD1（シンプル）',
-    lod2: 'LOD2（詳細）',
-    lod3: 'LOD3（高詳細）',
-    lod4: 'LOD4（最高詳細）',
+    lod1: 'LOD1',
+    lod2: 'LOD2',
+    lod3: 'LOD3',
+    lod4: 'LOD4',
   }
   const LOD_ORDER: Lod[] = ['lod1', 'lod2', 'lod3', 'lod4']
 
@@ -161,18 +213,16 @@ function ParameterPanel({
           />
         </div>
       )}
-      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 24 }}>
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: '8px',
-            borderBottom: '1px solid var(--border)',
-            paddingBottom: '8px',
+            gap: 8,
           }}
         >
-          <h3 style={{ margin: 0, fontSize: '16px' }}>設定</h3>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 500 }}>設定</h3>
           {mobile && onClose && (
             <button
               type="button"
@@ -193,212 +243,155 @@ function ParameterPanel({
           )}
         </div>
 
-        {/* Preview quality */}
-        <div>
-          <label
-            htmlFor={`${baseId}-preview-quality`}
-            style={{
-              display: 'block',
-              fontSize: '12px',
-              marginBottom: '6px',
-              color: 'var(--text-dim)',
-            }}
-          >
-            3Dプレビュー画質
-          </label>
-          <select
-            id={`${baseId}-preview-quality`}
-            data-testid="preview-quality-select"
-            value={previewQualityOverride}
-            onChange={(e) =>
-              onPreviewQualityOverrideChange(e.target.value as PreviewQualityOverride)
-            }
-            style={{
-              width: '100%',
-              padding: '8px',
-              background: 'var(--border)',
-              border: '1px solid var(--border-strong)',
-              color: 'var(--text)',
-              borderRadius: '4px',
-              fontSize: '14px',
-            }}
-          >
-            <option value="auto">
-              端末に合わせる（{PREVIEW_QUALITY_PROFILES[previewQuality].label}）
-            </option>
-            <option value="high">高画質</option>
-            <option value="medium">標準</option>
-            <option value="low">軽量</option>
-          </select>
-          <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '6px 0 0' }}>
-            影・MSAA・AO・解像度のみ変更します。建物とエクスポート品質は変わりません。
-          </p>
-        </div>
-
-        {/* Display Colors */}
-        <div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '12px',
-              marginBottom: '6px',
-              color: 'var(--text-dim)',
-            }}
-          >
-            建物色
-          </label>
-          <div
-            onClick={() => buildingColorRef.current?.click()}
-            style={{
-              width: '100%',
-              height: '32px',
-              borderRadius: '6px',
-              background: parameters.buildingColor,
-              border: '1px solid var(--border-strong)',
-              cursor: 'pointer',
-              position: 'relative',
-              boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
-            }}
-            title="クリックして色を変更"
-          >
-            <input
-              ref={buildingColorRef}
-              type="color"
-              aria-label="建物の色"
-              value={parameters.buildingColor}
-              onChange={(e) => handleChange('buildingColor', e.target.value)}
-              style={{
-                position: 'absolute',
-                width: 0,
-                height: 0,
-                opacity: 0,
-                pointerEvents: 'none',
-              }}
-            />
-          </div>
-          <label
-            style={{
-              display: 'block',
-              fontSize: '12px',
-              marginTop: '10px',
-              marginBottom: '6px',
-              color: 'var(--text-dim)',
-            }}
-          >
-            地形色
-          </label>
-          <div
-            onClick={() => terrainColorRef.current?.click()}
-            style={{
-              width: '100%',
-              height: '32px',
-              borderRadius: '6px',
-              background: parameters.terrainColor,
-              border: '1px solid var(--border-strong)',
-              cursor: 'pointer',
-              position: 'relative',
-              boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
-            }}
-            title="クリックして色を変更"
-          >
-            <input
-              ref={terrainColorRef}
-              type="color"
-              aria-label="地形の色"
-              value={parameters.terrainColor}
-              onChange={(e) => handleChange('terrainColor', e.target.value)}
-              style={{
-                position: 'absolute',
-                width: 0,
-                height: 0,
-                opacity: 0,
-                pointerEvents: 'none',
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Display Mode */}
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-          <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>表示モード</h4>
-          <div style={{ marginBottom: '12px' }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                marginBottom: '4px',
-              }}
+        <section style={sectionStyle}>
+          <h4 style={groupTitleStyle}>表示</h4>
+          <div>
+            <label htmlFor={`${baseId}-preview-quality`} style={labelStyle}>
+              プレビュー画質
+            </label>
+            <select
+              id={`${baseId}-preview-quality`}
+              data-testid="preview-quality-select"
+              value={previewQualityOverride}
+              onChange={(e) =>
+                onPreviewQualityOverrideChange(e.target.value as PreviewQualityOverride)
+              }
+              style={selectStyle}
             >
-              <button
-                type="button"
-                role="switch"
-                aria-label="建物を表示"
-                aria-checked={buildingsVisible}
-                onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
+              <option value="auto">
+                自動（{PREVIEW_QUALITY_PROFILES[previewQuality].label}）
+              </option>
+              <option value="high">高画質</option>
+              <option value="medium">標準</option>
+              <option value="low">軽量</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>建物色</label>
+            <div
+              onClick={() => buildingColorRef.current?.click()}
+              style={{
+                width: '100%',
+                height: 32,
+                borderRadius: 6,
+                background: parameters.buildingColor,
+                border: '1px solid var(--border-strong)',
+                cursor: 'pointer',
+                position: 'relative',
+                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
+              }}
+              title="クリックして色を変更"
+            >
+              <input
+                ref={buildingColorRef}
+                type="color"
+                aria-label="建物の色"
+                value={parameters.buildingColor}
+                onChange={(e) => handleChange('buildingColor', e.target.value)}
                 style={{
-                  width: '36px',
-                  height: '20px',
-                  borderRadius: '999px',
-                  border: '1px solid var(--border-strong)',
-                  background: buildingsVisible ? 'var(--accent)' : 'var(--border)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '2px',
-                  cursor: 'pointer',
-                  flexShrink: 0,
-                  transition: 'background-color 150ms ease',
+                  position: 'absolute',
+                  width: 0,
+                  height: 0,
+                  opacity: 0,
+                  pointerEvents: 'none',
                 }}
-              >
-                <span
-                  style={{
-                    width: '14px',
-                    height: '14px',
-                    borderRadius: '50%',
-                    background: '#fff',
-                    transform: buildingsVisible ? 'translateX(16px)' : 'translateX(0)',
-                    transition: 'transform 150ms ease',
-                  }}
-                />
-              </button>
-              <span
-                onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
-                style={{ fontSize: '14px', cursor: 'pointer' }}
-              >
-                建物を表示
-              </span>
+              />
             </div>
-            <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '0 0 0 44px' }}>
-              オフにすると地形のみ表示になり、動作が軽くなります
-            </p>
           </div>
-          <div style={{ marginBottom: '12px' }}>
+
+          <div>
+            <label style={labelStyle}>地形色</label>
             <div
+              onClick={() => terrainColorRef.current?.click()}
               style={{
-                display: 'flex',
+                width: '100%',
+                height: 32,
+                borderRadius: 6,
+                background: parameters.terrainColor,
+                border: '1px solid var(--border-strong)',
+                cursor: 'pointer',
+                position: 'relative',
+                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.2)',
+              }}
+              title="クリックして色を変更"
+            >
+              <input
+                ref={terrainColorRef}
+                type="color"
+                aria-label="地形の色"
+                value={parameters.terrainColor}
+                onChange={(e) => handleChange('terrainColor', e.target.value)}
+                style={{
+                  position: 'absolute',
+                  width: 0,
+                  height: 0,
+                  opacity: 0,
+                  pointerEvents: 'none',
+                }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              type="button"
+              role="switch"
+              aria-label="建物"
+              aria-checked={buildingsVisible}
+              onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
+              style={{
+                width: 36,
+                height: 20,
+                borderRadius: 999,
+                border: '1px solid var(--border-strong)',
+                background: buildingsVisible ? 'var(--accent)' : 'var(--border)',
+                display: 'inline-flex',
                 alignItems: 'center',
-                gap: '8px',
-                marginBottom: '4px',
+                padding: 2,
+                cursor: 'pointer',
+                flexShrink: 0,
+                transition: 'background-color 150ms ease',
               }}
             >
+              <span
+                style={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: '50%',
+                  background: '#fff',
+                  transform: buildingsVisible ? 'translateX(16px)' : 'translateX(0)',
+                  transition: 'transform 150ms ease',
+                }}
+              />
+            </button>
+            <span
+              onClick={() => onBuildingsVisibleChange(!buildingsVisible)}
+              style={{ fontSize: 14, cursor: 'pointer' }}
+            >
+              建物
+            </span>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button
                 type="button"
                 role="switch"
-                aria-label="影を表示"
+                aria-label="影"
                 aria-checked={shadowsOn}
                 data-testid="shadows-toggle"
                 disabled={!shadowsAvailable}
                 onClick={() => onShadowsVisibleChange(!shadowsVisible)}
-                title={shadowsAvailable ? undefined : '軽量画質では影を表示できません'}
                 style={{
-                  width: '36px',
-                  height: '20px',
-                  borderRadius: '999px',
+                  width: 36,
+                  height: 20,
+                  borderRadius: 999,
                   border: '1px solid var(--border-strong)',
                   background: shadowsOn ? 'var(--accent)' : 'var(--border)',
                   display: 'inline-flex',
                   alignItems: 'center',
-                  padding: '2px',
+                  padding: 2,
                   cursor: shadowsAvailable ? 'pointer' : 'not-allowed',
                   opacity: shadowsAvailable ? 1 : 0.45,
                   flexShrink: 0,
@@ -407,8 +400,8 @@ function ParameterPanel({
               >
                 <span
                   style={{
-                    width: '14px',
-                    height: '14px',
+                    width: 14,
+                    height: 14,
                     borderRadius: '50%',
                     background: '#fff',
                     transform: shadowsOn ? 'translateX(16px)' : 'translateX(0)',
@@ -421,200 +414,118 @@ function ParameterPanel({
                   if (shadowsAvailable) onShadowsVisibleChange(!shadowsVisible)
                 }}
                 style={{
-                  fontSize: '14px',
+                  fontSize: 14,
                   cursor: shadowsAvailable ? 'pointer' : 'not-allowed',
                   opacity: shadowsAvailable ? 1 : 0.45,
                 }}
               >
-                影を表示
+                影
               </span>
             </div>
-            <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '0 0 0 44px' }}>
-              {shadowsAvailable
-                ? 'オフにすると建物の落影を描画しません'
-                : '軽量画質では影を表示できません'}
-            </p>
+            {!shadowsAvailable && (
+              <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}>
+                軽量画質では影を表示できません
+              </p>
+            )}
           </div>
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              marginBottom: '4px',
-            }}
-          >
+
+          <label style={checkboxRowStyle}>
             <input
               type="checkbox"
               checked={parameters.whiteModel}
               onChange={(e) => handleChange('whiteModel', e.target.checked)}
             />
-            <span style={{ fontSize: '14px' }}>白模型レンダリング</span>
+            <span style={{ fontSize: 14 }}>白模型</span>
           </label>
-          <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '0 0 0 26px' }}>
-            AO・白い下地で模型らしく表示します（実験的）
-          </p>
-        </div>
+        </section>
 
-        {/* Export Format */}
-        <div>
-          <label
-            htmlFor={`${baseId}-export-format`}
-            style={{
-              display: 'block',
-              fontSize: '12px',
-              marginBottom: '6px',
-              color: 'var(--text-dim)',
-            }}
-          >
-            出力形式
-          </label>
-          <select
-            id={`${baseId}-export-format`}
-            value={parameters.exportFormat}
-            onChange={(e) =>
-              handleChange('exportFormat', e.target.value as Parameters['exportFormat'])
-            }
-            style={{
-              width: '100%',
-              padding: '8px',
-              background: 'var(--border)',
-              border: '1px solid var(--border-strong)',
-              color: 'var(--text)',
-              borderRadius: '4px',
-              fontSize: '14px',
-            }}
-          >
-            <option value="3mf">3MF（推奨）</option>
-            <option value="stl">STL</option>
-            {/* .machimoki は本番未対応のためUIから非表示（型・core実装は維持） */}
-          </select>
-        </div>
+        <section style={sectionStyle}>
+          <h4 style={groupTitleStyle}>出力</h4>
+          <div>
+            <label htmlFor={`${baseId}-export-format`} style={labelStyle}>
+              形式
+            </label>
+            <select
+              id={`${baseId}-export-format`}
+              value={parameters.exportFormat}
+              onChange={(e) =>
+                handleChange('exportFormat', e.target.value as Parameters['exportFormat'])
+              }
+              style={selectStyle}
+            >
+              <option value="3mf">3MF</option>
+              <option value="stl">STL</option>
+              {/* .machimoki は本番未対応のためUIから非表示（型・core実装は維持） */}
+            </select>
+          </div>
 
-        {/* Up Axis */}
-        <div>
-          <label
-            htmlFor={`${baseId}-up-axis`}
-            style={{
-              display: 'block',
-              fontSize: '12px',
-              marginBottom: '6px',
-              color: 'var(--text-dim)',
-            }}
-          >
-            上方向の軸
-          </label>
-          <select
-            id={`${baseId}-up-axis`}
-            value={parameters.upAxis}
-            onChange={(e) => handleChange('upAxis', e.target.value as Parameters['upAxis'])}
-            style={{
-              width: '100%',
-              padding: '8px',
-              background: 'var(--border)',
-              border: '1px solid var(--border-strong)',
-              color: 'var(--text)',
-              borderRadius: '4px',
-              fontSize: '14px',
-            }}
-          >
-            <option value="z-up">Z軸上向き（推奨）</option>
-            <option value="y-up">Y軸上向き</option>
-          </select>
-        </div>
+          <div>
+            <label htmlFor={`${baseId}-up-axis`} style={labelStyle}>
+              上方向の軸
+            </label>
+            <select
+              id={`${baseId}-up-axis`}
+              value={parameters.upAxis}
+              onChange={(e) => handleChange('upAxis', e.target.value as Parameters['upAxis'])}
+              style={selectStyle}
+            >
+              <option value="z-up">Z軸上向き</option>
+              <option value="y-up">Y軸上向き</option>
+            </select>
+          </div>
 
-        {/* LOD Selector */}
-        <div>
-          <label
-            htmlFor={`${baseId}-lod`}
-            style={{
-              display: 'block',
-              fontSize: '12px',
-              marginBottom: '6px',
-              color: 'var(--text-dim)',
-            }}
-          >
-            建物詳細度（LOD）
-          </label>
-          <select
-            id={`${baseId}-lod`}
-            value={parameters.lod}
-            onChange={(e) => handleChange('lod', e.target.value as Parameters['lod'])}
-            style={{
-              width: '100%',
-              padding: '8px',
-              background: 'var(--border)',
-              border: '1px solid var(--border-strong)',
-              color: 'var(--text)',
-              borderRadius: '4px',
-              fontSize: '14px',
-            }}
-          >
-            {LOD_ORDER.map((lod) => {
-              const available = availableLods.includes(lod)
-              return (
-                <option
-                  key={lod}
-                  value={lod}
-                  disabled={!available}
-                  title={
-                    available ? undefined : `この選択範囲では${lodLabels[lod]}は提供されていません`
-                  }
-                  style={available ? undefined : { color: 'var(--text-muted)' }}
-                >
+          <div>
+            <label htmlFor={`${baseId}-lod`} style={labelStyle}>
+              建物LOD
+            </label>
+            <select
+              id={`${baseId}-lod`}
+              value={parameters.lod}
+              onChange={(e) => handleChange('lod', e.target.value as Parameters['lod'])}
+              style={selectStyle}
+            >
+              {LOD_ORDER.map((lod) => (
+                <option key={lod} value={lod} disabled={!availableLods.includes(lod)}>
                   {lodLabels[lod]}
                 </option>
-              )
-            })}
-          </select>
-          {parameters.lod !== 'lod1' && (
-            <p style={{ fontSize: '11px', color: 'var(--warn)', marginTop: '6px' }}>
-              LOD2以上では、中庭などの開口部が正しく造形できない場合があります。
-            </p>
-          )}
-          {availableLods.length < LOD_ORDER.length && (
-            <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' }}>
-              この範囲では利用できない詳細度（LOD）があります。
-            </p>
-          )}
-        </div>
+              ))}
+            </select>
+            {parameters.lod !== 'lod1' && (
+              <p style={{ fontSize: 12, color: 'var(--warn)', margin: '4px 0 0' }}>
+                中庭などの開口部が造形できない場合があります
+              </p>
+            )}
+          </div>
 
-        {/* Terrain Settings */}
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-          <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>地形</h4>
+          <label style={checkboxRowStyle}>
+            <input
+              type="checkbox"
+              checked={parameters.includeSpanningBuildings}
+              onChange={(e) => handleChange('includeSpanningBuildings', e.target.checked)}
+            />
+            <span style={{ fontSize: 14 }}>領域をまたぐ建物を含める</span>
+          </label>
+        </section>
 
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              marginBottom: '12px',
-            }}
-          >
+        <section style={sectionStyle}>
+          <h4 style={groupTitleStyle}>地形</h4>
+
+          <label style={checkboxRowStyle}>
             <input
               type="checkbox"
               checked={parameters.includeTerrain}
               onChange={(e) => handleChange('includeTerrain', e.target.checked)}
             />
-            <span style={{ fontSize: '14px' }}>地形を含める</span>
+            <span style={{ fontSize: 14 }}>地形を含める</span>
           </label>
 
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              marginBottom: '12px',
-            }}
-          >
+          <label style={checkboxRowStyle}>
             <input
               type="checkbox"
               checked={parameters.showTerrainImagery}
               onChange={(e) => handleChange('showTerrainImagery', e.target.checked)}
             />
-            <span style={{ fontSize: '14px' }}>航空写真テクスチャを表示</span>
+            <span style={{ fontSize: 14 }}>航空写真</span>
           </label>
 
           <div
@@ -622,16 +533,9 @@ function ParameterPanel({
               opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1,
             }}
           >
-            <label
-              htmlFor={`${baseId}-terrain-thickness`}
-              style={{
-                display: 'block',
-                fontSize: '12px',
-                marginBottom: '6px',
-                color: 'var(--text-dim)',
-              }}
-            >
-              地形厚み: {parameters.terrainThickness} mm
+            <label htmlFor={`${baseId}-terrain-thickness`} style={rangeLabelStyle}>
+              <span>地形厚み</span>
+              <span style={valueStyle}>{parameters.terrainThickness.toFixed(1)} mm</span>
             </label>
             <input
               id={`${baseId}-terrain-thickness`}
@@ -647,14 +551,11 @@ function ParameterPanel({
 
           <label
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
+              ...checkboxRowStyle,
               cursor:
                 parameters.reflectActualElevation || !parameters.includeTerrain
                   ? 'default'
                   : 'pointer',
-              marginTop: '12px',
               opacity: parameters.reflectActualElevation || !parameters.includeTerrain ? 0.5 : 1,
             }}
           >
@@ -664,17 +565,13 @@ function ParameterPanel({
               onChange={(e) => handleChange('flattenBottom', e.target.checked)}
               disabled={parameters.reflectActualElevation || !parameters.includeTerrain}
             />
-            <span style={{ fontSize: '14px' }}>底面をフラット化</span>
+            <span style={{ fontSize: 14 }}>底面をフラット化</span>
           </label>
 
           <label
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
+              ...checkboxRowStyle,
               cursor: !parameters.includeTerrain ? 'default' : 'pointer',
-              marginTop: '12px',
-              marginBottom: '4px',
               opacity: !parameters.includeTerrain ? 0.5 : 1,
             }}
           >
@@ -684,27 +581,18 @@ function ParameterPanel({
               onChange={(e) => handleChange('reflectActualElevation', e.target.checked)}
               disabled={!parameters.includeTerrain}
             />
-            <span style={{ fontSize: '14px' }}>実際の標高を反映する</span>
+            <span style={{ fontSize: 14 }}>実際の標高を反映する</span>
           </label>
-          <p
-            style={{
-              fontSize: '11px',
-              color: 'var(--text-dim)',
-              margin: '0 0 0 26px',
-              opacity: !parameters.includeTerrain ? 0.5 : 1,
-            }}
-          >
-            底面を海抜0mまで下ろして実際の標高のまま出力します。谷などの低地は土台が厚くなり、材料と印刷時間が増えます。
-          </p>
+          {parameters.reflectActualElevation && parameters.includeTerrain && (
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
+              谷などの低地は土台が厚くなり、材料と印刷時間が増えます
+            </p>
+          )}
 
           <label
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
+              ...checkboxRowStyle,
               cursor: !parameters.includeTerrain ? 'default' : 'pointer',
-              marginTop: '12px',
-              marginBottom: '4px',
               opacity: !parameters.includeTerrain ? 0.5 : 1,
             }}
           >
@@ -714,26 +602,19 @@ function ParameterPanel({
               onChange={(e) => handleOpenBottomChange(e.target.checked)}
               disabled={!parameters.includeTerrain}
             />
-            <span style={{ fontSize: '14px' }}>底面を開口（中空シェル）</span>
+            <span style={{ fontSize: 14 }}>底面を開口（中空シェル）</span>
           </label>
 
           {parameters.openBottom && (
-            <div style={{ marginTop: '12px', marginLeft: '26px' }}>
+            <div style={{ marginLeft: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div
                 style={{
                   opacity: !parameters.includeTerrain ? 0.5 : 1,
                 }}
               >
-                <label
-                  htmlFor={`${baseId}-shell-thickness`}
-                  style={{
-                    display: 'block',
-                    fontSize: '12px',
-                    marginBottom: '6px',
-                    color: 'var(--text-dim)',
-                  }}
-                >
-                  シェル厚み: {parameters.shellThickness.toFixed(1)} mm
+                <label htmlFor={`${baseId}-shell-thickness`} style={rangeLabelStyle}>
+                  <span>シェル厚み</span>
+                  <span style={valueStyle}>{parameters.shellThickness.toFixed(1)} mm</span>
                 </label>
                 <input
                   id={`${baseId}-shell-thickness`}
@@ -755,20 +636,17 @@ function ParameterPanel({
                 />
                 {(parameters.terrainThickness - parameters.shellThickness < MIN_FRAME_HEIGHT_MM ||
                   !hasMiterBase(parameters.terrainThickness, parameters.shellThickness)) && (
-                  <p style={{ fontSize: '11px', color: 'var(--warn)', margin: '6px 0 0' }}>
-                    地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)}
-                    mm 以上、かつシェル厚み×{FRAME_MITER_DEPTH_RATIO} より大きい必要があります
+                  <p style={{ fontSize: 12, color: 'var(--warn)', margin: '4px 0 0' }}>
+                    地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)} mm
+                    以上、かつシェル厚み × {FRAME_MITER_DEPTH_RATIO} より大きい必要があります
                   </p>
                 )}
               </div>
 
               <label
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
+                  ...checkboxRowStyle,
                   cursor: !parameters.includeTerrain ? 'default' : 'pointer',
-                  marginTop: '12px',
                   opacity: !parameters.includeTerrain ? 0.5 : 1,
                 }}
               >
@@ -778,32 +656,40 @@ function ParameterPanel({
                   onChange={(e) => handleChange('hollowBuildings', e.target.checked)}
                   disabled={!parameters.includeTerrain}
                 />
-                <span style={{ fontSize: '14px' }}>建物内部も中空化</span>
+                <span style={{ fontSize: 14 }}>建物内部も中空化</span>
               </label>
 
-              <p
-                style={{
-                  fontSize: '11px',
-                  color: 'var(--text-dim)',
-                  marginTop: '6px',
-                  marginBottom: 0,
-                }}
-              >
-                内部にLED・タッチセンサーを配置できる空洞を作ります。外観は変わりません。印刷時は内側にサポート材が必要です。内部の高さ目安:
-                約{Math.max(0, parameters.terrainThickness - parameters.shellThickness).toFixed(1)}{' '}
-                mm
-              </p>
+              {parameters.hollowBuildings && parameters.includeTerrain && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      justifyContent: 'space-between',
+                      fontSize: 12,
+                      color: 'var(--text-dim)',
+                    }}
+                  >
+                    <span>内部高さ</span>
+                    <span style={valueStyle}>
+                      {Math.max(0, parameters.terrainThickness - parameters.shellThickness).toFixed(
+                        1,
+                      )}{' '}
+                      mm
+                    </span>
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
+                    内側にサポート材が必要です
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
           <label
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
+              ...checkboxRowStyle,
               cursor: !parameters.includeTerrain ? 'default' : 'pointer',
-              marginTop: '12px',
-              marginBottom: '4px',
               opacity: !parameters.includeTerrain ? 0.5 : 1,
             }}
           >
@@ -813,36 +699,31 @@ function ParameterPanel({
               onChange={(e) => handleSplitAtGroundChange(e.target.checked)}
               disabled={!parameters.includeTerrain}
             />
-            <span style={{ fontSize: '14px' }}>土台と建物に分割</span>
+            <span style={{ fontSize: 14 }}>土台と建物に分割</span>
           </label>
-          <p
-            style={{
-              fontSize: '11px',
-              color: 'var(--text-dim)',
-              margin: '0 0 0 26px',
-              opacity: !parameters.includeTerrain ? 0.5 : 1,
-            }}
-          >
-            地形を枠、建物側を地表プレート＋建物＋印刷用の平らなベースに分けます。外周を45°で合わせ、枠の壁の上端と建物側プレートの下面を同じ45°面にします。段差はなく、外周の張り出しはクリアランス約0.15mmだけです。枠の内側は壁高が「地形厚み
-            −
-            シェル厚み×1.9」になります。ベースの平らな底面は45°楔の先端より0.2mm下にあり、印刷時の最下点になります（ベースはその分深くなります）。ベースが枠に嵌まり、底面の凹凸によるサポートを減らします。ベースは中実ですが、建物内部の空洞の開口はベースを貫通して開いたままになります。地上部は切り口を下・屋根を上にして印刷でき、天面にプレート痕が付きません。オンにすると底面開口も自動でオンになります。建物内部の空洞が不要な場合は「建物内部も中空化」をOFFにしてください。
-          </p>
+          {parameters.splitAtGround && parameters.includeTerrain && (
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
+              底面開口も自動でON
+            </p>
+          )}
 
-          <div style={{ marginTop: '12px', opacity: parameters.includeTerrain ? 1 : 0.5 }}>
-            <label
+          <div style={{ opacity: parameters.includeTerrain ? 1 : 0.5 }}>
+            <div
               style={{
-                display: 'block',
-                fontSize: '12px',
-                color: 'var(--text-dim)',
-                marginBottom: '6px',
+                display: 'flex',
+                alignItems: 'baseline',
+                justifyContent: 'space-between',
+                marginBottom: 8,
               }}
             >
-              地形メッシュ解像度
-              {parameters.terrainGridSize == null
-                ? `（自動: ${autoTerrainGridSize}分割）`
-                : `（${parameters.terrainGridSize}分割）`}
-            </label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>地形メッシュ解像度</span>
+              <span style={valueStyle}>
+                {parameters.terrainGridSize == null
+                  ? `自動 ${autoTerrainGridSize}分割`
+                  : `${parameters.terrainGridSize}分割`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 4 }}>
               <button
                 type="button"
                 onClick={() => handleChange('terrainGridSize', null)}
@@ -851,14 +732,14 @@ function ParameterPanel({
                 style={{
                   flex: '1 1 0',
                   padding: '6px 0',
-                  fontSize: '11px',
-                  borderRadius: '4px',
+                  fontSize: 12,
+                  borderRadius: 4,
                   cursor: parameters.includeTerrain ? 'pointer' : 'default',
                   background:
                     parameters.terrainGridSize == null ? 'var(--accent)' : 'var(--border)',
                   color: parameters.terrainGridSize == null ? 'var(--text)' : 'var(--text-dim)',
                   border: '1px solid var(--border-strong)',
-                  fontWeight: parameters.terrainGridSize == null ? 'bold' : 'normal',
+                  fontWeight: parameters.terrainGridSize == null ? 500 : 400,
                 }}
               >
                 自動
@@ -875,13 +756,13 @@ function ParameterPanel({
                     style={{
                       flex: '1 1 0',
                       padding: '6px 0',
-                      fontSize: '11px',
-                      borderRadius: '4px',
+                      fontSize: 12,
+                      borderRadius: 4,
                       cursor: parameters.includeTerrain ? 'pointer' : 'default',
                       background: active ? 'var(--accent)' : 'var(--border)',
                       color: active ? 'var(--text)' : 'var(--text-dim)',
                       border: '1px solid var(--border-strong)',
-                      fontWeight: active ? 'bold' : 'normal',
+                      fontWeight: active ? 500 : 400,
                     }}
                   >
                     {preset.label}
@@ -889,22 +770,14 @@ function ParameterPanel({
                 )
               })}
             </div>
-            <p
-              style={{
-                fontSize: '11px',
-                color: 'var(--text-dim)',
-                marginTop: '6px',
-                marginBottom: 0,
-              }}
-            >
-              解像度が高いほど地形が細かくなり、処理時間とメッシュサイズが増えます
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}>
+              処理時間が増えます
             </p>
           </div>
-        </div>
+        </section>
 
-        {/* Engraving */}
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-          <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>刻印</h4>
+        <section style={sectionStyle}>
+          <h4 style={groupTitleStyle}>刻印</h4>
           <button
             type="button"
             data-testid="engraving-mode-button"
@@ -918,7 +791,7 @@ function ParameterPanel({
               background: parameters.includeTerrain ? 'var(--accent)' : 'var(--border-strong)',
               color: parameters.includeTerrain ? '#fff' : 'var(--text-dim)',
               fontSize: 14,
-              fontWeight: 700,
+              fontWeight: 500,
               cursor: parameters.includeTerrain ? 'pointer' : 'not-allowed',
             }}
           >
@@ -931,57 +804,30 @@ function ParameterPanel({
               onClick={onDeleteEngraving}
               style={{
                 width: '100%',
-                marginTop: 6,
                 padding: '8px 12px',
                 borderRadius: 6,
                 border: '1px solid var(--border-strong)',
                 background: 'transparent',
                 color: 'var(--error)',
                 fontSize: 12,
-                fontWeight: 600,
+                fontWeight: 500,
                 cursor: 'pointer',
               }}
             >
               刻印を削除
             </button>
           )}
-          <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '8px 0 0' }}>
+          <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
             {parameters.includeTerrain
-              ? '刻印モードに入ると専用UIになり、3Dモデル上でドラッグして位置を調整できます（モード中は視点回転をロック）。FDM 0.4mmノズル・0.2mmピッチが既定です。'
-              : '地形を含めない場合は刻印できません。'}
+              ? 'モード中は視点回転が固定されます'
+              : '地形が必要です'}
           </p>
-        </div>
-
-        {/* Spanning Buildings Setting */}
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-          <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>建物フィルタ</h4>
-
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              marginBottom: '4px',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={parameters.includeSpanningBuildings}
-              onChange={(e) => handleChange('includeSpanningBuildings', e.target.checked)}
-            />
-            <span style={{ fontSize: '14px' }}>領域をまたぐ建物を含める</span>
-          </label>
-          <p style={{ fontSize: '11px', color: 'var(--text-dim)', margin: '0 0 0 26px' }}>
-            オフにすると境界をまたぐ建物を除外し、地形からはみ出しません
-          </p>
-        </div>
+        </section>
       </div>
 
-      {/* Sticky export button */}
       <div
         style={{
-          padding: '16px',
+          padding: 16,
           borderTop: '1px solid var(--border)',
           background: 'var(--bg)',
           position: 'sticky',
@@ -993,13 +839,13 @@ function ParameterPanel({
           onClick={onExport}
           style={{
             width: '100%',
-            padding: '14px',
+            padding: 14,
             background: 'var(--accent)',
             color: 'var(--text)',
             border: 'none',
-            borderRadius: '6px',
-            fontSize: '16px',
-            fontWeight: 'bold',
+            borderRadius: 6,
+            fontSize: 16,
+            fontWeight: 500,
             cursor: 'pointer',
           }}
         >
