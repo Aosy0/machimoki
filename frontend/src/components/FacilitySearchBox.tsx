@@ -9,6 +9,7 @@ import {
   isPoiFallbackEnabled,
 } from '../lib/poiSearch'
 import type { PoiHit, PoiBounds } from '../lib/poiSearch'
+import Icon from './ui/Icon'
 
 export interface FacilitySearchBoxProps {
   map: MapLibreMap
@@ -30,11 +31,10 @@ const ROOT_STYLE: React.CSSProperties = {
   left: '8px',
   width: 'min(360px, calc(100% - 16px))',
   zIndex: 2,
-  background: 'rgba(34, 34, 34, 0.95)',
+  background: 'var(--surface)',
   border: '1px solid var(--border)',
-  borderRadius: '4px',
-  boxShadow: '0 1px 4px rgba(0, 0, 0, 0.4)',
-  fontSize: '16px',
+  borderRadius: 'var(--radius-panel)',
+  fontSize: '13px',
   color: 'var(--text)',
 }
 
@@ -42,38 +42,44 @@ const INPUT_ROW_STYLE: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: '8px',
-  padding: '10px 12px',
+  padding: '8px 12px',
 }
 
 const INPUT_STYLE: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
-  fontSize: '16px',
+  fontSize: '13px',
   border: 'none',
   background: 'transparent',
   color: 'var(--text)',
-  padding: '6px 0',
+  padding: '4px 0',
 }
 
 const CLEAR_BUTTON_STYLE: React.CSSProperties = {
   flexShrink: 0,
-  fontSize: '18px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 32,
+  height: 32,
   background: 'transparent',
   border: 'none',
+  borderRadius: 'var(--radius-control)',
   cursor: 'pointer',
   color: 'var(--text-dim)',
-  padding: '4px 8px',
-  lineHeight: 1,
+  padding: 0,
 }
 
 const SEARCH_BUTTON_STYLE: React.CSSProperties = {
   flexShrink: 0,
   background: 'transparent',
   border: 'none',
+  borderRadius: 'var(--radius-control)',
   cursor: 'pointer',
   color: 'var(--text-dim)',
-  padding: '4px 8px',
-  lineHeight: 1,
+  padding: 0,
+  width: 32,
+  height: 32,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -83,15 +89,14 @@ const POPUP_STYLE: React.CSSProperties = {
   borderTop: '1px solid var(--border)',
   overflowY: 'auto',
   overscrollBehavior: 'contain',
-  background: 'rgba(34, 34, 34, 0.97)',
-  borderRadius: '0 0 4px 4px',
+  background: 'transparent',
 }
 
 const SECTION_TITLE_STYLE: React.CSSProperties = {
-  fontSize: '13px',
+  fontSize: '12px',
   color: 'var(--text-dim)',
-  background: '#2a2a2a',
-  padding: '5px 12px',
+  background: 'var(--surface-solid)',
+  padding: '8px 12px',
 }
 
 const ITEM_BUTTON_STYLE: React.CSSProperties = {
@@ -102,14 +107,14 @@ const ITEM_BUTTON_STYLE: React.CSSProperties = {
   border: 'none',
   cursor: 'pointer',
   padding: '8px 12px',
-  fontSize: '15px',
+  fontSize: '14px',
   color: 'var(--text)',
   lineHeight: 1.4,
 }
 
 const ITEM_SUB_STYLE: React.CSSProperties = {
   display: 'block',
-  fontSize: '13px',
+  fontSize: '12px',
   color: 'var(--text-dim)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
@@ -118,13 +123,13 @@ const ITEM_SUB_STYLE: React.CSSProperties = {
 
 const META_STYLE: React.CSSProperties = {
   padding: '8px 12px',
-  fontSize: '14px',
+  fontSize: '13px',
   color: 'var(--text-dim)',
 }
 
 const ERROR_STYLE: React.CSSProperties = {
   padding: '8px 12px',
-  fontSize: '14px',
+  fontSize: '13px',
   color: 'var(--text-dim)',
 }
 
@@ -134,9 +139,9 @@ const RESULTS_HEADER_STYLE: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: '8px',
   padding: '8px 12px',
-  fontSize: '14px',
+  fontSize: '13px',
   color: 'var(--text)',
-  background: '#2a2a2a',
+  background: 'var(--surface-solid)',
 }
 
 /**
@@ -515,47 +520,23 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
           style={INPUT_STYLE}
         />
         {query.length > 0 && (
-          <button
-            type="button"
-            aria-label="検索をクリア"
-            onClick={handleClear}
-            style={CLEAR_BUTTON_STYLE}
-          >
-            ×
+          <button type="button" aria-label="検索をクリア" onClick={handleClear} style={CLEAR_BUTTON_STYLE}>
+            <Icon name="close" />
           </button>
         )}
         <button
           type="button"
           data-testid="facility-search-submit"
           aria-label="検索"
-          title="検索"
           disabled={submitDisabled}
           onClick={() => runFullSearch(query)}
-          onMouseEnter={(e) => {
-            if (!submitDisabled) e.currentTarget.style.color = 'var(--text)'
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = 'var(--text-dim)'
-          }}
           style={{
             ...SEARCH_BUTTON_STYLE,
             cursor: submitDisabled ? 'default' : 'pointer',
             opacity: submitDisabled ? 0.4 : 1,
           }}
         >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <circle cx="7" cy="7" r="4.5" />
-            <line x1="10.5" y1="10.5" x2="14" y2="14" />
-          </svg>
+          <Icon name="search" size={20} />
         </button>
       </div>
       {showDropdown && (
@@ -566,7 +547,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
           {suggestLoading && <div style={META_STYLE}>検索中…</div>}
           {!suggestLoading && suggestError && <div style={ERROR_STYLE}>検索に失敗しました</div>}
           {!suggestLoading && !suggestError && bothEmpty && (
-            <div style={META_STYLE}>候補が見つかりません</div>
+            <div style={META_STYLE}>該当なし</div>
           )}
           {!suggestLoading && !suggestError && !bothEmpty && (
             <>
@@ -630,20 +611,14 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
               onClick={() => setResults(null)}
               style={CLEAR_BUTTON_STYLE}
             >
-              ×
+              <Icon name="close" />
             </button>
           </div>
           {!resultsLoading && !resultsError && results !== null && results.length === 0 && (
-            <div style={META_STYLE}>該当する施設が見つかりませんでした</div>
+            <div style={META_STYLE}>該当なし</div>
           )}
           {!resultsLoading && !resultsError && results !== null && results.length > 0 && (
             <div>
-              {resultSource === 'nationwide' && (
-                <div style={META_STYLE}>表示範囲内に0件のため、全国から表示しています</div>
-              )}
-              {resultSource === 'fallback' && (
-                <div style={META_STYLE}>OpenStreetMapデータから表示しています</div>
-              )}
               {results.map((hit) => (
                 <button
                   key={hit.id}
