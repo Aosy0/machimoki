@@ -1599,6 +1599,7 @@ function App() {
                         display: 'flex',
                         flexDirection: 'column',
                         borderRadius: 'var(--radius-panel)',
+                        border: '1px solid var(--border)',
                         overflow: 'hidden',
                         // 背後のW/D表示などが透けないよう不透明にする。
                         background: 'var(--bg)',
@@ -1616,6 +1617,7 @@ function App() {
                         flexDirection: 'column',
                         overflow: 'hidden',
                         borderRadius: 'var(--radius-panel)',
+                        border: '1px solid var(--border)',
                         animation: 'machimoki-engraving-panel-in 140ms ease-out',
                       }
                 }
