@@ -368,11 +368,19 @@ function ParameterPanel({
             )}
           </div>
 
-          <Switch
-            checked={parameters.showTerrainImagery}
-            onChange={(checked) => handleChange('showTerrainImagery', checked)}
-            label="航空写真"
-          />
+          <div>
+            <Switch
+              checked={parameters.showTerrainImagery}
+              onChange={(checked) => handleChange('showTerrainImagery', checked)}
+              label="航空写真"
+              disabled={parameters.includeTerrain}
+            />
+            {parameters.includeTerrain && (
+              <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}>
+                地形を含めると地面は模型になります
+              </p>
+            )}
+          </div>
         </section>
 
         <section style={sectionStyle}>
