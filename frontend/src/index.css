@@ -94,13 +94,13 @@ button:not(:disabled) {
   top: -100px;
   left: calc(env(safe-area-inset-left, 0px) + 8px);
   z-index: 2000;
-  padding: 8px 14px;
+  padding: 8px 12px;
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: var(--bg);
   color: var(--text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -135,7 +135,7 @@ input[type="color"] {
   appearance: none;
   -webkit-appearance: none;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   padding: 0;
   cursor: pointer;
   background: transparent;
@@ -165,127 +165,99 @@ input[type="file"]::file-selector-button {
   background: var(--border);
   color: var(--text);
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  padding: 6px 14px;
+  border-radius: var(--radius-control);
+  padding: 4px 12px;
   font-size: 12px;
   cursor: pointer;
   margin-right: 8px;
-  transition: background 120ms ease;
+  transition: background-color 120ms ease;
 }
 
 input[type="file"]::file-selector-button:hover {
   background: var(--border-strong);
 }
 
-/* 地図下部のヒントはヘルプを開くボタン。初回だけ少し拡大して場所を知らせる。 */
-.map-mode-hint {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  backdrop-filter: blur(8px);
+/* スライダー・セレクト・チェックボックスは既定の装飾を捨て、暗い配色にそろえる。 */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition:
-    padding 200ms ease,
-    gap 200ms ease,
-    border-color 120ms ease,
-    background-color 200ms ease,
-    color 120ms ease,
-    box-shadow 200ms ease;
 }
 
-.map-mode-hint:hover {
-  background: rgba(0, 188, 212, 0.12);
-  border-color: var(--accent);
-  color: var(--text);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-control);
+  background: var(--border-strong);
 }
 
-.map-mode-hint:focus-visible {
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-control);
+  background: var(--border-strong);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+}
+
+input[type="range"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.map-mode-hint[aria-expanded='true'] {
-  border-color: var(--accent);
+input[type="range"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (pointer: coarse) {
+  input[type="range"] {
+    height: 44px;
+  }
+}
+
+select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-solid);
   color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
-.map-mode-hint[data-state='attention'] {
-  border-color: var(--accent);
-  background: rgba(0, 48, 56, 0.94);
-  color: var(--text);
-  box-shadow:
-    0 0 0 6px rgba(0, 188, 212, 0.22),
-    0 10px 28px rgba(0, 0, 0, 0.45);
+select:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
-.map-mode-hint__text {
-  text-wrap: balance;
-  transition: font-size 200ms ease;
-}
-
-.map-mode-hint[data-state='attention'] .map-mode-hint__text {
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-.map-mode-hint:active {
-  transform: translateY(1px);
-}
-
-.map-mode-hint__badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border: 1px solid var(--accent);
-  border-radius: 50%;
-  background: rgba(0, 188, 212, 0.12);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  transition:
-    width 200ms ease,
-    height 200ms ease,
-    font-size 200ms ease,
-    background-color 200ms ease,
-    border-color 200ms ease,
-    color 200ms ease;
-}
-
-.map-mode-hint[data-state='attention'] .map-mode-hint__badge {
-  width: 24px;
-  height: 24px;
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #062a30;
-  font-size: 15px;
-}
-
-.map-mode-hint__chevron {
-  flex-shrink: 0;
+input[type="checkbox"] {
   width: 16px;
   height: 16px;
-  color: var(--accent);
-  opacity: 0.9;
-  transition:
-    width 200ms ease,
-    height 200ms ease,
-    transform 150ms ease,
-    color 120ms ease;
-}
-
-.map-mode-hint[data-state='attention'] .map-mode-hint__chevron {
-  width: 20px;
-  height: 20px;
-}
-
-.map-mode-hint[aria-expanded='true'] .map-mode-hint__chevron {
-  color: var(--accent);
-  transform: rotate(180deg);
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .help-detail-body {
@@ -320,8 +292,8 @@ input[type="file"]::file-selector-button:hover {
   height: 32px;
   padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-control);
+  background: transparent;
   color: var(--text);
   font-size: 18px;
   line-height: 1;
@@ -330,12 +302,6 @@ input[type="file"]::file-selector-button:hover {
     background-color 120ms ease,
     border-color 120ms ease,
     color 120ms ease;
-}
-
-.help-detail-close:hover {
-  background: rgba(0, 188, 212, 0.14);
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 .help-detail-close:focus-visible {
@@ -351,10 +317,6 @@ input[type="file"]::file-selector-button:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .map-mode-hint,
-  .map-mode-hint__text,
-  .map-mode-hint__badge,
-  .map-mode-hint__chevron,
   .help-detail-close {
     transition: none;
   }
@@ -372,15 +334,6 @@ input[type="file"]::file-selector-button:hover {
   }
 }
 
-@keyframes machimoki-engraving-glow-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 @keyframes machimoki-engraving-panel-in {
   from {
     opacity: 0;
@@ -389,31 +342,6 @@ input[type="file"]::file-selector-button:hover {
   to {
     opacity: 1;
     transform: translateX(0);
-  }
-}
-
-@keyframes machimoki-engraving-dot-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-.machimoki-engraving-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px rgba(0, 188, 212, 0.8);
-  animation: machimoki-engraving-dot-pulse 1.4s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .machimoki-engraving-dot {
-    animation: none;
   }
 }
 
@@ -482,17 +410,17 @@ input[type="file"]::file-selector-button:hover {
 /* 進捗バーは外枠を CSS、塗りの幅だけを JS から % で与える。 */
 .machimoki-loading-progress {
   width: 200px;
-  height: 6px;
+  height: 4px;
   margin-top: 12px;
   background: var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   overflow: hidden;
 }
 
 .machimoki-loading-progress-fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-control);
   transition: width 0.2s ease;
 }
 
@@ -506,30 +434,10 @@ input[type="file"]::file-selector-button:hover {
   }
 }
 
-/* プレビュー更新中であることを示す小さな点（App の preview-load-indicator） */
-.machimoki-update-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: machimoki-update-pulse 1s ease-in-out infinite;
-}
-
-@keyframes machimoki-update-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
 /* 動きを減らす設定では、装飾目的のアニメーションとトランジションを止める。
    刻印パネルの animation はインライン指定なので !important で打ち消す。 */
 @media (prefers-reduced-motion: reduce) {
   .machimoki-spinner,
-  .machimoki-update-dot,
   .machimoki-indeterminate,
   .machimoki-loading-progress-fill,
   .engraving-panel {
