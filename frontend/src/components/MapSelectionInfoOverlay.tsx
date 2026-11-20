@@ -35,7 +35,8 @@ function buildPanel(onClear: () => void): { element: HTMLDivElement; nodes: Over
   element.style.pointerEvents = 'none'
   element.style.userSelect = 'none'
   element.style.whiteSpace = 'nowrap'
-  element.style.background = 'var(--surface)'
+  // 地図の地名ラベルが数値の裏に透けると読めないので、数値パネルだけは不透明にする。
+  element.style.background = 'var(--surface-solid)'
   element.style.border = '1px solid var(--border)'
   element.style.borderRadius = 'var(--radius-panel)'
   element.style.padding = '8px 12px'
@@ -79,6 +80,7 @@ function buildPanel(onClear: () => void): { element: HTMLDivElement; nodes: Over
   clearButton.setAttribute('aria-label', '選択範囲を解除')
   clearButton.style.pointerEvents = 'auto'
   clearButton.style.cursor = 'pointer'
+  clearButton.style.alignSelf = 'flex-end'
   clearButton.style.minHeight = '32px'
   clearButton.style.padding = '0 12px'
   clearButton.style.fontSize = '12px'
