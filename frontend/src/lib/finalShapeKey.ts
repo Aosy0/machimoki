@@ -31,7 +31,7 @@ export interface FinalShapeGeometryParams {
 /**
  * 完成メッシュの永続キャッシュ用キー。プレビューとエクスポートの両方から
  * 同じ値で呼べるよう、実際に形状生成へ渡す値をそのまま使うこと。
- * 色（buildingColor/terrainColor/whiteModel）は表示だけなので含めない。
+ * 色（buildingColor/terrainColor）は表示だけなので含めない。
  */
 export function finalShapeGeometryKey(params: FinalShapeGeometryParams): string {
   return JSON.stringify({

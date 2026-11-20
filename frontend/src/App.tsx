@@ -87,7 +87,6 @@ const DEFAULT_PARAMETERS: Parameters = {
   exportFormat: '3mf',
   buildingColor: DEFAULT_BUILDING_COLOR,
   terrainColor: '#ffffff',
-  whiteModel: false,
   upAxis: 'z-up',
   includeSpanningBuildings: false,
   openBottom: false,
@@ -1434,7 +1433,6 @@ function App() {
                 includeTerrain={parameters.includeTerrain}
                 buildingColor={parameters.buildingColor}
                 terrainColor={parameters.terrainColor}
-                whiteModel={parameters.whiteModel}
                 scale={scale}
                 onScaleChange={setScale}
                 includeSpanningBuildings={parameters.includeSpanningBuildings}
