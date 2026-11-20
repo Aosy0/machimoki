@@ -5081,8 +5081,9 @@ export default function Preview3D({
                 step={0.01}
                 value={sectionT}
                 onChange={(e) => onSectionPositionChange(Number(e.target.value))}
-                style={{ width: '120px', accentColor: 'var(--accent)', cursor: 'pointer' }}
+                style={{ width: '120px' }}
                 aria-label="断面位置"
+                aria-valuetext={`${Math.round(sectionT * 100)}%`}
               />
               <button
                 data-testid="final-shape-section-flip"

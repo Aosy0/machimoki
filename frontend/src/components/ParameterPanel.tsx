@@ -470,6 +470,7 @@ function ParameterPanel({
               onChange={(e) => handleChange('terrainThickness', Number(e.target.value))}
               disabled={parameters.reflectActualElevation || !parameters.includeTerrain}
               style={{ width: '100%' }}
+              aria-valuetext={`${parameters.terrainThickness.toFixed(1)} mm`}
             />
           </div>
 
@@ -523,6 +524,7 @@ function ParameterPanel({
                   onChange={(e) => handleChange('shellThickness', Number(e.target.value))}
                   disabled={!parameters.includeTerrain}
                   style={{ width: '100%' }}
+                  aria-valuetext={`${parameters.shellThickness.toFixed(1)} mm`}
                 />
                 {(parameters.terrainThickness - parameters.shellThickness < MIN_FRAME_HEIGHT_MM ||
                   !hasMiterBase(parameters.terrainThickness, parameters.shellThickness)) && (

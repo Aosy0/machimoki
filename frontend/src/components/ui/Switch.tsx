@@ -1,5 +1,3 @@
-import type { CSSProperties } from 'react'
-
 interface SwitchProps {
   checked: boolean
   onChange: (checked: boolean) => void
@@ -10,36 +8,10 @@ interface SwitchProps {
   labelFirst?: boolean
 }
 
-const TRACK_WIDTH = 44
-const TRACK_HEIGHT = 20
-const THUMB_SIZE = 14
-const THUMB_OFFSET = 3
-
-const trackStyle = (checked: boolean, disabled: boolean): CSSProperties => ({
-  position: 'relative',
-  width: TRACK_WIDTH,
-  height: TRACK_HEIGHT,
-  flexShrink: 0,
-  boxSizing: 'border-box',
-  borderRadius: 'var(--radius-control)',
-  border: `1px solid ${checked || !disabled ? 'var(--border-strong)' : 'var(--border)'}`,
-  background: checked ? 'var(--border-strong)' : disabled ? 'var(--bg)' : 'var(--surface-solid)',
-  transition: 'background-color 150ms ease, border-color 150ms ease',
-})
-
-const thumbStyle = (checked: boolean, disabled: boolean): CSSProperties => ({
-  position: 'absolute',
-  top: THUMB_OFFSET,
-  left: THUMB_OFFSET,
-  width: THUMB_SIZE,
-  height: THUMB_SIZE,
-  borderRadius: 'var(--radius-control)',
-  background: disabled ? 'var(--text-muted)' : checked ? 'var(--text)' : 'var(--text-dim)',
-  transform: `translateX(${checked ? TRACK_WIDTH - THUMB_SIZE - THUMB_OFFSET * 2 - 2 : 0}px)`,
-  transition: 'transform 150ms ease, background-color 150ms ease',
-})
-
-/** ON と OFF の差が面とつまみの位置で読めるスイッチ。設定と凡例で共有する。 */
+/**
+ * ネイティブの checkbox に switch 属性を付けたスイッチ。見た目は CSS が担う。
+ * switch 属性は Safari のみ対応なので、role と appearance:none の装飾で全ブラウザ同じ形にする。
+ */
 export default function Switch({
   checked,
   onChange,
@@ -48,48 +20,33 @@ export default function Switch({
   testId,
   labelFirst = false,
 }: SwitchProps) {
-  const track = (
-    <span aria-hidden style={trackStyle(checked, disabled)}>
-      <span style={thumbStyle(checked, disabled)} />
-    </span>
+  const text = <span className="ui-switch__label">{label}</span>
+  const input = (
+    <input
+      type="checkbox"
+      className="ui-switch__input"
+      role="switch"
+      checked={checked}
+      disabled={disabled}
+      data-testid={testId}
+      onChange={(e) => onChange(e.target.checked)}
+      {...({ switch: '' } as Record<string, string>)}
+    />
   )
-  const text = <span>{label}</span>
 
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      data-testid={testId}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: labelFirst ? 'space-between' : 'flex-start',
-        gap: 8,
-        width: '100%',
-        height: 32,
-        padding: 0,
-        border: 'none',
-        background: 'transparent',
-        color: disabled ? 'var(--text-dim)' : 'var(--text)',
-        fontSize: 14,
-        textAlign: 'left',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-      }}
-    >
+    <label className={labelFirst ? 'ui-switch ui-switch--label-first' : 'ui-switch'}>
       {labelFirst ? (
         <>
           {text}
-          {track}
+          {input}
         </>
       ) : (
         <>
-          {track}
+          {input}
           {text}
         </>
       )}
-    </button>
+    </label>
   )
 }

@@ -177,8 +177,15 @@ input[type="file"]::file-selector-button:hover {
   background: var(--border-strong);
 }
 
-/* スライダー・セレクト・チェックボックスは既定の装飾を捨て、暗い配色にそろえる。 */
+/*
+ * スライダーはネイティブの input[type="range"] のまま、track と thumb だけを描き替える。
+ * track は背景（#1a1a1a）に対して 3:1 以上、thumb は track に対して 3:1 以上を保つ。
+ * WebKit と Firefox の擬似要素は別ルールに書く（カンマでまとめると未知の接頭辞で全体が捨てられる）。
+ */
 input[type="range"] {
+  --slider-track-size: 4px;
+  --slider-thumb-size: 14px;
+
   -webkit-appearance: none;
   appearance: none;
   height: 32px;
@@ -190,39 +197,34 @@ input[type="range"] {
 }
 
 input[type="range"]::-webkit-slider-runnable-track {
-  height: 4px;
+  height: var(--slider-track-size);
   border-radius: var(--radius-control);
-  background: var(--border-strong);
+  background: var(--text-muted);
 }
 
 input[type="range"]::-moz-range-track {
-  height: 4px;
+  height: var(--slider-track-size);
   border-radius: var(--radius-control);
-  background: var(--border-strong);
+  background: var(--text-muted);
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -5px;
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
+  margin-block-start: calc((var(--slider-track-size) - var(--slider-thumb-size)) / 2);
   border: none;
   border-radius: var(--radius-control);
-  background: var(--accent);
+  background: var(--text);
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: var(--slider-thumb-size);
+  height: var(--slider-thumb-size);
   border: none;
   border-radius: var(--radius-control);
-  background: var(--accent);
-}
-
-input[type="range"]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  background: var(--text);
 }
 
 input[type="range"]:disabled {
@@ -252,12 +254,70 @@ select:disabled {
   cursor: not-allowed;
 }
 
-input[type="checkbox"] {
+input[type="checkbox"]:not(.ui-switch__input) {
   width: 16px;
   height: 16px;
   margin: 0;
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+/*
+ * スイッチは input[type="checkbox"][switch] のまま、track と thumb を input 自身に描く。
+ * switch 属性は Safari のみなので、appearance を外して全ブラウザで同じ形にする。
+ */
+.ui-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.ui-switch--label-first {
+  justify-content: space-between;
+}
+
+.ui-switch:has(.ui-switch__input:disabled) {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.ui-switch__input {
+  flex-shrink: 0;
+  inline-size: 44px;
+  block-size: 20px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background-color: var(--surface-solid);
+  background-image: radial-gradient(circle, var(--text-dim) 0 7px, transparent 7px);
+  background-size: 14px 14px;
+  background-repeat: no-repeat;
+  background-position: 3px center;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: inherit;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    background-position 150ms ease;
+}
+
+.ui-switch__input:checked {
+  background-color: var(--border-strong);
+  background-image: radial-gradient(circle, var(--text) 0 7px, transparent 7px);
+  background-position: calc(100% - 3px) center;
+}
+
+.ui-switch__input:disabled {
+  border-color: var(--border);
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, var(--text-muted) 0 7px, transparent 7px);
 }
 
 .help-detail-body {
