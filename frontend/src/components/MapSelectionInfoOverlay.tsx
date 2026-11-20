@@ -6,7 +6,6 @@ import {
   computeModelDimensions,
   computeNaturalDimensions,
   formatMeters,
-  formatMm,
   formatScale,
   type SelectionBounds,
 } from '../lib/selectionBounds'
@@ -36,14 +35,13 @@ function buildPanel(onClear: () => void): { element: HTMLDivElement; nodes: Over
   element.style.pointerEvents = 'none'
   element.style.userSelect = 'none'
   element.style.whiteSpace = 'nowrap'
-  element.style.background = 'rgba(13, 17, 23, 0.88)'
-  element.style.border = '1px solid rgba(255, 255, 255, 0.18)'
-  element.style.borderRadius = '8px'
-  element.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.35)'
-  element.style.padding = '8px 10px'
+  element.style.background = 'var(--surface)'
+  element.style.border = '1px solid var(--border)'
+  element.style.borderRadius = 'var(--radius-panel)'
+  element.style.padding = '8px 12px'
   element.style.display = 'flex'
   element.style.flexDirection = 'column'
-  element.style.gap = '3px'
+  element.style.gap = '4px'
 
   const makeRow = (label: string): { row: HTMLDivElement; value: HTMLSpanElement } => {
     const row = document.createElement('div')
@@ -52,25 +50,27 @@ function buildPanel(onClear: () => void): { element: HTMLDivElement; nodes: Over
     row.style.gap = '8px'
     const labelEl = document.createElement('span')
     labelEl.textContent = label
-    labelEl.style.color = 'rgba(255, 255, 255, 0.55)'
-    labelEl.style.fontSize = '11px'
+    labelEl.style.color = 'var(--text-dim)'
+    labelEl.style.fontSize = '12px'
     labelEl.style.minWidth = '28px'
     const value = document.createElement('span')
-    value.style.color = '#e6edf3'
-    value.style.fontSize = '12px'
-    value.style.fontWeight = '600'
+    value.style.flex = '1'
+    value.style.textAlign = 'right'
+    value.style.color = 'var(--text)'
+    value.style.fontSize = '13px'
+    value.style.fontWeight = '500'
     value.style.fontFamily = MONO_FONT
     value.style.fontVariantNumeric = 'tabular-nums'
     row.append(labelEl, value)
     return { row, value }
   }
 
-  const width = makeRow('横')
-  const depth = makeRow('縦')
+  const width = makeRow('W')
+  const depth = makeRow('D')
   const divider = document.createElement('div')
   divider.style.height = '1px'
-  divider.style.background = 'rgba(255, 255, 255, 0.12)'
-  divider.style.margin = '2px 0'
+  divider.style.background = 'var(--border)'
+  divider.style.margin = '4px 0'
   const scaleRow = makeRow('縮尺')
   const clearButton = document.createElement('button')
   clearButton.type = 'button'
@@ -79,27 +79,20 @@ function buildPanel(onClear: () => void): { element: HTMLDivElement; nodes: Over
   clearButton.setAttribute('aria-label', '選択範囲を解除')
   clearButton.style.pointerEvents = 'auto'
   clearButton.style.cursor = 'pointer'
-  clearButton.style.minHeight = '26px'
-  clearButton.style.padding = '2px 10px'
+  clearButton.style.minHeight = '32px'
+  clearButton.style.padding = '0 12px'
   clearButton.style.fontSize = '12px'
-  clearButton.style.fontWeight = '600'
-  clearButton.style.color = '#e6edf3'
-  clearButton.style.background = 'rgba(255, 255, 255, 0.08)'
-  clearButton.style.border = '1px solid rgba(255, 255, 255, 0.22)'
-  clearButton.style.borderRadius = '4px'
+  clearButton.style.fontWeight = '500'
+  clearButton.style.color = 'var(--text)'
+  clearButton.style.background = 'transparent'
+  clearButton.style.border = '1px solid var(--border-strong)'
+  clearButton.style.borderRadius = 'var(--radius-control)'
   clearButton.addEventListener('click', (e) => {
     // 地図側のクリック処理へ伝播させない。
     e.stopPropagation()
     onClear()
   })
-  // 右下が空くため、縮尺の右側に解除ボタンを置く。
-  const bottomRow = document.createElement('div')
-  bottomRow.style.display = 'flex'
-  bottomRow.style.alignItems = 'center'
-  bottomRow.style.justifyContent = 'space-between'
-  bottomRow.style.gap = '12px'
-  bottomRow.append(scaleRow.row, clearButton)
-  element.append(width.row, depth.row, divider, bottomRow)
+  element.append(width.row, depth.row, divider, scaleRow.row, clearButton)
   return {
     element,
     nodes: { widthValue: width.value, depthValue: depth.value, scaleValue: scaleRow.value },
@@ -201,8 +194,8 @@ export default function MapSelectionInfoOverlay({
       const maxDim = Math.max(widthM, depthM)
       const effectiveScale = scaleOverride ?? (maxDim > 0 ? 150 / (maxDim * 1000) : 1)
       const dims = computeModelDimensions(target, effectiveScale)
-      nodes.widthValue.textContent = `${formatMeters(dims.widthM)} → ${formatMm(dims.widthMm)}`
-      nodes.depthValue.textContent = `${formatMeters(dims.depthM)} → ${formatMm(dims.depthMm)}`
+      nodes.widthValue.textContent = `${formatMeters(dims.widthM)} = ${dims.widthMm.toFixed(1)} mm`
+      nodes.depthValue.textContent = `${formatMeters(dims.depthM)} = ${dims.depthMm.toFixed(1)} mm`
       nodes.scaleValue.textContent = formatScale(effectiveScale)
       lastAppliedBoundsRef.current = target
       updatePosition(target)
