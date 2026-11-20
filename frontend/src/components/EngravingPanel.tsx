@@ -4,11 +4,7 @@ import type {
   EngravingFaceDims,
   EngravingOptions,
 } from '../../../core/src/engraving/types.ts'
-import {
-  ENGRAVING_FACES,
-  engravingMaxDepthMm,
-  engravingMinFontSizes,
-} from '../../../core/src/engraving/types.ts'
+import { ENGRAVING_FACES, engravingMaxDepthMm } from '../../../core/src/engraving/types.ts'
 import { autoFitEngraving, layoutEngraving } from '../../../core/src/engraving/layout.ts'
 import type { EngravingFont } from '../../../core/src/engraving/font.ts'
 import { loadEngravingFont } from '../lib/engravingFontClient'
@@ -25,6 +21,7 @@ import {
   updateLineText,
 } from '../lib/engravingEditor'
 import { buildGlyphPathMap } from '../lib/engravingSvg'
+import Icon from './ui/Icon'
 
 export interface EngravingPanelProps {
   /** 下書きの刻印設定（反映前） */
@@ -167,10 +164,6 @@ function EngravingPanel({
     () => (layout && faceDims ? editorWarnings(layout, faceDims, options) : []),
     [layout, faceDims, options],
   )
-  const minSizes = useMemo(
-    () => engravingMinFontSizes(options.printProfile),
-    [options.printProfile],
-  )
   const maxDepthMm = faceDims ? engravingMaxDepthMm(faceDims) : Number.POSITIVE_INFINITY
 
   // autoTexts（座標・縮尺など）の変化を auto:true の行だけに反映する。
@@ -211,12 +204,6 @@ function EngravingPanel({
     layout.unsupportedChars.length === 0
   const canAutoFit = !busy && font !== null && layout !== null && faceDims?.available === true
 
-  const placeholderFor = (def: EngravingContentDef): string => {
-    if (def.id === 'place') return placeName ?? '選択範囲の地名を取得できませんでした'
-    if (def.id === 'custom') return '自由に入力（改行可）'
-    return '自動値を取得できませんでした'
-  }
-
   return (
     <div
       data-testid="engraving-panel"
@@ -229,9 +216,6 @@ function EngravingPanel({
         overflow: 'hidden',
         background: 'var(--surface)',
         color: 'var(--text)',
-        border: '1px solid var(--border)',
-        borderRadius: '8px',
-        backdropFilter: 'blur(8px)',
       }}
     >
       {/* ヘッダー */}
@@ -241,17 +225,12 @@ function EngravingPanel({
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '8px',
-          padding: '10px 12px',
+          padding: '12px',
           borderBottom: '1px solid var(--border)',
           flexShrink: 0,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', minWidth: 0 }}>
-          <span style={{ fontWeight: 'bold', fontSize: '15px' }}>刻印</span>
-          {!applied && (
-            <span style={{ fontSize: '11px', color: 'var(--warn)' }}>未反映の変更があります</span>
-          )}
-        </div>
+        <span style={{ fontSize: '16px', fontWeight: 500 }}>刻印</span>
         {onClose && (
           <button
             type="button"
@@ -260,7 +239,7 @@ function EngravingPanel({
             aria-label="刻印パネルを閉じる"
             style={closeButtonStyle}
           >
-            ×
+            <Icon name="close" />
           </button>
         )}
       </div>
@@ -291,20 +270,21 @@ function EngravingPanel({
                   data-testid={`engraving-face-${face}`}
                   onClick={() => handleFaceChange(face)}
                   disabled={!available}
-                  title={
-                    dims?.unavailableReason ??
-                    (dims
-                      ? `${formatMm(dims.widthMm)} × ${formatMm(dims.heightMm)} mm`
-                      : '面の寸法を計算できません')
+                  aria-label={
+                    dims
+                      ? `${FACE_LABELS[face]} ${formatMm(dims.widthMm)} × ${formatMm(dims.heightMm)} mm`
+                      : FACE_LABELS[face]
                   }
+                  title={dims?.unavailableReason ?? undefined}
                   style={{
-                    padding: '6px 0',
+                    minHeight: 32,
+                    padding: '8px 0',
                     fontSize: '12px',
-                    borderRadius: '4px',
-                    background: active ? 'var(--accent)' : 'var(--border)',
+                    borderRadius: 'var(--radius-control)',
+                    background: active ? 'var(--border-strong)' : 'transparent',
                     color: active ? 'var(--text)' : 'var(--text-dim)',
                     border: '1px solid var(--border-strong)',
-                    fontWeight: active ? 700 : 400,
+                    fontWeight: active ? 500 : 400,
                     cursor: available ? 'pointer' : 'not-allowed',
                     opacity: available ? 1 : 0.4,
                   }}
@@ -314,26 +294,16 @@ function EngravingPanel({
               )
             })}
           </div>
-          <p style={hintStyle}>
-            {faceDims
-              ? `${FACE_LABELS[faceDims.face]} ${formatMm(faceDims.widthMm)} × ${formatMm(faceDims.heightMm)} mm${
-                  Number.isFinite(maxDepthMm) ? ` / 最大深さ ${formatMm(maxDepthMm)} mm` : ''
-                }`
-              : '面の寸法を計算できません'}
-          </p>
-          {faceDims?.available === false && (
-            <p style={{ ...hintStyle, color: 'var(--warn)' }}>{faceDims.unavailableReason}</p>
-          )}
         </div>
 
         {/* プレビュー */}
         <div>
-          <span style={labelStyle}>面のレイアウト（位置は3Dプレビュー上でドラッグ）</span>
+          <span style={labelStyle}>面のレイアウト</span>
           {fontError ? (
             <div
               style={{
                 padding: '12px',
-                borderRadius: '6px',
+                borderRadius: 'var(--radius-control)',
                 border: '1px solid var(--border-strong)',
                 background: 'var(--border)',
                 fontSize: '12px',
@@ -347,7 +317,7 @@ function EngravingPanel({
               <button
                 type="button"
                 onClick={() => setFontAttempt((attempt) => attempt + 1)}
-                style={{ ...secondaryButtonStyle, padding: '6px' }}
+                style={{ ...secondaryButtonStyle, padding: '8px' }}
               >
                 再読み込み
               </button>
@@ -356,14 +326,14 @@ function EngravingPanel({
             <div
               style={{
                 padding: '24px 12px',
-                borderRadius: '6px',
+                borderRadius: 'var(--radius-control)',
                 border: '1px dashed var(--border-strong)',
                 fontSize: '12px',
                 color: 'var(--text-dim)',
                 textAlign: 'center',
               }}
             >
-              刻印フォントを読み込み中...
+              刻印フォントを読み込み中…
             </div>
           ) : (
             <div style={{ position: 'relative' }}>
@@ -381,7 +351,7 @@ function EngravingPanel({
                   maxHeight: '220px',
                   background: 'rgba(255, 255, 255, 0.04)',
                   border: '1px solid var(--border)',
-                  borderRadius: '6px',
+                  borderRadius: 'var(--radius-panel)',
                 }}
               >
                 {/* 面（クリック/ドラッグの当たり判定も兼ねる） */}
@@ -425,19 +395,6 @@ function EngravingPanel({
                     )
                   }),
                 )}
-                {/* ブロックの bbox */}
-                <rect
-                  x={layout.block.x}
-                  y={layout.faceHeightMm - (layout.block.y + layout.block.height)}
-                  width={layout.block.width}
-                  height={layout.block.height}
-                  fill="none"
-                  stroke="var(--accent)"
-                  strokeWidth={1}
-                  strokeDasharray="3 2"
-                  strokeOpacity={0.9}
-                  vectorEffect="non-scaling-stroke"
-                />
               </svg>
               {layout.lines.length === 0 && (
                 <span
@@ -485,7 +442,7 @@ function EngravingPanel({
                     />
                     <span style={{ fontSize: '13px', flex: 1 }}>{def.label}</span>
                     {line?.auto === true && (
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>自動</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>自動</span>
                     )}
                   </label>
                   {line && (
@@ -493,7 +450,7 @@ function EngravingPanel({
                       style={{
                         display: 'flex',
                         alignItems: 'flex-start',
-                        gap: '6px',
+                        gap: '8px',
                         marginTop: '4px',
                       }}
                     >
@@ -505,7 +462,6 @@ function EngravingPanel({
                           onChange={(event) =>
                             onChange(updateLineText(options, def.id, event.target.value))
                           }
-                          placeholder={placeholderFor(def)}
                           style={{
                             ...inputStyle,
                             flex: 1,
@@ -522,7 +478,7 @@ function EngravingPanel({
                           onChange={(event) =>
                             onChange(updateLineText(options, def.id, event.target.value))
                           }
-                          placeholder={placeholderFor(def)}
+                          placeholder={def.id === 'place' ? (placeName ?? '') : undefined}
                           style={{ ...inputStyle, flex: 1 }}
                         />
                       )}
@@ -530,8 +486,8 @@ function EngravingPanel({
                         style={{
                           display: 'flex',
                           alignItems: 'center',
-                          gap: '2px',
-                          width: '80px',
+                          gap: '4px',
+                          width: '96px',
                           flexShrink: 0,
                         }}
                       >
@@ -541,11 +497,10 @@ function EngravingPanel({
                           max={50}
                           step={0.5}
                           testId={`engraving-size-${def.id}`}
-                          title="文字サイズ（mm）"
                           onChange={(value) => onChange(updateLineSize(options, def.id, value))}
-                          style={{ padding: '4px' }}
+                          style={numberStyle}
                         />
-                        <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>mm</span>
+                        <span style={unitStyle}>mm</span>
                       </div>
                     </div>
                   )}
@@ -561,77 +516,87 @@ function EngravingPanel({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
             <div>
               <span style={fieldLabelStyle}>ノズル径</span>
-              <NumberInput
-                value={options.printProfile.nozzleMm}
-                min={0.1}
-                max={1.5}
-                step={0.05}
-                testId="engraving-nozzle"
-                title="ノズル径（mm）"
-                onChange={(value) =>
-                  onChange({
-                    ...options,
-                    printProfile: { ...options.printProfile, nozzleMm: value },
-                  })
-                }
-              />
+              <div style={numberRowStyle}>
+                <NumberInput
+                  value={options.printProfile.nozzleMm}
+                  min={0.1}
+                  max={1.5}
+                  step={0.05}
+                  testId="engraving-nozzle"
+                  onChange={(value) =>
+                    onChange({
+                      ...options,
+                      printProfile: { ...options.printProfile, nozzleMm: value },
+                    })
+                  }
+                  style={numberStyle}
+                />
+                <span style={unitStyle}>mm</span>
+              </div>
             </div>
             <div>
               <span style={fieldLabelStyle}>積層ピッチ</span>
-              <NumberInput
-                value={options.printProfile.layerHeightMm}
-                min={0.05}
-                max={1}
-                step={0.05}
-                testId="engraving-layer"
-                title="積層ピッチ（mm）"
-                onChange={(value) =>
-                  onChange({
-                    ...options,
-                    printProfile: { ...options.printProfile, layerHeightMm: value },
-                  })
-                }
-              />
+              <div style={numberRowStyle}>
+                <NumberInput
+                  value={options.printProfile.layerHeightMm}
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  testId="engraving-layer"
+                  onChange={(value) =>
+                    onChange({
+                      ...options,
+                      printProfile: { ...options.printProfile, layerHeightMm: value },
+                    })
+                  }
+                  style={numberStyle}
+                />
+                <span style={unitStyle}>mm</span>
+              </div>
             </div>
             <div>
               <span style={fieldLabelStyle}>刻印深さ</span>
-              <NumberInput
-                value={options.depthMm}
-                min={0.05}
-                max={10}
-                step={0.05}
-                testId="engraving-depth"
-                title="刻印深さ（mm）"
-                onChange={(value) => onChange({ ...options, depthMm: value })}
-              />
+              <div style={numberRowStyle}>
+                <NumberInput
+                  value={options.depthMm}
+                  min={0.05}
+                  max={10}
+                  step={0.05}
+                  testId="engraving-depth"
+                  title={
+                    Number.isFinite(maxDepthMm)
+                      ? `この面の最大 ${formatMm(maxDepthMm)} mm`
+                      : undefined
+                  }
+                  onChange={(value) => onChange({ ...options, depthMm: value })}
+                  style={numberStyle}
+                />
+                <span style={unitStyle}>mm</span>
+              </div>
             </div>
             <div>
               <span style={fieldLabelStyle}>行間</span>
-              <NumberInput
-                value={options.lineGapMm}
-                min={0}
-                max={10}
-                step={0.1}
-                testId="engraving-line-gap"
-                title="行間（mm）"
-                onChange={(value) => onChange({ ...options, lineGapMm: value })}
-              />
+              <div style={numberRowStyle}>
+                <NumberInput
+                  value={options.lineGapMm}
+                  min={0}
+                  max={10}
+                  step={0.1}
+                  testId="engraving-line-gap"
+                  onChange={(value) => onChange({ ...options, lineGapMm: value })}
+                  style={numberStyle}
+                />
+                <span style={unitStyle}>mm</span>
+              </div>
             </div>
           </div>
-          <p style={hintStyle}>
-            最小文字サイズ: 欧文 {formatMm(minSizes.latinMm)} mm / 日本語 {formatMm(minSizes.cjkMm)}{' '}
-            mm（ノズル径から算出）
-          </p>
-          {Number.isFinite(maxDepthMm) && (
-            <p style={hintStyle}>この面の最大深さ: {formatMm(maxDepthMm)} mm</p>
-          )}
           <label
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
               cursor: 'pointer',
-              marginTop: '4px',
+              marginTop: '8px',
             }}
           >
             <input
@@ -640,7 +605,7 @@ function EngravingPanel({
               checked={options.wrap}
               onChange={(event) => onChange({ ...options, wrap: event.target.checked })}
             />
-            <span style={{ fontSize: '13px' }}>面の幅に収まるよう折り返す</span>
+            <span style={{ fontSize: '13px' }}>折り返す</span>
           </label>
         </div>
 
@@ -653,13 +618,14 @@ function EngravingPanel({
                 data-testid="engraving-warning"
                 style={{
                   display: 'flex',
-                  gap: '6px',
-                  fontSize: '11px',
+                  alignItems: 'flex-start',
+                  gap: '4px',
+                  fontSize: '12px',
                   lineHeight: 1.4,
                   color: warning.level === 'error' ? 'var(--error)' : 'var(--warn)',
                 }}
               >
-                <span aria-hidden>{warning.level === 'error' ? '⚠' : '!'}</span>
+                <Icon name="warning" style={{ flexShrink: 0 }} />
                 <span>{warning.message}</span>
               </div>
             ))}
@@ -684,7 +650,6 @@ function EngravingPanel({
             data-testid="engraving-autofit"
             onClick={handleAutoFit}
             disabled={!canAutoFit}
-            title="面の中央に寄せ、収まるまで文字サイズを縮小します"
             style={{
               ...secondaryButtonStyle,
               opacity: canAutoFit ? 1 : 0.5,
@@ -698,24 +663,20 @@ function EngravingPanel({
             data-testid="engraving-apply"
             onClick={onApply}
             disabled={!canApply}
-            title={
-              canApply
-                ? 'この面の寸法で3Dモデルに刻印を反映します'
-                : 'はみ出し・未対応文字があると反映できません'
-            }
             style={{
-              padding: '10px',
-              borderRadius: '6px',
-              border: 'none',
-              background: 'var(--accent)',
+              minHeight: 32,
+              padding: '8px',
+              borderRadius: 'var(--radius-control)',
+              border: '1px solid var(--border-strong)',
+              background: 'var(--border-strong)',
               color: 'var(--text)',
-              fontSize: '14px',
-              fontWeight: 700,
+              fontSize: '13px',
+              fontWeight: 500,
               cursor: canApply ? 'pointer' : 'not-allowed',
               opacity: canApply ? 1 : 0.5,
             }}
           >
-            {busy ? '反映中...' : '反映'}
+            {busy ? '反映中…' : '反映'}
           </button>
         </div>
         <button
@@ -724,8 +685,9 @@ function EngravingPanel({
           onClick={onDisable}
           disabled={busy}
           style={{
+            minHeight: 32,
             padding: '8px',
-            borderRadius: '6px',
+            borderRadius: 'var(--radius-control)',
             border: '1px solid var(--border-strong)',
             background: 'transparent',
             color: 'var(--text-dim)',
@@ -734,7 +696,7 @@ function EngravingPanel({
             opacity: busy ? 0.5 : 1,
           }}
         >
-          刻印モードを終了
+          {applied ? '刻印モードを終了' : '変更を破棄して終了'}
         </button>
       </div>
     </div>
@@ -745,53 +707,69 @@ const labelStyle: React.CSSProperties = {
   display: 'block',
   fontSize: '12px',
   color: 'var(--text-dim)',
-  marginBottom: '6px',
+  marginBottom: '8px',
 }
 
 const fieldLabelStyle: React.CSSProperties = {
   display: 'block',
-  fontSize: '11px',
+  fontSize: '12px',
   color: 'var(--text-dim)',
-  marginBottom: '3px',
-}
-
-const hintStyle: React.CSSProperties = {
-  fontSize: '11px',
-  color: 'var(--text-dim)',
-  margin: '6px 0 0',
+  marginBottom: '4px',
 }
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
-  padding: '5px 6px',
-  fontSize: '12px',
-  background: 'var(--border)',
+  padding: '4px 8px',
+  fontSize: '13px',
+  background: 'var(--bg)',
   color: 'var(--text)',
   border: '1px solid var(--border-strong)',
-  borderRadius: '4px',
+  borderRadius: 'var(--radius-control)',
+}
+
+const numberStyle: React.CSSProperties = {
+  flex: 1,
+  textAlign: 'right',
+  fontVariantNumeric: 'tabular-nums',
+}
+
+const numberRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+}
+
+const unitStyle: React.CSSProperties = {
+  flexShrink: 0,
+  width: '24px',
+  fontSize: '12px',
+  color: 'var(--text-dim)',
 }
 
 const secondaryButtonStyle: React.CSSProperties = {
-  padding: '10px',
-  borderRadius: '6px',
+  minHeight: 32,
+  padding: '8px',
+  borderRadius: 'var(--radius-control)',
   border: '1px solid var(--border-strong)',
   background: 'var(--border)',
   color: 'var(--text)',
   fontSize: '13px',
-  fontWeight: 600,
+  fontWeight: 500,
 }
 
 const closeButtonStyle: React.CSSProperties = {
   width: 32,
   height: 32,
   flexShrink: 0,
-  borderRadius: 6,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 0,
+  borderRadius: 'var(--radius-control)',
   border: '1px solid var(--border-strong)',
   background: 'transparent',
   color: 'var(--text-dim)',
   cursor: 'pointer',
-  fontSize: 16,
-  lineHeight: 1,
 }
 
 export default React.memo(EngravingPanel)
