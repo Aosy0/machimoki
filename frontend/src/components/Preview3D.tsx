@@ -1081,9 +1081,7 @@ export default function Preview3D({
   const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
   const [buildingItems, setBuildingItems] = useState<BuildingListItem[]>([])
   const [listLoading, setListLoading] = useState(false)
-  const [totalTiles, setTotalTiles] = useState<number | null>(null)
   const [loadedTiles, setLoadedTiles] = useState<number | null>(null)
-  const [buildingLoadDetail, setBuildingLoadDetail] = useState<string | null>(null)
   const [buildingLoadProgress, setBuildingLoadProgress] = useState<number | null>(null)
   const [coverageWarning, setCoverageWarning] = useState<string | null>(null)
   const [forceBuildingsBounds, setForceBuildingsBounds] = useState<SelectionBounds | null>(null)
@@ -1552,7 +1550,16 @@ export default function Preview3D({
     console.log('[Preview3D] Viewer useEffect fired')
     if (!containerRef.current) return
 
+    // 帰属は自前の1行（preview-attribution）にまとめる。Cesium の credit 表示は
+    // 右下の設定サイドバーと重なるため、非表示のコンテナへ逃がす（Cesium の表記自体は
+    // 自前の帰属行に含めている）。
+    const creditContainer = document.createElement('div')
+    creditContainer.style.display = 'none'
+
     const viewer = new Viewer(containerRef.current, {
+      creditContainer,
+      // Cesium 既定の白い全画面ボタンは自前の操作系に合わない。
+      fullscreenButton: false,
       baseLayerPicker: false,
       geocoder: false,
       homeButton: false,
@@ -1980,9 +1987,7 @@ export default function Preview3D({
     pendingMapRef.current.clear()
     setBuildingItems([])
     setListLoading(false)
-    setTotalTiles(null)
     setLoadedTiles(null)
-    setBuildingLoadDetail(null)
     setBuildingLoadProgress(null)
     setCoverageWarning(null)
     setCanForceBuildings(false)
@@ -2091,7 +2096,6 @@ export default function Preview3D({
 
     async function load() {
       try {
-        setBuildingLoadDetail('タイルセットURLを特定中')
         setBuildingLoadProgress(5)
         setListLoading(true)
         onPipelineStateChange?.({
@@ -2116,7 +2120,6 @@ export default function Preview3D({
           setCoverageWarning(
             '選択範囲が非常に広いため、地形のみ表示しています（建物を表示すると非常に時間がかかります）',
           )
-          setBuildingLoadDetail('大規模範囲（地形のみ表示）')
           setBuildingLoadProgress(null)
           setListLoading(false)
           onPipelineStateChange?.({
@@ -2129,7 +2132,6 @@ export default function Preview3D({
           const muniCodes = await resolveMuniCodes(bounds)
           if (cancelled) return
 
-          setBuildingLoadDetail('カタログからタイルセットを検索中')
           setBuildingLoadProgress(15)
           onPipelineStateChange?.({
             phase: 'identifying',
@@ -2161,7 +2163,6 @@ export default function Preview3D({
             if (firstUrlErrorRef.current)
               console.warn('[Preview3D] 建物データなし:', firstUrlErrorRef.current.message)
             setCoverageWarning('選択範囲にPLATEAUの建物データがありません。地形のみ表示しています')
-            setBuildingLoadDetail('建物データなし（地形のみ表示）')
             setBuildingLoadProgress(null)
             setListLoading(false)
             onPipelineStateChange?.({
@@ -2219,7 +2220,6 @@ export default function Preview3D({
           console.log('[Preview3D] Resolved tileset URLs:', urls)
 
           if (urls.length > 0 && !forceBuildings && !isSmallRange(bounds)) {
-            setBuildingLoadDetail('建物データ量を確認中')
             let estimate: PreviewLoadEstimate | null = null
             try {
               estimate = await estimatePreviewLoad({
@@ -2236,7 +2236,6 @@ export default function Preview3D({
               terrainOnlyDueToBudget = true
               setCanForceBuildings(true)
               setCoverageWarning('建物データ量を確認できないため、安全のため地形のみ表示しています')
-              setBuildingLoadDetail('建物データ量を確認できないため地形のみ表示')
               setBuildingLoadProgress(null)
               setListLoading(false)
               onPipelineStateChange?.({
@@ -2265,10 +2264,8 @@ export default function Preview3D({
                   setCoverageWarning(
                     `選択範囲の建物データが大きいため、地形のみ表示しています（建物約${estimate.totalBuildings}件 / タイル${estimate.contentTiles}件）`,
                   )
-                  setBuildingLoadDetail('建物データが大きいため地形のみ表示')
                 } else {
                   setCoverageWarning('選択範囲に建物データがありません。地形のみ表示しています')
-                  setBuildingLoadDetail('建物データなし（地形のみ表示）')
                 }
                 setBuildingLoadProgress(null)
                 setListLoading(false)
@@ -2290,7 +2287,6 @@ export default function Preview3D({
         }
 
         if (urls.length > 0 && !terrainOnlyDueToBudget) {
-          setBuildingLoadDetail(`3Dタイルを読み込み中（${urls.length}件）`)
           setBuildingLoadProgress(30)
           onPipelineStateChange?.({
             phase: 'acquiring',
@@ -2355,12 +2351,10 @@ export default function Preview3D({
                   if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
                   const max = maxTilesRef.current
                   const rawLoaded = Math.max(0, max - currentSum)
-                  setTotalTiles(max)
                   setLoadedTiles((prev) => {
                     const prevVal = prev ?? 0
                     return Math.max(prevVal, rawLoaded)
                   })
-                  setBuildingLoadDetail(`3Dタイルを読み込み中`)
                   const loadedForProgress = Math.max(loadedTiles ?? 0, rawLoaded)
                   const ratio = max > 0 ? loadedForProgress / max : 0
                   const p = 30 + ratio * 55
@@ -2370,13 +2364,11 @@ export default function Preview3D({
                 } else {
                   const max = maxTilesRef.current
                   if (max > 0) {
-                    setTotalTiles(max)
                     setLoadedTiles((prev) => {
                       const prevVal = prev ?? 0
                       return Math.max(prevVal, max)
                     })
                   }
-                  setBuildingLoadDetail('建物リストを整理中')
                   setBuildingLoadProgress((prev) => (prev == null ? 90 : Math.max(prev, 90)))
                 }
               }
@@ -2434,17 +2426,13 @@ export default function Preview3D({
 
         tilesetsRef.current = loadedTilesets
         forEachBuildingFeature(applyStateToFeature)
-        setBuildingLoadDetail('読み込み完了')
         setBuildingLoadProgress(100)
         if (maxTilesRef.current > 0) {
-          setTotalTiles(maxTilesRef.current)
           setLoadedTiles(maxTilesRef.current)
         }
         setTimeout(() => {
           setListLoading(false)
-          setBuildingLoadDetail(null)
           setBuildingLoadProgress(null)
-          setTotalTiles(null)
           setLoadedTiles(null)
         }, 800)
         console.log('[Preview3D] Loaded tilesets:', loadedTilesets.length)
@@ -2883,7 +2871,6 @@ export default function Preview3D({
           return
         }
         console.error('[Preview3D]', err)
-        setBuildingLoadDetail(message)
         setBuildingLoadProgress(null)
         onPipelineStateChange?.({
           phase: 'error',
@@ -5084,36 +5071,40 @@ export default function Preview3D({
           >
             断面
           </button>
-          <input
-            data-testid="final-shape-section-position"
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={sectionT}
-            onChange={(e) => onSectionPositionChange(Number(e.target.value))}
-            style={{ width: '120px', accentColor: 'var(--accent)', cursor: 'pointer' }}
-            aria-label="断面位置"
-          />
-          <button
-            data-testid="final-shape-section-flip"
-            onClick={onSectionFlip}
-            style={{ ...VIEW_CONTROL_STYLE, background: 'transparent' }}
-          >
-            反対側
-          </button>
-          <button
-            data-testid="final-shape-section-shading"
-            onClick={onSectionShadingToggle}
-            aria-pressed={sectionFlatShading}
-            style={{
-              ...VIEW_CONTROL_STYLE,
-              background: sectionFlatShading ? 'var(--border-strong)' : 'transparent',
-              color: sectionFlatShading ? 'var(--text)' : 'var(--text-dim)',
-            }}
-          >
-            {sectionFlatShading ? 'フラット' : '影あり'}
-          </button>
+          {sectionOn && (
+            <>
+              <input
+                data-testid="final-shape-section-position"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={sectionT}
+                onChange={(e) => onSectionPositionChange(Number(e.target.value))}
+                style={{ width: '120px', accentColor: 'var(--accent)', cursor: 'pointer' }}
+                aria-label="断面位置"
+              />
+              <button
+                data-testid="final-shape-section-flip"
+                onClick={onSectionFlip}
+                style={{ ...VIEW_CONTROL_STYLE, background: 'transparent' }}
+              >
+                反対側
+              </button>
+              <button
+                data-testid="final-shape-section-shading"
+                onClick={onSectionShadingToggle}
+                aria-pressed={sectionFlatShading}
+                style={{
+                  ...VIEW_CONTROL_STYLE,
+                  background: sectionFlatShading ? 'var(--border-strong)' : 'transparent',
+                  color: sectionFlatShading ? 'var(--text)' : 'var(--text-dim)',
+                }}
+              >
+                {sectionFlatShading ? 'フラット' : '影あり'}
+              </button>
+            </>
+          )}
         </div>
       )}
       {isDevMode && debugInfo && !isCompact && (
@@ -5285,10 +5276,7 @@ export default function Preview3D({
           items={buildingItems}
           excludedIds={excludedIdsState}
           listLoading={listLoading}
-          loadingDetail={buildingLoadDetail}
           loadingProgress={buildingLoadProgress}
-          totalTiles={isDevMode ? totalTiles : null}
-          loadedTiles={isDevMode ? loadedTiles : null}
           onExclude={excludeBuildingById}
           onRestore={restoreBuildingById}
           onHoverItem={highlightBuildingById}
