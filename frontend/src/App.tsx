@@ -10,6 +10,7 @@ import HelpDetail from './components/HelpDetail'
 import Map2D from './components/Map2D'
 import MapSelectionInfoOverlay from './components/MapSelectionInfoOverlay'
 import MapModeControl from './components/MapModeControl'
+import Icon from './components/ui/Icon'
 import CoordinateSelectionPanel from './components/CoordinateSelectionPanel'
 import CoverageLegendPanel from './components/CoverageLegendPanel'
 import { exportModel } from './lib/apiClient'
@@ -34,7 +35,6 @@ import {
 } from './hooks/useMapLibreRectangleSelection'
 import { useHasCoarsePointer, useIsCompactLayout } from './hooks/useMediaQuery'
 import { usePreviewQuality } from './hooks/usePreviewQuality'
-import { useFirstRunHint } from './hooks/useFirstRunHint'
 import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
@@ -241,11 +241,6 @@ function App() {
   const [pickPoints] = useState<PickPoint[]>([])
   const [excludedBuildingIds, setExcludedBuildingIds] = useState<string[]>([])
   const [helpOpen, setHelpOpen] = useState(false)
-  const [mapInteracted, setMapInteracted] = useState(false)
-  const { attention: hintAttention, dismiss: dismissHint } = useFirstRunHint({
-    active: activeTab === 'map',
-    interacted: mapInteracted,
-  })
   const [pipelineState, setPipelineState] = useState<PipelineState>({
     phase: 'idle',
     progress: 0,
@@ -682,7 +677,7 @@ function App() {
     setPipelineState({
       phase: 'composing',
       progress: 0,
-      message: 'エクスポート準備中...',
+      message: 'エクスポート準備中…',
       error: null,
     })
     const exportOptions = {
@@ -761,7 +756,7 @@ function App() {
           setPipelineState({
             phase: 'composing',
             progress: 50,
-            message: '3Dモデル生成中（キャッシュ利用）...',
+            message: '3Dモデル生成中（キャッシュ利用）…',
             error: null,
           })
           // バッファは transfer で切り離されるため、コピーを渡す。
@@ -809,7 +804,7 @@ function App() {
         setPipelineState({
           phase: 'acquiring',
           progress: 5,
-          message: '建物データ取得中...',
+          message: '建物データ取得中…',
           error: null,
         })
         // 建物/地形はプレビューと共有するインメモリキャッシュから取得する
@@ -830,7 +825,7 @@ function App() {
           setPipelineState({
             phase: 'acquiring',
             progress: 30,
-            message: '地形データ取得中...',
+            message: '地形データ取得中…',
             error: null,
           })
           terrainMesh = await loadTerrainMesh(meshParams)
@@ -838,7 +833,7 @@ function App() {
         setPipelineState({
           phase: 'composing',
           progress: 50,
-          message: '3Dモデル生成中（Worker）...',
+          message: '3Dモデル生成中（Worker）…',
           error: null,
         })
         const { buffer, warnings, split } = await runWorkerExport(
@@ -869,7 +864,7 @@ function App() {
         setPipelineState({
           phase: 'composing',
           progress: 50,
-          message: 'Worker失敗、サーバーで再試行中...',
+          message: 'Worker失敗、サーバーで再試行中…',
           error: null,
         })
       }
@@ -941,18 +936,6 @@ function App() {
   const handleWebGLFailure = useCallback(() => {
     setMapFailed(true)
   }, [])
-
-  // 地図を触ったら初回ヒントを縮小する（タイマー待ちにしない）。
-  useEffect(() => {
-    if (!mapLibreMap) return
-    const handleInteract = (): void => setMapInteracted(true)
-    mapLibreMap.on('mousedown', handleInteract)
-    mapLibreMap.on('touchstart', handleInteract)
-    return () => {
-      mapLibreMap.off('mousedown', handleInteract)
-      mapLibreMap.off('touchstart', handleInteract)
-    }
-  }, [mapLibreMap])
 
   const closeHelp = useCallback(() => setHelpOpen(false), [])
   const toggleHelp = useCallback(() => {
@@ -1102,6 +1085,10 @@ function App() {
     }
   }, [mapLibreMap, activeTab, selectionBounds, coverageVisible])
 
+  // 刻印バナーのボタンはタッチで44px、ポインタで40px（アイコンは32px）。
+  const bannerButtonHeight = hasCoarsePointer ? 44 : 40
+  const bannerIconSize = hasCoarsePointer ? 44 : 32
+
   return (
     <div className="app-root">
       {/* Tab bar with app name */}
@@ -1122,11 +1109,10 @@ function App() {
         <h1
           style={{
             margin: 0,
-            padding: isCompact ? '10px 12px' : '12px 20px',
-            fontSize: isCompact ? 13 : 14,
-            fontWeight: 700,
-            color: 'var(--accent)',
-            letterSpacing: '0.04em',
+            padding: isCompact ? '8px 12px' : '12px 16px',
+            fontSize: 16,
+            fontWeight: 500,
+            color: 'var(--text)',
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
@@ -1139,16 +1125,7 @@ function App() {
             <span
               data-testid="dev-badge"
               title="開発者モード有効 (Ctrl+Shift+Dで切替 / __dev.disable()で無効化)"
-              style={{
-                fontSize: '10px',
-                fontWeight: 600,
-                letterSpacing: '0.06em',
-                padding: '2px 6px',
-                borderRadius: '4px',
-                background: 'rgba(255, 193, 7, 0.15)',
-                color: '#ffc107',
-                border: '1px solid rgba(255, 193, 7, 0.3)',
-              }}
+              style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-muted)' }}
             >
               DEV
             </span>
@@ -1170,16 +1147,16 @@ function App() {
               onClick={() => handleTabChange(id)}
               onKeyDown={(event) => handleTabKeyDown(event, id)}
               style={{
-                padding: isCompact ? '10px 12px' : '12px 20px',
+                padding: isCompact ? '8px 12px' : '12px 16px',
                 background: 'transparent',
                 color: activeTab === id ? 'var(--text)' : 'var(--text-dim)',
                 border: 'none',
                 borderBottom:
                   activeTab === id ? '2px solid var(--accent)' : '2px solid transparent',
                 cursor: 'pointer',
-                fontSize: isCompact ? 12 : 13,
-                fontWeight: activeTab === id ? 600 : 400,
-                transition: 'color 150ms ease, border-color 150ms ease',
+                fontSize: 13,
+                fontWeight: 500,
+                transition: 'color 120ms ease, border-color 120ms ease',
                 whiteSpace: 'nowrap',
                 flexShrink: 0,
               }}
@@ -1191,34 +1168,29 @@ function App() {
         <button
           type="button"
           data-testid="help-trigger"
+          aria-label="ヘルプ"
           aria-expanded={helpOpen}
           aria-controls={helpOpen ? 'help-detail' : undefined}
-          onClick={() => {
-            dismissHint()
-            toggleHelp()
-          }}
-          title={helpOpen ? '操作方法を閉じる' : '操作方法'}
+          onClick={toggleHelp}
           style={{
             marginLeft: 'auto',
             marginRight: isCompact ? 8 : 12,
-            width: isCompact ? 36 : 24,
-            height: isCompact ? 36 : 24,
-            borderRadius: '50%',
-            background: helpOpen ? 'var(--accent)' : 'transparent',
+            width: isCompact ? 44 : 32,
+            height: isCompact ? 44 : 32,
+            borderRadius: 'var(--radius-control)',
+            border: '1px solid var(--border-strong)',
+            background: helpOpen ? 'var(--border)' : 'transparent',
             color: helpOpen ? 'var(--text)' : 'var(--text-dim)',
-            border: helpOpen ? 'none' : '1px solid var(--border-strong)',
             cursor: 'pointer',
-            fontSize: isCompact ? 14 : 12,
-            fontWeight: 600,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             padding: 0,
             flexShrink: 0,
-            transition: 'background 150ms ease, color 150ms ease',
+            transition: 'background-color 120ms ease, color 120ms ease',
           }}
         >
-          ?
+          <Icon name="help" size={16} />
         </button>
       </header>
 
@@ -1229,9 +1201,10 @@ function App() {
             padding: '8px 12px',
             background: 'var(--surface-solid)',
             color: 'var(--text-dim)',
-            fontSize: '14px',
+            fontSize: 12,
             borderBottom: '1px solid var(--border)',
             fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
+            fontVariantNumeric: 'tabular-nums',
           }}
         >
           選択範囲: W{selectionBounds.west.toFixed(4)} S{selectionBounds.south.toFixed(4)} E
@@ -1277,18 +1250,21 @@ function App() {
             <div
               style={{
                 position: 'absolute',
-                top: '16px',
-                left: '16px',
-                background: 'var(--surface)',
-                color: 'var(--text-dim)',
-                padding: '6px 12px',
-                borderRadius: '4px',
-                fontSize: '13px',
+                top: 16,
+                left: 16,
+                background: 'var(--surface-solid)',
+                border: '1px solid var(--border)',
+                color: 'var(--text)',
+                padding: '8px 12px',
+                borderRadius: 'var(--radius-panel)',
+                fontSize: 13,
                 zIndex: 100,
-                backdropFilter: 'blur(4px)',
               }}
             >
-              地図描画に失敗しました。座標入力・プリセットで範囲を指定できます。
+              <div style={{ fontWeight: 500 }}>地図を描画できません</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-dim)' }}>
+                座標入力で指定できます
+              </div>
             </div>
           )}
           <MapModeControl
@@ -1301,10 +1277,6 @@ function App() {
             legendOpen={mapSheet === 'legend'}
             onToggleCoords={() => setMapSheet((prev) => (prev === 'coords' ? null : 'coords'))}
             onToggleLegend={() => setMapSheet((prev) => (prev === 'legend' ? null : 'legend'))}
-            attention={hintAttention}
-            helpOpen={helpOpen}
-            onToggleHelp={toggleHelp}
-            onDismissHint={dismissHint}
           />
           {!isCompact && (
             <div
@@ -1317,9 +1289,9 @@ function App() {
                 color: 'var(--text)',
                 border: '1px solid var(--border)',
                 backdropFilter: 'blur(4px)',
-                padding: '10px',
-                borderRadius: '6px',
-                fontSize: '14px',
+                padding: 12,
+                borderRadius: 'var(--radius-panel)',
+                fontSize: 14,
                 zIndex: 100,
                 width: '240px',
               }}
@@ -1348,13 +1320,12 @@ function App() {
                 overflowY: 'auto',
                 background: 'var(--surface)',
                 color: 'var(--text)',
-                border: '1px solid var(--border-strong)',
+                border: '1px solid var(--border)',
                 backdropFilter: 'blur(8px)',
-                padding: '12px',
-                borderRadius: '12px',
-                fontSize: '14px',
+                padding: 12,
+                borderRadius: 'var(--radius-panel)',
+                fontSize: 14,
                 zIndex: 220,
-                boxShadow: '0 -8px 24px rgba(0, 0, 0, 0.35)',
               }}
             >
               <CoordinateSelectionPanel
@@ -1381,9 +1352,9 @@ function App() {
                 color: 'var(--text)',
                 border: '1px solid var(--border)',
                 backdropFilter: 'blur(4px)',
-                padding: '10px',
-                borderRadius: '6px',
-                fontSize: '14px',
+                padding: 12,
+                borderRadius: 'var(--radius-panel)',
+                fontSize: 14,
                 zIndex: 100,
                 width: '220px',
               }}
@@ -1407,13 +1378,12 @@ function App() {
                 overflowY: 'auto',
                 background: 'var(--surface)',
                 color: 'var(--text)',
-                border: '1px solid var(--border-strong)',
+                border: '1px solid var(--border)',
                 backdropFilter: 'blur(8px)',
-                padding: '12px',
-                borderRadius: '12px',
-                fontSize: '14px',
+                padding: 12,
+                borderRadius: 'var(--radius-panel)',
+                fontSize: 14,
                 zIndex: 220,
-                boxShadow: '0 -8px 24px rgba(0, 0, 0, 0.35)',
               }}
             >
               <CoverageLegendPanel
@@ -1447,50 +1417,15 @@ function App() {
                   position: 'absolute',
                   inset: 0,
                   display: 'flex',
-                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '16px',
                   color: 'var(--text-dim)',
+                  fontSize: 14,
                   zIndex: 10,
                   background: 'var(--bg)',
                 }}
               >
-                <svg
-                  width="48"
-                  height="48"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                >
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <path d="M9 3v18M3 9h18" />
-                </svg>
-                <div style={{ textAlign: 'center' }}>
-                  <p style={{ margin: 0, fontSize: '14px', fontWeight: 500, color: 'var(--text)' }}>
-                    範囲が選択されていません
-                  </p>
-                  <p style={{ margin: '8px 0 0', fontSize: '13px' }}>
-                    「範囲選択」タブで地図上の範囲を指定してください
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleTabChange('map')}
-                  style={{
-                    marginTop: '4px',
-                    padding: '8px 20px',
-                    background: 'var(--accent)',
-                    color: 'var(--text)',
-                    border: 'none',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                  }}
-                >
-                  範囲選択へ移動
-                </button>
+                範囲が選択されていません
               </div>
             )}
             {previewMounted && (
@@ -1534,148 +1469,120 @@ function App() {
               />
             )}
             {engravingMode && (
-              <>
-                {/* 刻印モード中であることを示す外周グロー */}
-                <div
-                  data-testid="engraving-mode-glow"
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    zIndex: 15,
-                    pointerEvents: 'none',
-                    boxShadow:
-                      'inset 0 0 0 2px var(--accent), inset 0 0 90px rgba(0, 188, 212, 0.14)',
-                    animation: 'machimoki-engraving-glow-in 260ms ease-out',
-                  }}
-                />
-                {/* 刻印モード専用バナー（モード表示・エクスポート・終了） */}
-                <div
-                  data-testid="engraving-mode-banner"
-                  style={{
-                    position: 'absolute',
-                    top: isCompact ? 8 : 12,
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    zIndex: 70,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: isCompact ? 8 : 12,
-                    padding: isCompact ? '6px 10px' : '8px 14px',
-                    background: 'rgba(0, 188, 212, 0.16)',
-                    border: '1px solid var(--accent)',
-                    borderRadius: 999,
-                    backdropFilter: 'blur(8px)',
-                    WebkitBackdropFilter: 'blur(8px)',
-                    color: 'var(--text)',
-                    fontSize: isCompact ? 11 : 12,
-                    boxShadow: '0 6px 24px rgba(0, 0, 0, 0.35)',
-                    animation: 'machimoki-engraving-banner-in 240ms ease-out',
-                    maxWidth: 'calc(100% - 32px)',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      fontWeight: 700,
-                    }}
-                  >
-                    <span className="machimoki-engraving-dot" />
-                    刻印モード
-                  </span>
-                  {!isCompact && (
-                    <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
-                      3D上でドラッグして位置を調整 ・ 視点回転はロック中
-                    </span>
-                  )}
-                  <span style={{ display: 'inline-flex', gap: 4 }}>
-                    <button
-                      type="button"
-                      data-testid="engraving-zoom-in"
-                      onClick={() => zoomEngravingView(0.8)}
-                      title="拡大"
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: '50%',
-                        border: '1px solid var(--border-strong)',
-                        background: 'transparent',
-                        color: 'var(--text)',
-                        fontSize: 14,
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        lineHeight: 1,
-                      }}
-                    >
-                      ＋
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="engraving-zoom-out"
-                      onClick={() => zoomEngravingView(1.25)}
-                      title="縮小"
-                      style={{
-                        width: 28,
-                        height: 28,
-                        borderRadius: '50%',
-                        border: '1px solid var(--border-strong)',
-                        background: 'transparent',
-                        color: 'var(--text)',
-                        fontSize: 14,
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        lineHeight: 1,
-                      }}
-                    >
-                      −
-                    </button>
-                  </span>
+              // 刻印モード専用バナー（モード表示・エクスポート・終了）
+              <div
+                data-testid="engraving-mode-banner"
+                style={{
+                  position: 'absolute',
+                  top: isCompact ? 8 : 12,
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  zIndex: 70,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: isCompact ? 4 : 8,
+                  padding: 4,
+                  maxWidth: 'calc(100% - 32px)',
+                  borderRadius: 'var(--radius-panel)',
+                  border: '1px solid var(--border)',
+                  background: 'var(--surface-solid)',
+                  color: 'var(--text)',
+                  fontSize: 13,
+                  whiteSpace: 'nowrap',
+                  animation: 'machimoki-engraving-banner-in 140ms ease-out',
+                }}
+              >
+                <span style={{ padding: '0 8px', fontWeight: 500 }}>刻印モード</span>
+                {!isCompact && (
+                  <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>視点固定</span>
+                )}
+                <span style={{ display: 'inline-flex', gap: 4 }}>
                   <button
                     type="button"
-                    data-testid="engraving-export-button"
-                    onClick={handleExport}
-                    disabled={!engravingApplied || isExporting}
-                    title={
-                      engravingApplied
-                        ? 'エクスポート'
-                        : '変更を反映してからエクスポートしてください'
-                    }
+                    data-testid="engraving-zoom-in"
+                    onClick={() => zoomEngravingView(0.8)}
+                    aria-label="拡大"
                     style={{
-                      padding: '5px 12px',
-                      borderRadius: 999,
-                      border: 'none',
-                      background: engravingApplied ? 'var(--accent)' : 'var(--border-strong)',
-                      color: engravingApplied ? '#fff' : 'var(--text-dim)',
-                      fontSize: 12,
-                      fontWeight: 700,
-                      cursor: engravingApplied ? 'pointer' : 'not-allowed',
-                      minHeight: 28,
-                    }}
-                  >
-                    エクスポート
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="engraving-exit-button"
-                    onClick={exitEngravingMode}
-                    style={{
-                      padding: '5px 12px',
-                      borderRadius: 999,
-                      border: '1px solid var(--border-strong)',
+                      width: bannerIconSize,
+                      height: bannerIconSize,
+                      padding: 0,
+                      borderRadius: 'var(--radius-control)',
+                      border: '1px solid var(--border)',
                       background: 'transparent',
                       color: 'var(--text)',
-                      fontSize: 12,
-                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
                       cursor: 'pointer',
-                      minHeight: 28,
                     }}
                   >
-                    終了
+                    <Icon name="plus" size={16} />
                   </button>
-                </div>
-              </>
+                  <button
+                    type="button"
+                    data-testid="engraving-zoom-out"
+                    onClick={() => zoomEngravingView(1.25)}
+                    aria-label="縮小"
+                    style={{
+                      width: bannerIconSize,
+                      height: bannerIconSize,
+                      padding: 0,
+                      borderRadius: 'var(--radius-control)',
+                      border: '1px solid var(--border)',
+                      background: 'transparent',
+                      color: 'var(--text)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Icon name="minus" size={16} />
+                  </button>
+                </span>
+                <button
+                  type="button"
+                  data-testid="engraving-export-button"
+                  onClick={handleExport}
+                  disabled={!engravingApplied || isExporting}
+                  title={
+                    engravingApplied ? undefined : '変更を反映してからエクスポートしてください'
+                  }
+                  style={{
+                    height: bannerButtonHeight,
+                    padding: '0 16px',
+                    borderRadius: 'var(--radius-control)',
+                    border: 'none',
+                    background: engravingApplied ? 'var(--accent)' : 'var(--border)',
+                    color: engravingApplied ? 'var(--accent-ink)' : 'var(--text-muted)',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: engravingApplied ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  エクスポート
+                </button>
+                <button
+                  type="button"
+                  data-testid="engraving-exit-button"
+                  onClick={exitEngravingMode}
+                  style={{
+                    height: bannerButtonHeight,
+                    padding: '0 16px',
+                    borderRadius: 'var(--radius-control)',
+                    border: '1px solid var(--border-strong)',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                  }}
+                >
+                  終了
+                </button>
+              </div>
             )}
             {engravingMode && selectionBounds && (
               <div
@@ -1691,12 +1598,11 @@ function App() {
                         zIndex: 260,
                         display: 'flex',
                         flexDirection: 'column',
-                        borderRadius: 12,
+                        borderRadius: 'var(--radius-panel)',
                         overflow: 'hidden',
                         // 背後のW/D表示などが透けないよう不透明にする。
                         background: 'var(--bg)',
-                        boxShadow: '0 -8px 24px rgba(0, 0, 0, 0.35)',
-                        animation: 'machimoki-engraving-panel-in 220ms ease-out',
+                        animation: 'machimoki-engraving-panel-in 140ms ease-out',
                       }
                     : {
                         position: 'absolute',
@@ -1709,9 +1615,8 @@ function App() {
                         display: 'flex',
                         flexDirection: 'column',
                         overflow: 'hidden',
-                        borderRadius: 8,
-                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
-                        animation: 'machimoki-engraving-panel-in 220ms ease-out',
+                        borderRadius: 'var(--radius-panel)',
+                        animation: 'machimoki-engraving-panel-in 140ms ease-out',
                       }
                 }
               >
@@ -1731,7 +1636,7 @@ function App() {
               </div>
             )}
             <LoadingOverlay
-              message={previewBusyFallback ? '処理中...' : pipelineState.message || '処理中...'}
+              message={previewBusyFallback ? '処理中…' : pipelineState.message || '処理中…'}
               visible={previewBusyOverlay}
               progress={previewBusyFallback ? undefined : pipelineState.progress}
             />
@@ -1753,13 +1658,13 @@ function App() {
                     zIndex: 30,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '8px',
-                    padding: '6px 12px',
+                    padding: '4px 12px',
                     background: 'var(--surface)',
-                    border: '1px solid var(--border-strong)',
-                    borderRadius: '999px',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-panel)',
                     color: 'var(--text-dim)',
-                    fontSize: '12px',
+                    fontSize: 12,
+                    fontVariantNumeric: 'tabular-nums',
                     pointerEvents: 'none',
                     maxWidth: 'calc(100% - 32px)',
                     whiteSpace: 'nowrap',
@@ -1767,7 +1672,6 @@ function App() {
                     textOverflow: 'ellipsis',
                   }}
                 >
-                  <span className="machimoki-update-dot" aria-hidden="true" />
                   <span>
                     {pipelineState.background ? '更新中…' : pipelineState.message || '読み込み中…'}{' '}
                     {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
@@ -1775,7 +1679,7 @@ function App() {
                 </div>
               )}
             <LoadingOverlay
-              message="エクスポート中..."
+              message="エクスポート中…"
               visible={isExporting && pipelineState.phase === 'idle'}
             />
             {isCompact && !settingsOpen && !engravingMode && (
@@ -1791,14 +1695,13 @@ function App() {
                   zIndex: 40,
                   minWidth: 72,
                   minHeight: 44,
-                  borderRadius: 999,
-                  background: 'var(--accent)',
+                  borderRadius: 'var(--radius-panel)',
+                  background: 'var(--surface-solid)',
                   color: 'var(--text)',
-                  border: 'none',
-                  fontSize: 14,
-                  fontWeight: 700,
+                  border: '1px solid var(--border)',
+                  fontSize: 13,
+                  fontWeight: 500,
                   cursor: 'pointer',
-                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.35)',
                 }}
               >
                 設定
