@@ -1,5 +1,6 @@
 import React, { useId } from 'react'
 import Icon from './ui/Icon'
+import Switch from './ui/Switch'
 import {
   BASE_EXTENSION_MM,
   FRAME_MITER_DEPTH_RATIO,
@@ -93,6 +94,30 @@ const groupTitleStyle: React.CSSProperties = {
   fontWeight: 500,
 }
 
+const colorRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  height: 32,
+}
+
+const colorLabelStyle: React.CSSProperties = {
+  ...labelStyle,
+  marginBottom: 0,
+}
+
+const swatchStyle: React.CSSProperties = {
+  width: 32,
+  height: 32,
+  padding: 0,
+  flexShrink: 0,
+  border: '1px solid var(--border-strong)',
+  borderRadius: 'var(--radius-control)',
+  background: 'transparent',
+  cursor: 'pointer',
+}
+
 const rangeLabelStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'baseline',
@@ -107,75 +132,6 @@ const valueStyle: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 500,
   fontVariantNumeric: 'tabular-nums',
-}
-
-interface SwitchProps {
-  checked: boolean
-  onChange: (checked: boolean) => void
-  label: string
-  disabled?: boolean
-  testId?: string
-}
-
-function Switch({ checked, onChange, label, disabled = false, testId }: SwitchProps) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      data-testid={testId}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        width: '100%',
-        height: 32,
-        padding: 0,
-        border: 'none',
-        background: 'transparent',
-        color: disabled ? 'var(--text-dim)' : 'var(--text)',
-        fontSize: 14,
-        textAlign: 'left',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          position: 'relative',
-          width: 44,
-          height: 20,
-          flexShrink: 0,
-          borderRadius: 'var(--radius-control)',
-          border: '1px solid',
-          borderColor: checked ? 'var(--border-strong)' : 'var(--border)',
-          background: checked
-            ? 'var(--border-strong)'
-            : disabled
-              ? 'var(--bg)'
-              : 'var(--border)',
-          transition: 'background-color 150ms ease, border-color 150ms ease',
-        }}
-      >
-        <span
-          style={{
-            position: 'absolute',
-            top: 2,
-            left: 2,
-            width: 14,
-            height: 14,
-            borderRadius: 'var(--radius-control)',
-            background: disabled ? 'var(--text-muted)' : 'var(--text)',
-            transform: checked ? 'translateX(24px)' : 'translateX(0)',
-            transition: 'transform 150ms ease, background-color 150ms ease',
-          }}
-        />
-      </span>
-      <span>{label}</span>
-    </button>
-  )
 }
 
 interface CheckRowProps {
@@ -370,8 +326,8 @@ function ParameterPanel({
             </select>
           </div>
 
-          <div>
-            <label htmlFor={baseId + '-building-color'} style={labelStyle}>
+          <div style={colorRowStyle}>
+            <label htmlFor={baseId + '-building-color'} style={colorLabelStyle}>
               建物色
             </label>
             <input
@@ -379,17 +335,12 @@ function ParameterPanel({
               type="color"
               value={parameters.buildingColor}
               onChange={(e) => handleChange('buildingColor', e.target.value)}
-              style={{
-                display: 'block',
-                width: '100%',
-                height: 32,
-                borderRadius: 'var(--radius-control)',
-              }}
+              style={swatchStyle}
             />
           </div>
 
-          <div>
-            <label htmlFor={baseId + '-terrain-color'} style={labelStyle}>
+          <div style={colorRowStyle}>
+            <label htmlFor={baseId + '-terrain-color'} style={colorLabelStyle}>
               地形色
             </label>
             <input
@@ -397,12 +348,7 @@ function ParameterPanel({
               type="color"
               value={parameters.terrainColor}
               onChange={(e) => handleChange('terrainColor', e.target.value)}
-              style={{
-                display: 'block',
-                width: '100%',
-                height: 32,
-                borderRadius: 'var(--radius-control)',
-              }}
+              style={swatchStyle}
             />
           </div>
 
