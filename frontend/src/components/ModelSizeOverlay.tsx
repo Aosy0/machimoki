@@ -107,8 +107,8 @@ export default function ModelSizeOverlay({
         aria-label="ドラッグでスケール調整"
         onPointerDown={startDrag}
       >
-        <svg width="14" height="6" viewBox="0 0 14 6" fill="none" aria-hidden="true">
-          <rect x="0" y="2" width="14" height="2" rx="1" fill="var(--border-strong)" />
+        <svg width="24" height="4" viewBox="0 0 24 4" fill="none" aria-hidden="true">
+          <rect width="24" height="4" rx="2" fill="var(--border-strong)" />
         </svg>
       </button>
 
@@ -214,7 +214,7 @@ const dragHandleStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   width: '100%',
-  height: 44,
+  height: 24,
   padding: 0,
   background: 'transparent',
   border: 'none',
