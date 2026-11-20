@@ -1,4 +1,5 @@
 import React from 'react'
+import Icon from './ui/Icon'
 
 interface ErrorToastProps {
   message: string | null
@@ -18,32 +19,40 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
         top: '60px',
         left: '50%',
         transform: 'translateX(-50%)',
-        background: 'var(--error)',
+        background: 'var(--surface-solid)',
         color: 'var(--text)',
-        padding: '12px 20px',
-        borderRadius: '6px',
+        border: '1px solid var(--border)',
+        padding: '12px 16px',
+        borderRadius: 'var(--radius-panel)',
         display: 'flex',
         alignItems: 'center',
         gap: '12px',
         zIndex: 1001,
-        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-        fontSize: '14px',
+        fontSize: '13px',
         maxWidth: '80%',
       }}
     >
-      <span style={{ flex: 1 }}>{message}</span>
+      <span
+        aria-hidden="true"
+        style={{ display: 'flex', flexShrink: 0, color: 'var(--error)' }}
+      >
+        <Icon name="warning" size={16} />
+      </span>
+      <span style={{ flex: 1, lineHeight: 1.5 }}>{message}</span>
       {onRetry && (
         <button
           type="button"
           onClick={onRetry}
           style={{
+            height: '32px',
             background: 'transparent',
-            border: '1px solid var(--text)',
+            border: '1px solid var(--border-strong)',
             color: 'var(--text)',
-            padding: '4px 12px',
-            borderRadius: '4px',
+            padding: '0 12px',
+            borderRadius: 'var(--radius-control)',
             cursor: 'pointer',
             fontSize: '12px',
+            flexShrink: 0,
           }}
         >
           再試行
@@ -55,15 +64,20 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
           aria-label="エラーを閉じる"
           onClick={onDismiss}
           style={{
+            width: '32px',
+            height: '32px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             background: 'transparent',
             border: 'none',
-            color: 'var(--text)',
+            color: 'var(--text-dim)',
             cursor: 'pointer',
-            fontSize: '18px',
-            lineHeight: 1,
+            borderRadius: 'var(--radius-control)',
+            flexShrink: 0,
           }}
         >
-          ×
+          <Icon name="close" size={16} />
         </button>
       )}
     </div>

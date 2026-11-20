@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Map as MapLibreMap, setWorkerUrl } from 'maplibre-gl'
 import FacilitySearchBox from './FacilitySearchBox'
 import { isPoiFallbackEnabled } from '../lib/poiSearch'
-import { useIsCompactLayout } from '../hooks/useMediaQuery'
 import 'maplibre-gl/dist/maplibre-gl.css'
 // Vite用worker設定（削除するとworker 404で地図が白紙になるため必須）。
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
@@ -66,6 +65,17 @@ export {
 /** load 後に検証するレイヤーID（背景・水域・行政境界・道路の主要層） */
 const REQUIRED_LAYER_IDS = ['background', '水域', '行政区画', '道路中心線ククリ0']
 
+/** MapLibre 標準の帰属表示に渡すクレジット（GSI・POI・OSM）。 */
+const ATTRIBUTION_LINKS = [
+  `<a href="${GSI_LICENSE_URL}" target="_blank" rel="noreferrer">${GSI_ATTRIBUTION_TEXT}</a>`,
+  '<a href="https://openpoiapi.com/attribution.html" target="_blank" rel="noreferrer">出典: OpenPOI API</a>',
+  ...(isPoiFallbackEnabled
+    ? [
+        '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>',
+      ]
+    : []),
+]
+
 export type MapErrorKind = 'sprite' | 'glyphs' | 'tiles' | 'webgl' | 'unknown'
 
 export interface Map2DProps {
@@ -89,7 +99,6 @@ export default function Map2D({
   const [activeMap, setActiveMap] = useState<MapLibreMap | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [errorState, setErrorState] = useState<MapErrorKind | null>(null)
-  const isCompact = useIsCompactLayout()
   // コールバックはref経由で参照し、地図インスタンスの再生成を抑止する
   const readyRef = useRef(onMapReady)
   const unloadRef = useRef(onMapUnload)
@@ -145,7 +154,7 @@ export default function Map2D({
           minZoom: MAP2D_MIN_ZOOM,
           maxZoom: MAP2D_MAX_ZOOM,
           // attribution control は無効化しない（GSI帰属維持）
-          attributionControl: { compact: true },
+          attributionControl: { compact: false, customAttribution: ATTRIBUTION_LINKS },
           // 既定の boxZoom は Shift+ドラッグと競合するため抑止
           boxZoom: false,
           // 2D地図では回転・ピッチ不要。右ドラッグをパン用に空ける。
@@ -160,12 +169,12 @@ export default function Map2D({
           zoom: MAP2D_ZOOM,
           minZoom: MAP2D_MIN_ZOOM,
           maxZoom: MAP2D_MAX_ZOOM,
-          attributionControl: { compact: true },
+          attributionControl: { compact: false, customAttribution: ATTRIBUTION_LINKS },
           boxZoom: false,
           dragRotate: false,
           touchPitch: false,
         })
-        setNotice('組み込みの簡易スタイルで表示しています（道路・行政境界・水域のみ）')
+        setNotice('道路と水域のみ表示しています')
       }
     } catch (err) {
       map = null
@@ -198,9 +207,7 @@ export default function Map2D({
       activeMap.resize()
       const missing = getMissingMapContent(activeMap, REQUIRED_LAYER_IDS)
       if (missing.length > 0) {
-        setNotice(
-          `地図の読み込みは完了しましたが、一部のレイヤーが見つかりません: ${missing.join(', ')}`,
-        )
+        setNotice('地図の一部を表示できません')
       }
     })
 
@@ -214,11 +221,11 @@ export default function Map2D({
       } else if (kind === 'sprite' || kind === 'glyphs') {
         // sprite/glyphs 失敗は地図表示を維持しつつ状態表示
         setErrorState(kind)
-        setNotice(`リソースの読み込みに失敗しました（${kind}）。表示が不完全な場合があります。`)
+        setNotice('地名・記号を表示できません')
       } else if (kind === 'tiles') {
         // PBF 一時失敗は地図維持＋状態表示
         setErrorState('tiles')
-        setNotice('タイルの読み込みに失敗しました。ネットワークを確認してください。')
+        setNotice('地図を読み込めません')
       }
     })
 
@@ -266,6 +273,39 @@ export default function Map2D({
     }
   }, [handleVisibilityChange, handleWindowResize, vendoredStyleValid])
 
+  // MapLibre 標準の帰属表示を暗いテーマに合わせる。リンクは再生成されるため都度当てる。
+  useEffect(() => {
+    if (!activeMap) return
+    const container = activeMap.getContainer()
+    const applyTheme = (): void => {
+      const control = container.querySelector<HTMLElement>('.maplibregl-ctrl-attrib')
+      if (!control) return
+      // 検索ポップアップの下限計算（FacilitySearchBox）が帰属の位置を測るための目印。
+      control.dataset.testid = 'map2d-attribution'
+      control.style.background = 'var(--surface)'
+      control.style.border = '1px solid var(--border)'
+      control.style.borderRadius = 'var(--radius-panel)'
+      control.style.padding = '4px 8px'
+      control.style.color = 'var(--text-dim)'
+      control.style.fontSize = '12px'
+      control.style.lineHeight = '1.5'
+      control.style.maxWidth = 'calc(100vw - 20px)'
+      control.style.whiteSpace = 'normal'
+      control
+        .querySelectorAll<HTMLAnchorElement>('.maplibregl-ctrl-attrib-inner a')
+        .forEach((link) => {
+          link.style.color = 'var(--text-dim)'
+          link.style.textDecoration = 'underline'
+          link.style.textUnderlineOffset = '2px'
+        })
+    }
+    applyTheme()
+    activeMap.on('styledata', applyTheme)
+    return () => {
+      activeMap.off('styledata', applyTheme)
+    }
+  }, [activeMap])
+
   // WebGL 失敗時は手入力・プリセット退避を促す
   if (errorState === 'webgl') {
     return (
@@ -278,19 +318,18 @@ export default function Map2D({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: '#f8f8f8',
-            color: '#333',
-            fontSize: '16px',
-            padding: '16px',
+            background: 'var(--surface-solid)',
+            color: 'var(--text)',
+            fontSize: '13px',
+            padding: '24px',
             textAlign: 'center',
           }}
         >
-          <div>
-            <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>地図の描画に失敗しました</div>
-            <div>WebGL がサポートされていないか、ハードウェアアクセラレーションが無効です。</div>
-            <div style={{ marginTop: '8px' }}>
-              手動で範囲を入力するか、プリセットから選択してください。
+          <div style={{ maxWidth: '360px' }}>
+            <div style={{ fontSize: '16px', fontWeight: 500, marginBottom: '8px' }}>
+              地図を表示できません
             </div>
+            <div>WebGL を利用できません。座標で範囲を選択してください。</div>
           </div>
         </div>
       </div>
@@ -310,42 +349,6 @@ export default function Map2D({
         }}
       />
       {activeMap && <FacilitySearchBox map={activeMap} />}
-      <div
-        data-testid="map2d-attribution"
-        style={{
-          position: 'absolute',
-          bottom: isCompact ? '146px' : '4px',
-          left: isCompact ? '8px' : undefined,
-          right: isCompact ? 'auto' : '4px',
-          fontSize: isCompact ? 10 : 12,
-          color: 'var(--text-dim, #666)',
-          background: 'rgba(255, 255, 255, 0.7)',
-          padding: isCompact ? '2px 6px' : '3px 8px',
-          borderRadius: '3px',
-          zIndex: 1,
-          pointerEvents: 'auto',
-          whiteSpace: isCompact ? 'normal' : 'nowrap',
-          maxWidth: isCompact ? 'calc(100% - 16px)' : undefined,
-          textAlign: isCompact ? 'left' : undefined,
-          lineHeight: isCompact ? 1.4 : undefined,
-        }}
-      >
-        <a href={GSI_LICENSE_URL} target="_blank" rel="noreferrer">
-          {GSI_ATTRIBUTION_TEXT}
-        </a>
-        {' / '}
-        <a href="https://openpoiapi.com/attribution.html" target="_blank" rel="noreferrer">
-          出典: OpenPOI API
-        </a>
-        {isPoiFallbackEnabled && (
-          <>
-            {' / '}
-            <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
-              © OpenStreetMap contributors
-            </a>
-          </>
-        )}
-      </div>
       {notice ? (
         <div
           data-testid="map2d-fallback-notice"
@@ -353,10 +356,13 @@ export default function Map2D({
             position: 'absolute',
             top: '48px',
             left: '8px',
+            maxWidth: 'calc(100% - 16px)',
             fontSize: '13px',
-            background: 'rgba(255, 255, 255, 0.9)',
-            padding: '6px 10px',
-            borderRadius: '4px',
+            background: 'var(--surface)',
+            color: 'var(--text)',
+            border: '1px solid var(--border)',
+            padding: '8px 12px',
+            borderRadius: 'var(--radius-panel)',
             zIndex: 1,
           }}
         >

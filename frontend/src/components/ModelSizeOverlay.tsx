@@ -1,12 +1,16 @@
-import { useState, useRef, useCallback, useEffect, useId } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
-import { computeNaturalDimensions, formatMm, formatScale } from '../lib/selectionBounds'
+import { computeNaturalDimensions, formatScale } from '../lib/selectionBounds'
 
 interface ModelSizeOverlayProps {
   selectionBounds: SelectionBounds | null
   scale: number
   onScaleChange: (newScale: number) => void
 }
+
+const MONO_FONT = 'ui-monospace, "SF Mono", "Cascadia Mono", monospace'
+
+const formatMillimeters = (mm: number): string => `${mm.toFixed(1)} mm`
 
 export default function ModelSizeOverlay({
   selectionBounds,
@@ -15,8 +19,6 @@ export default function ModelSizeOverlay({
 }: ModelSizeOverlayProps) {
   const [editingField, setEditingField] = useState<'width' | 'depth' | null>(null)
   const [inputValue, setInputValue] = useState('')
-  const widthInputId = useId()
-  const depthInputId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const dragRef = useRef<{ startX: number; startScale: number } | null>(null)
 
@@ -99,22 +101,24 @@ export default function ModelSizeOverlay({
 
   return (
     <div style={panelStyle} onPointerDown={(e) => e.stopPropagation()}>
-      {/* Drag handle */}
-      <div style={dragHandleStyle} onPointerDown={startDrag} title="ドラッグでスケール調整">
-        <svg width="14" height="6" viewBox="0 0 14 6" fill="none">
-          <rect x="0" y="2" width="14" height="2" rx="1" fill="rgba(255,255,255,0.3)" />
+      <button
+        type="button"
+        style={dragHandleStyle}
+        aria-label="ドラッグでスケール調整"
+        onPointerDown={startDrag}
+      >
+        <svg width="14" height="6" viewBox="0 0 14 6" fill="none" aria-hidden="true">
+          <rect x="0" y="2" width="14" height="2" rx="1" fill="var(--border-strong)" />
         </svg>
-      </div>
+      </button>
 
       <div style={rowStyle}>
-        <label htmlFor={widthInputId} style={labelStyle}>
-          W
-        </label>
+        <span style={labelStyle}>W</span>
         {editingField === 'width' ? (
           <input
             ref={inputRef}
-            id={widthInputId}
             type="number"
+            aria-label="W を mm で入力"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onBlur={commitEdit}
@@ -124,30 +128,27 @@ export default function ModelSizeOverlay({
             step="any"
           />
         ) : (
-          <span
+          <button
+            type="button"
             style={valueStyle}
+            aria-label={`W ${formatMillimeters(outputWidth)} を編集`}
             onClick={() => {
               setEditingField('width')
               setInputValue(outputWidth.toFixed(1))
             }}
-            title="クリックで編集"
           >
-            {formatMm(outputWidth)}
-          </span>
+            {formatMillimeters(outputWidth)}
+          </button>
         )}
       </div>
 
-      <div style={dividerStyle} />
-
       <div style={rowStyle}>
-        <label htmlFor={depthInputId} style={labelStyle}>
-          D
-        </label>
+        <span style={labelStyle}>D</span>
         {editingField === 'depth' ? (
           <input
             ref={inputRef}
-            id={depthInputId}
             type="number"
+            aria-label="D を mm で入力"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onBlur={commitEdit}
@@ -157,39 +158,36 @@ export default function ModelSizeOverlay({
             step="any"
           />
         ) : (
-          <span
+          <button
+            type="button"
             style={valueStyle}
+            aria-label={`D ${formatMillimeters(outputDepth)} を編集`}
             onClick={() => {
               setEditingField('depth')
               setInputValue(outputDepth.toFixed(1))
             }}
-            title="クリックで編集"
           >
-            {formatMm(outputDepth)}
-          </span>
+            {formatMillimeters(outputDepth)}
+          </button>
         )}
       </div>
 
       <div style={dividerStyle} />
 
       <div style={rowStyle}>
-        <span style={{ ...labelStyle, width: 28 }}>縮尺</span>
-        <span style={{ ...valueStyle, cursor: 'default' }}>{formatScale(scale)}</span>
+        <span style={labelStyle}>縮尺</span>
+        <span style={scaleStyle}>{formatScale(scale)}</span>
       </div>
 
       {showReset && (
-        <>
-          <div style={dividerStyle} />
-          <button
-            type="button"
-            style={resetBtnStyle}
-            aria-label="選択範囲の最大辺を150mmに自動調整"
-            onClick={() => onScaleChange(autoScale)}
-            title="最大辺を150mmに自動調整"
-          >
-            自動
-          </button>
-        </>
+        <button
+          type="button"
+          style={resetBtnStyle}
+          aria-label="選択範囲の最大辺を150mmに自動調整"
+          onClick={() => onScaleChange(autoScale)}
+        >
+          自動
+        </button>
       )}
     </div>
   )
@@ -199,22 +197,27 @@ const panelStyle: React.CSSProperties = {
   position: 'absolute',
   bottom: 16,
   left: 16,
-  background: 'rgba(13, 17, 23, 0.85)',
+  background: 'var(--surface)',
   backdropFilter: 'blur(8px)',
   WebkitBackdropFilter: 'blur(8px)',
-  border: '1px solid rgba(255, 255, 255, 0.1)',
-  borderRadius: 8,
-  padding: '6px 10px',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-panel)',
+  padding: '4px 12px 8px',
   zIndex: 50,
   userSelect: 'none',
-  minWidth: 120,
+  minWidth: 140,
   pointerEvents: 'auto',
 }
 
 const dragHandleStyle: React.CSSProperties = {
   display: 'flex',
+  alignItems: 'center',
   justifyContent: 'center',
-  padding: '0 0 4px',
+  width: '100%',
+  height: 44,
+  padding: 0,
+  background: 'transparent',
+  border: 'none',
   cursor: 'grab',
   touchAction: 'none',
 }
@@ -223,55 +226,76 @@ const rowStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
-  padding: '2px 0',
 }
 
 const labelStyle: React.CSSProperties = {
-  color: 'rgba(255, 255, 255, 0.4)',
-  fontSize: 11,
-  fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
-  fontWeight: 500,
-  width: 14,
+  color: 'var(--text-dim)',
+  fontSize: 12,
+  fontFamily: MONO_FONT,
+  fontWeight: 400,
+  width: 28,
+  flexShrink: 0,
 }
 
 const valueStyle: React.CSSProperties = {
-  color: '#e6edf3',
+  flex: 1,
+  minHeight: 32,
+  padding: '0 4px',
+  background: 'transparent',
+  border: 'none',
+  borderRadius: 'var(--radius-control)',
+  color: 'var(--text)',
   fontSize: 13,
-  fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
-  fontWeight: 600,
+  fontFamily: MONO_FONT,
+  fontVariantNumeric: 'tabular-nums',
+  fontWeight: 500,
+  textAlign: 'right',
   cursor: 'pointer',
-  padding: '1px 4px',
-  borderRadius: 3,
-  transition: 'background 0.15s',
+}
+
+const scaleStyle: React.CSSProperties = {
+  flex: 1,
+  padding: '0 4px',
+  color: 'var(--text)',
+  fontSize: 13,
+  fontFamily: MONO_FONT,
+  fontVariantNumeric: 'tabular-nums',
+  fontWeight: 500,
+  textAlign: 'right',
 }
 
 const inputStyle: React.CSSProperties = {
-  background: 'rgba(255, 255, 255, 0.08)',
-  border: '1px solid rgba(0, 188, 212, 0.5)',
-  borderRadius: 3,
-  color: '#e6edf3',
+  flex: 1,
+  minWidth: 0,
+  height: 32,
+  background: 'rgba(255, 255, 255, 0.06)',
+  border: '1px solid var(--accent)',
+  borderRadius: 'var(--radius-control)',
+  color: 'var(--text)',
   fontSize: 13,
-  fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
-  fontWeight: 600,
-  padding: '1px 4px',
-  width: 70,
+  fontFamily: MONO_FONT,
+  fontVariantNumeric: 'tabular-nums',
+  fontWeight: 500,
+  textAlign: 'right',
+  padding: '0 8px',
 }
 
 const dividerStyle: React.CSSProperties = {
   height: 1,
-  background: 'rgba(255, 255, 255, 0.08)',
-  margin: '2px 0',
+  background: 'var(--border)',
+  margin: '4px 0',
 }
 
 const resetBtnStyle: React.CSSProperties = {
-  background: 'rgba(255, 255, 255, 0.06)',
-  border: '1px solid rgba(255, 255, 255, 0.1)',
-  borderRadius: 4,
-  color: 'rgba(255, 255, 255, 0.5)',
-  fontSize: 10,
-  fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
-  padding: '2px 6px',
-  cursor: 'pointer',
   width: '100%',
-  marginTop: 2,
+  height: 32,
+  marginTop: 4,
+  background: 'transparent',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-control)',
+  color: 'var(--text-dim)',
+  fontSize: 12,
+  fontFamily: MONO_FONT,
+  fontWeight: 400,
+  cursor: 'pointer',
 }
