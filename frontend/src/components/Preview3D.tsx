@@ -131,6 +131,7 @@ import {
 } from '../lib/meshDataCache'
 import ModelSizeOverlay from './ModelSizeOverlay'
 import BuildingListPanel, { type BuildingListItem } from './BuildingListPanel'
+import Icon from './ui/Icon'
 
 // 建物ホバー時のハイライト色。
 // Cesium3DTileFeature.featureId はタイル(content)毎に 0 から振られるため、
@@ -610,13 +611,12 @@ function ContourDebugPanel({
         background: 'var(--surface)',
         color: 'var(--text)',
         border: '1px solid var(--border-strong)',
-        borderRadius: '6px',
-        padding: '6px 8px',
-        fontSize: '10px',
+        borderRadius: 'var(--radius-panel)',
+        padding: '8px 12px',
+        fontSize: '12px',
         fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
         backdropFilter: 'blur(4px)',
         maxWidth: '380px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
       }}
     >
       <div
@@ -627,24 +627,29 @@ function ContourDebugPanel({
           gap: '8px',
         }}
       >
-        <span style={{ fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-dim)' }}>
+        <span style={{ fontWeight: 500, color: 'var(--text-dim)' }}>
           CONTOUR DEBUG ({info.mode})
         </span>
         <button
           onClick={onToggle}
-          title={collapsed ? '展開' : '折りたたむ'}
+          aria-label={collapsed ? '展開' : '折りたたむ'}
+          aria-expanded={!collapsed}
           style={{
-            background: 'var(--border)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 32,
+            height: 32,
+            background: 'transparent',
             color: 'var(--text)',
             border: '1px solid var(--border-strong)',
-            borderRadius: '3px',
-            padding: '1px 6px',
-            fontSize: '10px',
+            borderRadius: 'var(--radius-control)',
+            padding: 0,
             cursor: 'pointer',
-            lineHeight: 1.4,
+            lineHeight: 1,
           }}
         >
-          {collapsed ? '▸' : '▾'}
+          <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={16} />
         </button>
       </div>
       {!collapsed && (
@@ -652,9 +657,9 @@ function ContourDebugPanel({
           style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: '2px',
+            gap: '4px',
             lineHeight: 1.5,
-            marginTop: '4px',
+            marginTop: '8px',
           }}
         >
           <div>
@@ -675,7 +680,7 @@ function ContourDebugPanel({
             Terrain: {info.terrainType} ready:{info.terrainReady ? 'true' : 'false'} isEllipsoid:
             {info.isEllipsoid ? 'true' : 'false'} availability:{info.hasAvailability ? '有' : '無'}
           </div>
-          <div style={{ color: info.contourActive ? '#4caf50' : '#ff9800', fontWeight: 600 }}>
+          <div style={{ color: info.contourActive ? 'var(--text)' : 'var(--warn)', fontWeight: 500 }}>
             ContourActive: {info.contourActive ? 'true' : 'false'} ({info.contourReason})
           </div>
         </div>
@@ -807,6 +812,36 @@ interface Preview3DProps {
    */
   engravingMode?: boolean
 }
+
+/** プレビュー右上のビュー操作（視点・投影・地図スタイル）共通の体裁。 */
+const VIEW_CONTROL_STYLE = {
+  height: 32,
+  padding: '0 8px',
+  borderRadius: 'var(--radius-control)',
+  border: '1px solid var(--border-strong)',
+  background: 'var(--surface)',
+  color: 'var(--text)',
+  fontSize: '12px',
+  fontWeight: 500,
+  lineHeight: 1,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  backdropFilter: 'blur(4px)',
+} as const
+
+/** 完成形状の警告帯に置く操作ボタン（地形のみ表示 / 建物を表示）の体裁。 */
+const WARNING_ACTION_STYLE = {
+  minHeight: 32,
+  padding: '0 8px',
+  background: 'var(--border)',
+  color: 'var(--text)',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 'var(--radius-control)',
+  fontSize: '12px',
+  fontWeight: 500,
+  cursor: 'pointer',
+  flexShrink: 0,
+} as const
 
 export default function Preview3D({
   selectionBounds,
@@ -4129,7 +4164,7 @@ export default function Preview3D({
       onPipelineStateChange?.({
         phase: 'acquiring',
         progress: 5,
-        message: '最終形状: 建物データ取得中...',
+        message: '最終形状: 建物データ取得中…',
         error: null,
         // 断面ON中の再生成はフォアグラウンド（ローディング表示）にする。
         background: false,
@@ -4143,7 +4178,7 @@ export default function Preview3D({
         onPipelineStateChange?.({
           phase: 'acquiring',
           progress: 30,
-          message: '最終形状: 地形データ取得中...',
+          message: '最終形状: 地形データ取得中…',
           error: null,
           background: false,
         })
@@ -4153,7 +4188,7 @@ export default function Preview3D({
       onPipelineStateChange?.({
         phase: 'acquiring',
         progress: 55,
-        message: '最終形状: 完成メッシュを生成中...',
+        message: '最終形状: 完成メッシュを生成中…',
         error: null,
         background: false,
       })
@@ -4934,8 +4969,8 @@ export default function Preview3D({
             display: 'flex',
             flexWrap: 'wrap',
             justifyContent: 'flex-end',
-            gap: '6px',
             alignItems: 'center',
+            gap: '4px',
             maxWidth: 'calc(100% - 32px)',
           }}
         >
@@ -4948,16 +4983,7 @@ export default function Preview3D({
               setGsiStyle(style)
               saveGsiStyle(style)
             }}
-            style={{
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: '6px',
-              padding: '6px 8px',
-              fontSize: '11px',
-              cursor: 'pointer',
-              backdropFilter: 'blur(4px)',
-            }}
+            style={VIEW_CONTROL_STYLE}
           >
             {GSI_TILE_STYLES.map((s) => (
               <option key={s} value={s}>
@@ -4968,101 +4994,59 @@ export default function Preview3D({
           <button
             data-testid="projection-toggle"
             onClick={toggleProjection}
+            aria-pressed={isOrthographic}
             style={{
-              background: isOrthographic ? 'var(--accent)' : 'var(--surface)',
-              color: isOrthographic ? '#fff' : 'var(--text)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: '6px',
-              padding: '6px 10px',
-              fontSize: '11px',
-              cursor: 'pointer',
-              backdropFilter: 'blur(4px)',
-              fontWeight: 600,
-              minWidth: '52px',
+              ...VIEW_CONTROL_STYLE,
+              minWidth: 52,
+              background: isOrthographic ? 'var(--border-strong)' : 'var(--surface)',
             }}
           >
             {isOrthographic ? '透視' : '平行'}
           </button>
-          <div
+          {isCompact ? (
+            <select
+              data-testid="view-preset-select"
+              aria-label="視点"
+              defaultValue="iso"
+              onChange={(e) => {
+                const preset = VIEW_PRESETS.find(([id]) => id === e.target.value)
+                if (!preset) return
+                const [, , h, p, top] = preset
+                applyPresetView(h, p, { useTop: !!top })
+              }}
+              style={VIEW_CONTROL_STYLE}
+            >
+              {VIEW_PRESETS.map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            VIEW_PRESETS.map(([id, label, h, p, top]) => (
+              <button
+                key={id}
+                data-testid={`view-preset-${id}`}
+                onClick={() => applyPresetView(h, p, { useTop: !!top })}
+                style={VIEW_CONTROL_STYLE}
+              >
+                {label}
+              </button>
+            ))
+          )}
+          <button
+            data-testid="reset-view"
+            onClick={resetView}
             style={{
-              display: 'flex',
-              gap: '4px',
-              background: 'var(--surface)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: '6px',
-              padding: '4px',
-              backdropFilter: 'blur(4px)',
+              ...VIEW_CONTROL_STYLE,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
             }}
           >
-            {isCompact ? (
-              <select
-                data-testid="view-preset-select"
-                aria-label="視点プリセット"
-                defaultValue="iso"
-                onChange={(e) => {
-                  const preset = VIEW_PRESETS.find(([id]) => id === e.target.value)
-                  if (!preset) return
-                  const [, , h, p, top] = preset
-                  applyPresetView(h, p, { useTop: !!top })
-                }}
-                style={{
-                  background: 'var(--surface)',
-                  color: 'var(--text)',
-                  border: '1px solid var(--border-strong)',
-                  borderRadius: '4px',
-                  padding: '6px 8px',
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                  minHeight: 32,
-                }}
-              >
-                {VIEW_PRESETS.map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              VIEW_PRESETS.map(([id, label, h, p, top]) => (
-                <button
-                  key={id}
-                  data-testid={`view-preset-${id}`}
-                  onClick={() => applyPresetView(h, p, { useTop: !!top })}
-                  style={{
-                    background: 'var(--surface)',
-                    color: 'var(--text)',
-                    border: '1px solid var(--border-strong)',
-                    borderRadius: '4px',
-                    padding: '4px 8px',
-                    fontSize: '11px',
-                    cursor: 'pointer',
-                    lineHeight: 1,
-                  }}
-                >
-                  {label}
-                </button>
-              ))
-            )}
-            <button
-              data-testid="reset-view"
-              onClick={resetView}
-              title="カメラがモデルを見失ったときに既定の斜め視点へ戻す"
-              style={{
-                background: 'var(--surface)',
-                color: 'var(--text)',
-                border: '1px solid var(--accent)',
-                borderRadius: '4px',
-                padding: '4px 8px',
-                fontSize: '11px',
-                cursor: 'pointer',
-                lineHeight: 1,
-                whiteSpace: 'nowrap',
-                minHeight: 32,
-              }}
-            >
-              表示リセット
-            </button>
-          </div>
+            <Icon name="reset" size={16} />
+            視点を戻す
+          </button>
         </div>
       )}
       {/* 断面パネルは範囲選択があれば常に表示する（ONで正確な形状を生成）。 */}
@@ -5077,29 +5061,25 @@ export default function Preview3D({
             display: 'flex',
             flexWrap: 'wrap',
             justifyContent: 'flex-end',
-            gap: '6px',
             alignItems: 'center',
+            gap: '4px',
             maxWidth: 'calc(100% - 32px)',
             background: 'var(--surface)',
-            border: '1px solid var(--border-strong)',
-            borderRadius: '6px',
-            padding: '6px 8px',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-panel)',
+            padding: '4px',
             backdropFilter: 'blur(4px)',
           }}
         >
           <button
             data-testid="final-shape-section-toggle"
             onClick={toggleSection}
+            aria-pressed={sectionOn}
             style={{
-              background: sectionOn ? 'var(--accent)' : 'var(--surface)',
-              color: sectionOn ? '#fff' : 'var(--text)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: '6px',
-              padding: '6px 10px',
-              fontSize: '11px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              minWidth: '52px',
+              ...VIEW_CONTROL_STYLE,
+              minWidth: 52,
+              background: sectionOn ? 'var(--border-strong)' : 'transparent',
+              color: sectionOn ? 'var(--text)' : 'var(--text-dim)',
             }}
           >
             断面
@@ -5118,36 +5098,21 @@ export default function Preview3D({
           <button
             data-testid="final-shape-section-flip"
             onClick={onSectionFlip}
-            style={{
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: '6px',
-              padding: '6px 10px',
-              fontSize: '11px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-            }}
+            style={{ ...VIEW_CONTROL_STYLE, background: 'transparent' }}
           >
             反対側
           </button>
           <button
             data-testid="final-shape-section-shading"
             onClick={onSectionShadingToggle}
+            aria-pressed={sectionFlatShading}
             style={{
-              background: sectionFlatShading ? 'var(--accent)' : 'var(--surface)',
-              color: sectionFlatShading ? '#fff' : 'var(--text)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: '6px',
-              padding: '6px 10px',
-              fontSize: '11px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
+              ...VIEW_CONTROL_STYLE,
+              background: sectionFlatShading ? 'var(--border-strong)' : 'transparent',
+              color: sectionFlatShading ? 'var(--text)' : 'var(--text-dim)',
             }}
           >
-            {sectionFlatShading ? '断面: フラット' : '断面: 影あり'}
+            {sectionFlatShading ? 'フラット' : '影あり'}
           </button>
         </div>
       )}
@@ -5156,17 +5121,18 @@ export default function Preview3D({
           data-testid="terrain-debug-info"
           style={{
             position: 'absolute',
-            top: '56px',
+            bottom: '48px',
             right: '16px',
             zIndex: 20,
             background: 'var(--surface)',
             color: 'var(--text)',
-            fontSize: '10px',
+            fontSize: '12px',
             padding: '4px 8px',
-            borderRadius: '4px',
+            borderRadius: 'var(--radius-control)',
             backdropFilter: 'blur(4px)',
-            border: '1px solid var(--border-strong)',
+            border: '1px solid var(--border)',
             pointerEvents: 'none',
+            maxWidth: 'calc(100% - 32px)',
           }}
         >
           {`地形: ${debugInfo.isFallback ? 'フォールバック(平坦)' : '正常'} | minZ ${debugInfo.minTopHeight.toFixed(2)}m | ばらつき ${debugInfo.variance.toFixed(4)} | 建物最下 ${debugInfo.buildingMinY?.toFixed(2) ?? '--'}m | 補正 ${debugInfo.delta?.toFixed(2) ?? '0'}m | ${debugInfo.terrainPrimitive ? '表示中' : '非表示'}`}
@@ -5190,18 +5156,18 @@ export default function Preview3D({
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
-            background: '#fff7d6',
-            color: '#7a5b00',
-            border: '1px solid #e6c200',
-            borderRadius: '6px',
+            background: 'var(--surface-solid)',
+            color: 'var(--warn)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-panel)',
             padding: '8px 12px',
             fontSize: '12px',
             fontWeight: 500,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
             maxWidth: '420px',
           }}
         >
-          <span>{coverageWarning}</span>
+          <Icon name="warning" size={16} />
+          <span style={{ flex: 1, minWidth: 0 }}>{coverageWarning}</span>
           {canDowngradeBuildings && selectionBounds && (
             <button
               data-testid="coverage-warning-hide-buildings"
@@ -5212,16 +5178,7 @@ export default function Preview3D({
                 setCanForceBuildings(true)
                 setCoverageWarning('建物を非表示にしました')
               }}
-              style={{
-                background: '#e6c200',
-                color: '#5c4500',
-                border: 'none',
-                borderRadius: '4px',
-                padding: '4px 10px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                flexShrink: 0,
-              }}
+              style={WARNING_ACTION_STYLE}
             >
               地形のみ表示
             </button>
@@ -5243,16 +5200,7 @@ export default function Preview3D({
                   setCanForceBuildings(false)
                   setCanDowngradeBuildings(false)
                 }}
-                style={{
-                  background: '#e6c200',
-                  color: '#5c4500',
-                  border: 'none',
-                  borderRadius: '4px',
-                  padding: '4px 10px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  flexShrink: 0,
-                }}
+                style={WARNING_ACTION_STYLE}
               >
                 建物を表示
               </button>
@@ -5262,17 +5210,21 @@ export default function Preview3D({
             onClick={() => setCoverageWarning(null)}
             aria-label="警告を閉じる"
             style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 32,
+              height: 32,
               background: 'transparent',
-              border: 'none',
-              color: '#7a5b00',
+              border: '1px solid transparent',
+              color: 'var(--warn)',
+              borderRadius: 'var(--radius-control)',
               cursor: 'pointer',
-              fontSize: '14px',
-              lineHeight: 1,
-              padding: '2px 4px',
+              padding: 0,
               flexShrink: 0,
             }}
           >
-            ✕
+            <Icon name="close" size={16} />
           </button>
         </div>
       )}
@@ -5292,18 +5244,18 @@ export default function Preview3D({
             gap: '8px',
             background: 'var(--surface)',
             color: 'var(--text-dim)',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            fontSize: '11px',
+            padding: '8px 12px',
+            borderRadius: 'var(--radius-control)',
+            fontSize: '12px',
             backdropFilter: 'blur(4px)',
             maxWidth: 'calc(100% - 32px)',
           }}
         >
           <span>
             {hasCoarsePointer
-              ? '建物をタップで削除'
-              : '建物にカーソルを合わせてクリックで削除 / Ctrl+Zで取り消し'}
-            {excludedCount > 0 && `（削除済み ${excludedCount}件）`}
+              ? '建物をタップで除外'
+              : '建物にカーソルを合わせてクリックで除外 / Ctrl+Zで取り消し'}
+            {excludedCount > 0 && `（除外済み ${excludedCount}件）`}
           </span>
           {hasCoarsePointer && (
             <button
@@ -5312,14 +5264,14 @@ export default function Preview3D({
               onClick={undoLastExclusion}
               style={{
                 pointerEvents: 'auto',
-                minHeight: 32,
-                padding: '4px 10px',
-                borderRadius: 4,
-                border: '1px solid var(--accent)',
-                background: 'var(--accent)',
+                minHeight: 44,
+                padding: '0 12px',
+                borderRadius: 'var(--radius-control)',
+                border: '1px solid var(--border-strong)',
+                background: 'var(--border)',
                 color: 'var(--text)',
                 fontSize: 12,
-                fontWeight: 600,
+                fontWeight: 500,
                 cursor: 'pointer',
               }}
             >
@@ -5351,13 +5303,13 @@ export default function Preview3D({
         data-testid="preview-attribution"
         style={{
           position: 'absolute',
-          bottom: '26px',
+          bottom: '24px',
           right: '4px',
-          fontSize: '10px',
+          fontSize: '12px',
           color: 'var(--text-dim)',
-          background: 'rgba(0, 0, 0, 0.35)',
-          padding: '2px 6px',
-          borderRadius: '3px',
+          background: 'var(--surface)',
+          padding: '4px 8px',
+          borderRadius: 'var(--radius-control)',
           zIndex: 90,
           pointerEvents: 'none',
           whiteSpace: 'nowrap',
@@ -5374,12 +5326,13 @@ export default function Preview3D({
             left: '16px',
             zIndex: 20,
             background: 'var(--surface)',
-            color: 'var(--text-dim)',
-            fontSize: '10px',
-            padding: '6px 10px',
-            borderRadius: '4px',
+            color: 'var(--warn)',
+            fontSize: '12px',
+            lineHeight: 1.5,
+            padding: '8px 12px',
+            borderRadius: 'var(--radius-panel)',
             backdropFilter: 'blur(4px)',
-            border: '1px solid var(--border-strong)',
+            border: '1px solid var(--border)',
             pointerEvents: 'none',
             maxWidth: '360px',
           }}
