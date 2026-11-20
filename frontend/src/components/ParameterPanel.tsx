@@ -27,7 +27,6 @@ export interface Parameters {
   exportFormat: '3mf' | 'stl' | 'machimoki'
   buildingColor: string
   terrainColor: string
-  whiteModel: boolean
   upAxis: 'z-up' | 'y-up'
   includeSpanningBuildings: boolean
   openBottom: boolean
@@ -368,12 +367,6 @@ function ParameterPanel({
               </p>
             )}
           </div>
-
-          <Switch
-            checked={parameters.whiteModel}
-            onChange={(checked) => handleChange('whiteModel', checked)}
-            label="白模型"
-          />
 
           <Switch
             checked={parameters.showTerrainImagery}

@@ -144,7 +144,6 @@ function colorToSrgbCartesian3(color: Color): Cartesian3 {
 }
 
 export const DEFAULT_BUILDING_COLOR = '#ffffff'
-const WHITE_MODEL_AMBIENT_BOOST = 0.2
 
 /** 3Dビューのプリセット。heading/pitch(度) と真上表示フラグ。 */
 const VIEW_PRESETS = [
@@ -213,20 +212,12 @@ function createBuildingCustomShader(color: Color): CustomShader {
         type: UniformType.VEC3,
         value: colorToSrgbCartesian3(color),
       },
-      u_ambientBoost: {
-        type: UniformType.FLOAT,
-        value: 0.0,
-      },
     },
     fragmentShaderText: `
       ${CAD_LIGHTING_GLSL}
 
       void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
-        float lightFactor = clamp(
-          cadLightFactor(fsInput.attributes.positionEC) + u_ambientBoost,
-          0.0,
-          1.0
-        );
+        float lightFactor = cadLightFactor(fsInput.attributes.positionEC);
         // UNLITでは material.diffuse(linear) が最後に linear→sRGB される。
         // 地形のCADシェーダーと同じ表示色になるよう、sRGB側で明るさを掛けてから
         // linearへ戻す（地形は sRGB のまま v_color * lightFactor を出力している）。
@@ -316,14 +307,7 @@ function attachOrthographicZoom(viewer: Viewer): () => void {
   }
 }
 
-interface WhiteModelSaved {
-  fogDensity: number | null
-  fogEnabled: boolean | null
-  imageryBrightness: number | null
-  imagerySaturation: number | null
-}
-
-// 建物の接地感を出すためのAO。白模型のON/OFFに関わらず両モードで使う。
+// 建物の接地感を出すためのAO。
 // 現行より弱い設定(intensity 0.4 / bias 0.5 / lengthCap 0.5)にすると、
 // 中距離で出ていた地形上面の水平縞・壁面の網目モアレが実用上消え、
 // 建物足元の薄い接地の締まりは残る(実測確認済み)。
@@ -344,91 +328,6 @@ function applyPreviewAo(viewer: Viewer, enabled = true): void {
     ao.uniforms['bias'] = 0.5
     ao.uniforms['lengthCap'] = 0.5
     ao.uniforms['ambientOcclusionOnly'] = false
-  } catch {
-    void 0
-  }
-}
-
-function applyWhiteModelLook(
-  viewer: Viewer,
-  enabled: boolean,
-  imagery: { current: { brightness: number; saturation: number } | null },
-  saved: WhiteModelSaved,
-  quality: PreviewQualityProfile,
-): void {
-  if (!enabled) {
-    // 影のON/OFFは品質設定と影トグルをまとめて扱う effect が担当する。
-    // 白模型OFF時も接地の締まり(AO)を残す。無いと白い建物と地形の境界が
-    // 溶けて見えるため。ただし軽量ティアではAOを無効化する。
-    applyPreviewAo(viewer, quality.ambientOcclusion)
-    try {
-      const fog = viewer.scene.fog
-      if (fog) {
-        if (
-          saved.fogEnabled !== null &&
-          typeof (fog as { enabled?: unknown }).enabled === 'boolean'
-        ) {
-          fog.enabled = saved.fogEnabled
-        }
-        if (saved.fogDensity !== null && typeof fog.density === 'number') {
-          fog.density = saved.fogDensity
-        }
-        saved.fogEnabled = null
-        saved.fogDensity = null
-      }
-    } catch {
-      void 0
-    }
-    try {
-      const layer = imagery.current
-      if (layer) {
-        if (saved.imageryBrightness !== null) {
-          layer.brightness = saved.imageryBrightness
-          saved.imageryBrightness = null
-        }
-        if (saved.imagerySaturation !== null) {
-          layer.saturation = saved.imagerySaturation
-          saved.imagerySaturation = null
-        }
-      }
-    } catch {
-      void 0
-    }
-    return
-  }
-  // 白模型ON時も建物の落影を描画する（影なしだと平坦で浮いて見えるため）。
-  // 実際の影のON/OFFは品質設定と影トグルをまとめて扱う effect が担当する。
-  applyPreviewAo(viewer)
-  try {
-    const fog = viewer.scene.fog
-    if (fog) {
-      if (
-        saved.fogEnabled === null &&
-        typeof (fog as { enabled?: unknown }).enabled === 'boolean'
-      ) {
-        saved.fogEnabled = fog.enabled as boolean
-      }
-      if (saved.fogDensity === null && typeof fog.density === 'number') {
-        saved.fogDensity = fog.density
-      }
-      fog.enabled = true
-      fog.density = 0.00045
-    }
-  } catch {
-    void 0
-  }
-  try {
-    const layer = imagery.current
-    if (layer) {
-      if (saved.imageryBrightness === null) {
-        saved.imageryBrightness = layer.brightness
-      }
-      if (saved.imagerySaturation === null) {
-        saved.imagerySaturation = layer.saturation
-      }
-      layer.brightness = 1.5
-      layer.saturation = 0.2
-    }
   } catch {
     void 0
   }
@@ -766,7 +665,6 @@ interface Preview3DProps {
   includeTerrain?: boolean
   buildingColor?: string
   terrainColor?: string
-  whiteModel?: boolean
   scale?: number
   onScaleChange?: (newScale: number) => void
   includeSpanningBuildings?: boolean
@@ -859,7 +757,6 @@ export default function Preview3D({
   includeTerrain = true,
   buildingColor = DEFAULT_BUILDING_COLOR,
   terrainColor = '#ffffff',
-  whiteModel = false,
   scale = 1,
   onScaleChange,
   includeSpanningBuildings = false,
@@ -904,7 +801,7 @@ export default function Preview3D({
   // 自動生成の重複防止。要求済みの幾何キーと同じキーでは再生成しない
   // （色など表示だけの変更では生成パイプラインを走らせない）。
   const finalShapeRequestedKeyRef = useRef<string | null>(null)
-  // 現在表示中の最終形状の見た目キー（色・whiteModel）。変化時はプリミティブだけ作り直す。
+  // 現在表示中の最終形状の見た目キー（色）。変化時はプリミティブだけ作り直す。
   const finalShapeAppearanceKeyRef = useRef<string | null>(null)
   // 現在表示中の完成メッシュに対応する幾何キー。生成中に古いメッシュで
   // 見た目更新してしまわないためのガードに使う。
@@ -1069,13 +966,6 @@ export default function Preview3D({
   const tileLoadHandlerRef = useRef<((tile: any) => void) | null>(null)
   const onExcludedChangeRef = useRef(onExcludedBuildingIdsChange)
   const buildingColorRef = useRef(buildingColor)
-  const whiteModelRef = useRef(whiteModel)
-  const whiteModelSavedRef = useRef<WhiteModelSaved>({
-    fogDensity: null,
-    fogEnabled: null,
-    imageryBrightness: null,
-    imagerySaturation: null,
-  })
   const registryRef = useRef<Map<string, BuildingListItem>>(new Map())
   const [excludedCount, setExcludedCount] = useState(0)
   const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
@@ -1126,7 +1016,6 @@ export default function Preview3D({
   }, [buildingsVisible, selectionBounds])
 
   buildingColorRef.current = buildingColor
-  whiteModelRef.current = whiteModel
   onExcludedChangeRef.current = onExcludedBuildingIdsChange
   buildingsVisibleRef.current = buildingsVisible
 
@@ -1708,14 +1597,6 @@ export default function Preview3D({
     // 低負荷で軽減する。シーンは単色のためテクスチャがぼける副作用は出にくい。
     viewer.scene.postProcessStages.fxaa.enabled = true
 
-    applyWhiteModelLook(
-      viewer,
-      whiteModelRef.current,
-      gsiLayerRef,
-      whiteModelSavedRef.current,
-      quality,
-    )
-
     // 直接配信の quantized-mesh (Ion不要) のみ使用
     const directTerrainUrl =
       (import.meta.env.VITE_TERRAIN_URL as string | undefined) ??
@@ -1907,9 +1788,6 @@ export default function Preview3D({
     gsiLayerRef.current = viewer.scene.globe.imageryLayers.addImageryProvider(
       createGsiImageryProvider(gsiStyle),
     )
-    if (whiteModelRef.current) {
-      applyWhiteModelLook(viewer, true, gsiLayerRef, whiteModelSavedRef.current, quality)
-    }
     applyContour(viewer, gsiStyle)
     viewer.scene.requestRender()
   }, [gsiStyle])
@@ -2323,14 +2201,7 @@ export default function Preview3D({
               // 非表示トグル中でも読み込みは継続し、到着分は非表示のまま保持する
               // 最終形状プレビュー中はタイルセットを非表示のまま維持する。
               tileset.show = buildingsVisibleRef.current && !finalShapeActiveRef.current
-              // 白模型ON時はPLATEAU Viewと同様に拡散色を純白へ置換する
-              tileset.customShader = createBuildingCustomShader(
-                whiteModelRef.current ? Color.WHITE : baseBuildingColor(),
-              )
-              tileset.customShader.setUniform(
-                'u_ambientBoost',
-                whiteModelRef.current ? WHITE_MODEL_AMBIENT_BOOST : 0.0,
-              )
+              tileset.customShader = createBuildingCustomShader(baseBuildingColor())
 
               const progressFn = (pending: number, processing: number): void => {
                 pendingMapRef.current.set(tileset, pending + processing)
@@ -3542,13 +3413,11 @@ export default function Preview3D({
     JSON.stringify({
       buildingColor,
       terrainColor,
-      whiteModel,
       includeTerrain,
     })
 
-  // 最終形状の表示色（白模型 → 地形あり/なしで terrainColor / buildingColor）。
-  const finalShapeColor = (): string =>
-    whiteModel ? '#ffffff' : includeTerrain ? terrainColor : buildingColor
+  // 最終形状の表示色（地形あり/なしで terrainColor / buildingColor）。
+  const finalShapeColor = (): string => (includeTerrain ? terrainColor : buildingColor)
 
   // 最終形状表示中のシーン切替（タイルセット・地形プリミティブ・グローブを隠す）。
   const applyFinalShapeView = (viewer: Viewer): void => {
@@ -3908,7 +3777,7 @@ export default function Preview3D({
       positionScale: 1 / scale,
       color: finalColor,
       // 地形プレビューと同じCAD調シェーダーで描く。既定のPBRライティングでは
-      // 白模型の上面が白飛びし、スムーズ法線では壁面に不要なハイライトが出る。
+      // 白い面が白飛びし、スムーズ法線では壁面に不要なハイライトが出る。
       // 最終形状表示中は影を受ける他オブジェクトがないため影は切る。
       cadShaded: true,
       shadows: ShadowMode.DISABLED,
@@ -4042,7 +3911,7 @@ export default function Preview3D({
     return true
   }
 
-  // 色・whiteModel だけが変わったときの見た目更新。生成パイプラインは走らせず、
+  // 色だけが変わったときの見た目更新。生成パイプラインは走らせず、
   // 既存プリミティブの per-instance 色を差し替える（断面表示中は断面の色も更新）。
   const refreshFinalShapeAppearance = async (): Promise<void> => {
     const viewer = viewerRef.current
@@ -4371,7 +4240,7 @@ export default function Preview3D({
     // ベースプレビューの準備完了（地形ブーストの確定を含む）後に生成する。
     // 先に生成すると gridSize が後から変わり、地形メッシュを取り直す原因になる。
     if (!baseReadyRef.current) return
-    // 幾何キーでのみ再生成を判定する。色・whiteModel だけの変更は
+    // 幾何キーでのみ再生成を判定する。色だけの変更は
     // 下の見た目更新 effect が処理し、生成パイプラインを走らせない。
     const key = finalShapeGeometryKeyFor(selectionBounds)
     if (key === finalShapeRequestedKeyRef.current) return
@@ -4388,7 +4257,7 @@ export default function Preview3D({
     }, 175)
   })
 
-  // 見た目（色・whiteModel）だけが変わった場合は生成せず、既存メッシュから
+  // 見た目（色）だけが変わった場合は生成せず、既存メッシュから
   // プリミティブを作り直す。見た目キーの変化時のみ実行する。
   useEffect(() => {
     if (!finalShapeActiveRef.current || !finalShapeMeshRef.current) return
@@ -4507,9 +4376,7 @@ export default function Preview3D({
   }, [])
 
   useEffect(() => {
-    const srgb = whiteModelRef.current
-      ? colorToSrgbCartesian3(Color.WHITE)
-      : colorToSrgbCartesian3(baseBuildingColor())
+    const srgb = colorToSrgbCartesian3(baseBuildingColor())
     for (const ts of tilesetsRef.current) {
       if (ts.customShader) {
         ts.customShader.setUniform('u_buildingColor', srgb)
@@ -4517,24 +4384,6 @@ export default function Preview3D({
     }
     viewerRef.current?.scene.requestRender()
   }, [buildingColor])
-
-  useEffect(() => {
-    const viewer = viewerRef.current
-    if (!viewer) return
-    applyWhiteModelLook(viewer, whiteModel, gsiLayerRef, whiteModelSavedRef.current, quality)
-    for (const ts of tilesetsRef.current) {
-      if (ts.customShader) {
-        ts.customShader.setUniform('u_ambientBoost', whiteModel ? WHITE_MODEL_AMBIENT_BOOST : 0.0)
-        ts.customShader.setUniform(
-          'u_buildingColor',
-          whiteModel
-            ? colorToSrgbCartesian3(Color.WHITE)
-            : colorToSrgbCartesian3(baseBuildingColor()),
-        )
-      }
-    }
-    viewer.scene.requestRender()
-  }, [whiteModel, quality])
 
   // 自動/手動の品質ティア変更と影トグルを、生成済みViewerへ反映する。
   useEffect(() => {
