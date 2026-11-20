@@ -13,10 +13,7 @@ export interface BuildingListPanelProps {
   items: BuildingListItem[]
   excludedIds: string[]
   listLoading: boolean
-  loadingDetail?: string | null
   loadingProgress?: number | null
-  totalTiles?: number | null
-  loadedTiles?: number | null
   onExclude: (id: string) => void
   onRestore: (id: string) => void
   onHoverItem: (id: string | null) => void
@@ -95,9 +92,9 @@ const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>
           lineHeight: 1.2,
           cursor: 'pointer',
           borderRadius: 'var(--radius-control)',
-          border: '1px solid var(--border-strong)',
-          background: excluded ? 'var(--border-strong)' : 'transparent',
-          color: excluded ? 'var(--text)' : 'var(--warn)',
+          border: 'none',
+          background: 'transparent',
+          color: excluded ? 'var(--text)' : 'var(--text-dim)',
         }}
       >
         {excluded ? '戻す' : '除外'}
@@ -112,8 +109,6 @@ export default function BuildingListPanel({
   excludedIds,
   listLoading,
   loadingProgress,
-  totalTiles,
-  loadedTiles,
   onExclude,
   onRestore,
   onHoverItem,
@@ -173,22 +168,7 @@ export default function BuildingListPanel({
           overflow: 'hidden',
         }}
       >
-        {listLoading && loadingProgress != null && (
-          <div
-            aria-hidden
-            style={{
-              position: 'absolute',
-              inset: 0,
-              transform: `scaleX(${Math.max(0, Math.min(100, loadingProgress)) / 100})`,
-              transformOrigin: 'left center',
-              background: 'var(--accent)',
-              opacity: 0.18,
-              transition: 'transform 150ms',
-              pointerEvents: 'none',
-            }}
-          />
-        )}
-        {listLoading && loadingProgress == null && (
+        {listLoading && (
           <div
             aria-hidden
             style={{
@@ -198,7 +178,12 @@ export default function BuildingListPanel({
               bottom: 0,
               height: '2px',
               background: 'var(--accent)',
-              opacity: 0.5,
+              opacity: 0.6,
+              transform: `scaleX(${
+                loadingProgress != null ? Math.max(0, Math.min(100, loadingProgress)) / 100 : 0.35
+              })`,
+              transformOrigin: 'left center',
+              transition: 'transform 150ms',
               pointerEvents: 'none',
             }}
           />
@@ -229,15 +214,12 @@ export default function BuildingListPanel({
             size={16}
             style={{ color: 'var(--text-dim)', flexShrink: 0 }}
           />
-          <span style={{ flex: 1, minWidth: 0 }}>
-            {listLoading
-              ? totalTiles != null && loadedTiles != null && totalTiles > 0
-                ? `建物一覧（${loadedTiles}/${totalTiles} タイル）`
-                : '建物一覧（読み込み中…）'
-              : `建物一覧（${items.length}件${
-                  excludedIds.length > 0 ? ` / 除外 ${excludedIds.length}` : ''
-                }）`}
-          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>建物一覧</span>
+          {!listLoading && (
+            <span style={{ color: 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>
+              {items.length}
+            </span>
+          )}
         </button>
       </div>
       {open && (
