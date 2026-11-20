@@ -5051,11 +5051,12 @@ export default function Preview3D({
             alignItems: 'center',
             gap: '4px',
             maxWidth: 'calc(100% - 32px)',
-            background: 'var(--surface)',
+            // Cesium の canvas 上では半透明 + backdrop-filter の面が中の文字まで暗く合成されるため、
+            // このパネルだけは不透明にしてある（blur を戻すと操作列が読めなくなる）。
+            background: 'var(--surface-solid)',
             border: '1px solid var(--border)',
             borderRadius: 'var(--radius-panel)',
             padding: '4px',
-            backdropFilter: 'blur(4px)',
           }}
         >
           <button
