@@ -1,8 +1,6 @@
 node_modules/
 dist/
 .playwright-mcp/
-omo/
-.omo/
 .screenshots/
 *.log
 .env
@@ -15,5 +13,4 @@ playwright-report/
 *.3mf
 .agents/skills/
 .wrangler/
-.opencode/
 screenshot-*.png
