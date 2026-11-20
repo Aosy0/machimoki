@@ -604,10 +604,8 @@ function createCapsuleImage(
     if (typeof document === 'undefined') return null
     const scale = SELECTION_CAPSULE_PIXEL_RATIO
     const canvas = document.createElement('canvas')
-    canvas.width =
-      (spec.horizontal ? metrics.capsuleLengthPx : metrics.capsuleWidthPx) * scale
-    canvas.height =
-      (spec.horizontal ? metrics.capsuleWidthPx : metrics.capsuleLengthPx) * scale
+    canvas.width = (spec.horizontal ? metrics.capsuleLengthPx : metrics.capsuleWidthPx) * scale
+    canvas.height = (spec.horizontal ? metrics.capsuleWidthPx : metrics.capsuleLengthPx) * scale
     const ctx = canvas.getContext('2d')
     if (ctx === null) return null
     paintCapsule(ctx, spec.horizontal, spec.fill, spec.stroke, metrics)

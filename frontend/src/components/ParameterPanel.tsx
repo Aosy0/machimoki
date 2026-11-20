@@ -316,9 +316,7 @@ function ParameterPanel({
               }
               style={selectStyle}
             >
-              <option value="auto">
-                自動（{PREVIEW_QUALITY_PROFILES[previewQuality].label}）
-              </option>
+              <option value="auto">自動（{PREVIEW_QUALITY_PROFILES[previewQuality].label}）</option>
               <option value="high">高画質</option>
               <option value="medium">標準</option>
               <option value="low">軽量</option>
@@ -538,8 +536,8 @@ function ParameterPanel({
                 {(parameters.terrainThickness - parameters.shellThickness < MIN_FRAME_HEIGHT_MM ||
                   !hasMiterBase(parameters.terrainThickness, parameters.shellThickness)) && (
                   <p style={{ fontSize: 12, color: 'var(--warn)', margin: '4px 0 0' }}>
-                    地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)} mm
-                    以上、かつシェル厚み × {FRAME_MITER_DEPTH_RATIO} より大きい必要があります
+                    地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)} mm 以上、かつシェル厚み
+                    × {FRAME_MITER_DEPTH_RATIO} より大きい必要があります
                   </p>
                 )}
               </div>
@@ -585,9 +583,7 @@ function ParameterPanel({
             disabled={!parameters.includeTerrain}
           />
           {parameters.splitAtGround && parameters.includeTerrain && (
-            <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
-              底面開口も自動でON
-            </p>
+            <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>底面開口も自動でON</p>
           )}
 
           <div>
@@ -654,9 +650,7 @@ function ParameterPanel({
                       background:
                         active && parameters.includeTerrain ? 'var(--border)' : 'transparent',
                       color:
-                        active && parameters.includeTerrain
-                          ? 'var(--text)'
-                          : 'var(--text-dim)',
+                        active && parameters.includeTerrain ? 'var(--text)' : 'var(--text-dim)',
                       border:
                         active && parameters.includeTerrain
                           ? '1px solid var(--border-strong)'
@@ -721,9 +715,7 @@ function ParameterPanel({
             </button>
           )}
           <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
-            {parameters.includeTerrain
-              ? 'モード中は視点回転が固定されます'
-              : '地形が必要です'}
+            {parameters.includeTerrain ? 'モード中は視点回転が固定されます' : '地形が必要です'}
           </p>
         </section>
       </div>

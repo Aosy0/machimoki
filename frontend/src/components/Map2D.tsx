@@ -88,12 +88,7 @@ export interface Map2DProps {
   onMapUnload?: () => void
 }
 
-export default function Map2D({
-  className,
-  onWebGLFailure,
-  onMapReady,
-  onMapUnload,
-}: Map2DProps) {
+export default function Map2D({ className, onWebGLFailure, onMapReady, onMapUnload }: Map2DProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const [activeMap, setActiveMap] = useState<MapLibreMap | null>(null)

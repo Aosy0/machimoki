@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { boundsFromLngLat, validateSelectionBounds } from '../lib/selectionBounds'
 import type { SelectionBounds } from '../lib/selectionBounds'
 import { coerceCurrentViewBounds } from '../lib/mapSelectionInput'
@@ -90,10 +83,7 @@ export interface SelectionMapLike {
 
 export interface SelectionControllerOptions {
   map: SelectionMapLike
-  globalTarget: Pick<
-    Window,
-    'addEventListener' | 'removeEventListener'
-  >
+  globalTarget: Pick<Window, 'addEventListener' | 'removeEventListener'>
   onSelection: (bounds: SelectionBounds) => void
   onPreview?: (bounds: SelectionBounds) => void
   /** 作成ドラッグ中・取消時の寸法ラベル用プレビュー（確定stateに触れない） */
@@ -504,7 +494,10 @@ export function createMapLibreSelectionController(
       )
       currentBounds = next
       onPreview(next)
-      if (!resizeMoved && movedBeyondTolerance(resizeStartPx, point, resizeMetrics.moveTolerancePx)) {
+      if (
+        !resizeMoved &&
+        movedBeyondTolerance(resizeStartPx, point, resizeMetrics.moveTolerancePx)
+      ) {
         resizeMoved = true
       }
       return
@@ -628,11 +621,7 @@ export function createMapLibreSelectionController(
 
     // ハンドルはタッチでも最優先。
     if (currentBounds !== null) {
-      const handle = hitTestSelectionHandle(
-        point,
-        cornersOf(currentBounds),
-        COARSE_HANDLE_METRICS,
-      )
+      const handle = hitTestSelectionHandle(point, cornersOf(currentBounds), COARSE_HANDLE_METRICS)
       if (handle !== null) {
         clearLongPress()
         beginResize(point, handle, COARSE_HANDLE_METRICS, e)
@@ -680,7 +669,10 @@ export function createMapLibreSelectionController(
       )
       currentBounds = next
       onPreview(next)
-      if (!resizeMoved && movedBeyondTolerance(resizeStartPx, point, resizeMetrics.moveTolerancePx)) {
+      if (
+        !resizeMoved &&
+        movedBeyondTolerance(resizeStartPx, point, resizeMetrics.moveTolerancePx)
+      ) {
         resizeMoved = true
       }
       callPreventDefault(e)
@@ -697,10 +689,7 @@ export function createMapLibreSelectionController(
 
     // 長押し待ち中に動いたらキャンセルし、MapLibre標準の1本指パンに任せる。
     if (longPressTimer !== null && longPressStart !== null) {
-      const moved = Math.hypot(
-        point.x - longPressStart.x,
-        point.y - longPressStart.y,
-      )
+      const moved = Math.hypot(point.x - longPressStart.x, point.y - longPressStart.y)
       if (moved > LONG_PRESS_MOVE_PX) clearLongPress()
     }
   }

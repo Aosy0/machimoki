@@ -66,7 +66,11 @@ export function detectPreviewQualityTier(): PreviewQualityTier {
   const memory = (navigator as { deviceMemory?: number }).deviceMemory
   const cores = navigator.hardwareConcurrency
   const width = window.innerWidth
-  if ((memory !== undefined && memory <= 4) || (cores !== undefined && cores <= 4) || width <= 480) {
+  if (
+    (memory !== undefined && memory <= 4) ||
+    (cores !== undefined && cores <= 4) ||
+    width <= 480
+  ) {
     return 'low'
   }
   return 'medium'

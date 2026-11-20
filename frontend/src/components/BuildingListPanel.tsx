@@ -132,8 +132,7 @@ export default function BuildingListPanel({
     [filtered, excludedSet, onExclude, onRestore, onHoverItem, isCompact],
   )
 
-  const listHeight =
-    filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * itemSize) : 0
+  const listHeight = filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * itemSize) : 0
 
   // 読み込み中はヘッダー（と進捗）だけを出す。0件で確定したときだけ消す。
   if (items.length === 0 && !listLoading) return null
@@ -146,11 +145,7 @@ export default function BuildingListPanel({
         left: '16px',
         zIndex: 10,
         width: 'min(264px, calc(100vw - 32px))',
-        maxHeight: open
-          ? isCompact
-            ? '38dvh'
-            : 'calc(100% - 160px)'
-          : 'auto',
+        maxHeight: open ? (isCompact ? '38dvh' : 'calc(100% - 160px)') : 'auto',
         display: 'flex',
         flexDirection: 'column',
         background: 'var(--surface)',

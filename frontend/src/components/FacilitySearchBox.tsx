@@ -520,7 +520,12 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
           style={INPUT_STYLE}
         />
         {query.length > 0 && (
-          <button type="button" aria-label="検索をクリア" onClick={handleClear} style={CLEAR_BUTTON_STYLE}>
+          <button
+            type="button"
+            aria-label="検索をクリア"
+            onClick={handleClear}
+            style={CLEAR_BUTTON_STYLE}
+          >
             <Icon name="close" />
           </button>
         )}
@@ -546,9 +551,7 @@ export default function FacilitySearchBox({ map }: FacilitySearchBoxProps) {
         >
           {suggestLoading && <div style={META_STYLE}>検索中…</div>}
           {!suggestLoading && suggestError && <div style={ERROR_STYLE}>検索に失敗しました</div>}
-          {!suggestLoading && !suggestError && bothEmpty && (
-            <div style={META_STYLE}>該当なし</div>
-          )}
+          {!suggestLoading && !suggestError && bothEmpty && <div style={META_STYLE}>該当なし</div>}
           {!suggestLoading && !suggestError && !bothEmpty && (
             <>
               {facilities.length > 0 && (

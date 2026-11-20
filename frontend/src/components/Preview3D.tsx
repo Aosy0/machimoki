@@ -578,7 +578,9 @@ function ContourDebugPanel({
             Terrain: {info.terrainType} ready:{info.terrainReady ? 'true' : 'false'} isEllipsoid:
             {info.isEllipsoid ? 'true' : 'false'} availability:{info.hasAvailability ? '有' : '無'}
           </div>
-          <div style={{ color: info.contourActive ? 'var(--text)' : 'var(--warn)', fontWeight: 500 }}>
+          <div
+            style={{ color: info.contourActive ? 'var(--text)' : 'var(--warn)', fontWeight: 500 }}
+          >
             ContourActive: {info.contourActive ? 'true' : 'false'} ({info.contourReason})
           </div>
         </div>

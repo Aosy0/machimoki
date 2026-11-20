@@ -32,10 +32,7 @@ function ErrorToast({ message, onRetry, onDismiss }: ErrorToastProps) {
         maxWidth: '80%',
       }}
     >
-      <span
-        aria-hidden="true"
-        style={{ display: 'flex', flexShrink: 0, color: 'var(--error)' }}
-      >
+      <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0, color: 'var(--error)' }}>
         <Icon name="warning" size={16} />
       </span>
       <span style={{ flex: 1, lineHeight: 1.5 }}>{message}</span>
