@@ -30,7 +30,8 @@ export function createGsiImageryProvider(style: GsiTileStyle): UrlTemplateImager
   })
 }
 
-export const GSI_TILE_STYLES: GsiTileStyle[] = ['std', 'pale', 'blank', 'seamlessphoto', 'contour']
+// 地図スタイルの選択肢。航空写真は「航空写真」スイッチが担うため含めない。
+export const GSI_TILE_STYLES: GsiTileStyle[] = ['std', 'pale', 'blank', 'contour']
 
 export const CONTOUR_STYLE = 'contour' as const
 export function isContourStyle(style: GsiTileStyle): boolean {
@@ -42,7 +43,8 @@ export const GSI_STORAGE_KEY = 'machimoki.gsiStyle'
 export function loadGsiStyle(): GsiTileStyle {
   try {
     const v = localStorage.getItem(GSI_STORAGE_KEY) as GsiTileStyle | null
-    if (v && GSI_TILE_URLS[v]) return v
+    // 選択肢に無い旧値（航空写真）は select が空表示になるため pale に丸める。
+    if (v && GSI_TILE_STYLES.includes(v)) return v
   } catch {}
   return 'pale'
 }
