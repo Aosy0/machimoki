@@ -1,4 +1,5 @@
-import { useEffect, useRef, type CSSProperties } from 'react'
+import { Fragment, useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
+import Icon from './ui/Icon'
 import { useHasCoarsePointer, useIsCompactLayout } from '../hooks/useMediaQuery'
 
 interface HelpDetailProps {
@@ -7,53 +8,103 @@ interface HelpDetailProps {
   onClose: () => void
 }
 
-function mapControls(hasCoarsePointer: boolean): string[] {
+interface ControlRow {
+  action: ReactNode
+  effect: string
+}
+
+const kbdStyle: CSSProperties = {
+  display: 'inline-block',
+  padding: '0 4px',
+  fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
+  fontSize: '12px',
+  lineHeight: 1.5,
+  color: 'var(--text)',
+  background: 'var(--border)',
+  border: '1px solid var(--border-strong)',
+  borderBottomWidth: '2px',
+  borderRadius: 'var(--radius-control)',
+  whiteSpace: 'nowrap',
+}
+
+function mapControls(hasCoarsePointer: boolean): ControlRow[] {
   return hasCoarsePointer
     ? [
-        '1本指ドラッグ: 地図移動',
-        '2本指ドラッグ: 移動＋拡大',
-        '1本指長押し→ドラッグ: 範囲選択',
-        '矩形の辺・角: サイズ変更',
-        '範囲選択モード: 1本指で矩形',
+        { action: '1本指ドラッグ', effect: '地図移動' },
+        { action: '2本指ドラッグ', effect: '移動＋拡大' },
+        { action: '1本指長押し＋ドラッグ', effect: '範囲選択' },
+        { action: '矩形の辺・角', effect: 'サイズ変更' },
+        { action: '範囲選択モード', effect: '1本指で矩形' },
       ]
     : [
-        '左ドラッグ: 地図移動',
-        'ホイール: 拡大',
-        'Shift + 左ドラッグ: 範囲選択',
-        '右 / 中ドラッグ: 地図移動',
-        '矩形の辺・角: サイズ変更',
-        '範囲選択モード: 左ドラッグで矩形',
+        { action: '左ドラッグ', effect: '地図移動' },
+        { action: 'ホイール', effect: '拡大' },
+        {
+          action: (
+            <>
+              <kbd style={kbdStyle}>Shift</kbd>＋左ドラッグ
+            </>
+          ),
+          effect: '範囲選択',
+        },
+        { action: '右・中ドラッグ', effect: '地図移動' },
+        { action: '矩形の辺・角', effect: 'サイズ変更' },
+        { action: '範囲選択モード', effect: '左ドラッグで矩形' },
       ]
 }
 
-function previewControls(hasCoarsePointer: boolean): string[] {
+function previewControls(hasCoarsePointer: boolean): ControlRow[] {
   return hasCoarsePointer
     ? [
-        '1本指ドラッグ: 視点移動',
-        '2本指ドラッグ: 拡大・縮小',
-        '建物をタップ: 削除',
-        '「元に戻す」: 削除の取り消し',
+        { action: '1本指ドラッグ', effect: '視点移動' },
+        { action: '2本指ドラッグ', effect: '拡大・縮小' },
+        { action: '建物をタップ', effect: '削除' },
+        { action: '「元に戻す」', effect: '削除の取り消し' },
       ]
     : [
-        '左ドラッグ: 視点移動',
-        '右ドラッグ / ホイール: ズーム',
-        '中 / Ctrl + ドラッグ: 傾き',
-        'Shift + 左ドラッグ: 見回し',
+        { action: '左ドラッグ', effect: '視点移動' },
+        { action: '右ドラッグ・ホイール', effect: 'ズーム' },
+        {
+          action: (
+            <>
+              中ドラッグ・<kbd style={kbdStyle}>Ctrl</kbd>＋ドラッグ
+            </>
+          ),
+          effect: '傾き',
+        },
+        {
+          action: (
+            <>
+              <kbd style={kbdStyle}>Shift</kbd>＋左ドラッグ
+            </>
+          ),
+          effect: '見回し',
+        },
       ]
 }
 
 const sectionTitleStyle: CSSProperties = {
-  margin: '0 0 4px',
+  margin: '0 0 8px',
   fontSize: '12px',
-  fontWeight: 600,
+  fontWeight: 500,
   color: 'var(--text-dim)',
-  letterSpacing: '0.04em',
 }
 
-const dividerStyle: CSSProperties = {
-  borderTop: '1px solid var(--border)',
-  marginTop: '12px',
-  paddingTop: '12px',
+const controlsStyle: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'max-content 1fr',
+  columnGap: '16px',
+  rowGap: '4px',
+  alignItems: 'baseline',
+  fontSize: '13px',
+}
+
+const actionStyle: CSSProperties = {
+  color: 'var(--text-dim)',
+}
+
+const effectStyle: CSSProperties = {
+  color: 'var(--text)',
 }
 
 /**
@@ -99,11 +150,10 @@ export default function HelpDetail({ mode, isOpen, onClose }: HelpDetailProps) {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        background: 'var(--surface-solid)',
+        background: 'var(--surface)',
         color: 'var(--text)',
-        border: '1px solid var(--border-strong)',
-        borderRadius: 16,
-        boxShadow: '0 12px 32px rgba(0, 0, 0, 0.45)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-panel)',
       }
     : {
         position: 'absolute',
@@ -116,11 +166,10 @@ export default function HelpDetail({ mode, isOpen, onClose }: HelpDetailProps) {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        background: 'var(--surface-solid)',
+        background: 'var(--surface)',
         color: 'var(--text)',
-        border: '1px solid var(--border-strong)',
-        borderRadius: 12,
-        boxShadow: '0 12px 32px rgba(0, 0, 0, 0.45)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-panel)',
       }
 
   return (
@@ -138,15 +187,12 @@ export default function HelpDetail({ mode, isOpen, onClose }: HelpDetailProps) {
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 8,
-          padding: isCompact ? '12px 14px' : '12px 16px',
+          padding: '12px 16px',
           borderBottom: '1px solid var(--border)',
           flexShrink: 0,
         }}
       >
-        <h2
-          id="help-detail-title"
-          style={{ margin: 0, fontSize: isCompact ? 15 : 14, fontWeight: 600 }}
-        >
+        <h2 id="help-detail-title" style={{ margin: 0, fontSize: 16, fontWeight: 500 }}>
           操作方法
         </h2>
         <button
@@ -157,7 +203,7 @@ export default function HelpDetail({ mode, isOpen, onClose }: HelpDetailProps) {
           aria-label="操作方法を閉じる"
           data-testid="help-detail-close"
         >
-          ×
+          <Icon name="close" size={16} />
         </button>
       </div>
 
@@ -165,64 +211,34 @@ export default function HelpDetail({ mode, isOpen, onClose }: HelpDetailProps) {
         className="help-detail-body"
         data-testid="help-detail-body"
         style={{
-          padding: isCompact ? '12px 14px 28px' : '12px 16px 28px',
+          padding: '12px 16px 16px',
           overflowY: 'auto',
           overscrollBehavior: 'contain',
           WebkitOverflowScrolling: 'touch',
           minHeight: 0,
-          fontSize: isCompact ? '13px' : '12px',
-          lineHeight: 1.75,
+          fontSize: '13px',
+          lineHeight: 1.7,
         }}
       >
         <section>
-          <h3 style={sectionTitleStyle}>基本の流れ</h3>
-          <ol style={{ margin: '4px 0 0', paddingLeft: '20px' }}>
-            <li>地図で範囲を選ぶ</li>
-            <li>3Dプレビューで形を確認する</li>
-            <li>エクスポートで3MF / STLを保存する</li>
-          </ol>
+          <h3 style={sectionTitleStyle}>操作</h3>
+          <div style={controlsStyle}>
+            {controls.map((row, index) => (
+              <Fragment key={index}>
+                <div style={actionStyle}>{row.action}</div>
+                <div style={effectStyle}>{row.effect}</div>
+              </Fragment>
+            ))}
+          </div>
         </section>
 
-        {mode === 'map' && (
-          <section style={dividerStyle}>
-            <h3 style={sectionTitleStyle}>ボタン</h3>
-            <div>移動 / 範囲選択: モードを切り替え</div>
-            <div>現在表示: 今の画面範囲をそのまま選択</div>
-            <div>
-              {isCompact
-                ? '座標 / 凡例: モードバーのボタンで開く'
-                : '座標 / 凡例: 右下・右上のパネル'}
-            </div>
-          </section>
-        )}
-
-        <section style={dividerStyle}>
-          <h3 style={sectionTitleStyle}>
-            {mode === 'map' ? 'ジェスチャー / ショートカット' : '3Dプレビューの操作'}
-          </h3>
-          {controls.map((text) => (
-            <div key={text}>{text}</div>
-          ))}
-          {mode === 'map' && (
-            <p
-              style={{
-                margin: '8px 0 0',
-                color: 'var(--text-muted)',
-                fontSize: '11px',
-                lineHeight: 1.6,
-              }}
-            >
-              ボタンで選んだモードが、PC=左ドラッグ / スマホ=1本指の動作を切り替えます。
-              Shift+ドラッグ・長押し・右中ドラッグ・ホイールはモードに関係なく使えます。
-            </p>
-          )}
-        </section>
-
-        <section style={dividerStyle}>
-          <h3 style={sectionTitleStyle}>補足</h3>
-          <div>選択範囲は自動で長辺150mmになります。</div>
-          <div>設定はプレビューと書き出しの両方に反映されます。</div>
-          <div>3MFは色を保持できます（推奨）。</div>
+        <section style={{ marginTop: '16px' }}>
+          <h3 style={sectionTitleStyle}>書き出し</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div>初期スケールは最大辺 150 mm</div>
+            <div>3MF は色を保持（STL は不可）</div>
+            <div>地形を含めないと刻印できない</div>
+          </div>
           <p style={{ margin: '12px 0 0' }}>
             <a href="/guide/" target="_blank" rel="noreferrer">
               3Dプリントの手順ガイド
@@ -238,20 +254,6 @@ export default function HelpDetail({ mode, isOpen, onClose }: HelpDetailProps) {
           </p>
         </section>
       </div>
-      {(isCompact || mode === 'map') && (
-        <div
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 24,
-            background: 'linear-gradient(to bottom, transparent, var(--surface-solid))',
-            pointerEvents: 'none',
-          }}
-        />
-      )}
     </div>
   )
 }

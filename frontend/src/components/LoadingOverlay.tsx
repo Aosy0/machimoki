@@ -6,11 +6,14 @@ interface LoadingOverlayProps {
   progress?: number
 }
 
+const MONO_FONT = 'ui-monospace, "SF Mono", "Cascadia Mono", monospace'
+
 function LoadingOverlay({ message, visible, progress }: LoadingOverlayProps) {
   if (!visible) return null
 
   // 進捗は 0〜100 に丸めてから ARIA とバーの幅に使う。
   const clampedProgress = Math.max(0, Math.min(100, progress ?? 0))
+  const hasProgress = progress !== undefined
 
   return (
     <div
@@ -33,23 +36,38 @@ function LoadingOverlay({ message, visible, progress }: LoadingOverlayProps) {
         color: 'var(--text)',
       }}
     >
-      <div className="machimoki-spinner" aria-hidden="true" />
-      <p style={{ marginTop: '16px', fontSize: '14px' }}>{message}</p>
-      {progress !== undefined && (
-        <div
-          className="machimoki-loading-progress"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(clampedProgress)}
-          aria-label="進捗"
-        >
+      {hasProgress ? (
+        <>
           <div
-            className="machimoki-loading-progress-fill"
-            style={{ width: `${clampedProgress}%` }}
-          />
-        </div>
+            aria-hidden="true"
+            style={{
+              fontFamily: MONO_FONT,
+              fontVariantNumeric: 'tabular-nums',
+              fontSize: '24px',
+              fontWeight: 500,
+              lineHeight: 1,
+            }}
+          >
+            {Math.round(clampedProgress)}%
+          </div>
+          <div
+            className="machimoki-loading-progress"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(clampedProgress)}
+            aria-label="進捗"
+          >
+            <div
+              className="machimoki-loading-progress-fill"
+              style={{ width: `${clampedProgress}%` }}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="machimoki-spinner" aria-hidden="true" />
       )}
+      <p style={{ margin: '16px 0 0', fontSize: '14px' }}>{message}</p>
     </div>
   )
 }
