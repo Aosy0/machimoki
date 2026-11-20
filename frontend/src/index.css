@@ -424,21 +424,10 @@ input[type="checkbox"] {
   transition: width 0.2s ease;
 }
 
-/* 建物一覧の読み込み中に流れる不定進捗バー（BuildingListPanel） */
-@keyframes machimoki-indeterminate {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
-}
-
 /* 動きを減らす設定では、装飾目的のアニメーションとトランジションを止める。
    刻印パネルの animation はインライン指定なので !important で打ち消す。 */
 @media (prefers-reduced-motion: reduce) {
   .machimoki-spinner,
-  .machimoki-indeterminate,
   .machimoki-loading-progress-fill,
   .engraving-panel {
     animation: none !important;
