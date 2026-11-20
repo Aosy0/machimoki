@@ -1,6 +1,7 @@
 import React, { useId, useMemo, useState } from 'react'
 import { FixedSizeList, type ListChildComponentProps } from 'react-window'
 import { useIsCompactLayout } from '../hooks/useMediaQuery'
+import Icon from './ui/Icon'
 
 export interface BuildingListItem {
   id: string
@@ -32,6 +33,8 @@ interface RowData {
 
 const ITEM_SIZE = 28
 const MAX_LIST_HEIGHT = 360
+// 高さの列幅。数値の桁数が変わっても行頭が揃うよう固定する。
+const HEIGHT_COLUMN_WIDTH = 56
 
 function shortId(id: string): string {
   return id.length > 18 ? `${id.slice(0, 15)}…` : id
@@ -46,7 +49,7 @@ const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>
         ...style,
         display: 'flex',
         alignItems: 'center',
-        gap: '6px',
+        gap: '8px',
         padding: '0 8px',
         borderBottom: '1px solid var(--border)',
         opacity: excluded ? 0.55 : 1,
@@ -68,22 +71,36 @@ const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>
         }}
       >
         {shortId(item.id)}
-        {item.height && <span style={{ color: 'var(--text-dim)' }}> / {item.height}m</span>}
+      </span>
+      <span
+        style={{
+          flexShrink: 0,
+          width: `${HEIGHT_COLUMN_WIDTH}px`,
+          textAlign: 'right',
+          fontVariantNumeric: 'tabular-nums',
+          fontFamily: 'ui-monospace, "SF Mono", monospace',
+          color: 'var(--text-dim)',
+        }}
+      >
+        {item.height ? `${item.height} m` : ''}
       </span>
       <button
+        type="button"
         onClick={() => (excluded ? data.onRestore(item.id) : data.onExclude(item.id))}
         style={{
           flexShrink: 0,
-          padding: data.compact ? '6px 10px' : '2px 8px',
-          fontSize: data.compact ? '12px' : '10px',
+          minHeight: data.compact ? 32 : 24,
+          padding: '0 8px',
+          fontSize: '12px',
+          lineHeight: 1.2,
           cursor: 'pointer',
-          borderRadius: '3px',
-          border: excluded ? '1px solid var(--accent)' : '1px solid #b3591f',
-          background: excluded ? 'var(--accent)' : 'transparent',
-          color: excluded ? 'var(--text)' : '#ff9800',
+          borderRadius: 'var(--radius-control)',
+          border: '1px solid var(--border-strong)',
+          background: excluded ? 'var(--border-strong)' : 'transparent',
+          color: excluded ? 'var(--text)' : 'var(--warn)',
         }}
       >
-        {excluded ? '戻す' : '削除'}
+        {excluded ? '戻す' : '除外'}
       </button>
     </div>
   )
@@ -123,7 +140,8 @@ export default function BuildingListPanel({
   const listHeight =
     filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * itemSize) : 0
 
-  if (items.length === 0) return null
+  // 読み込み中はヘッダー（と進捗）だけを出す。0件で確定したときだけ消す。
+  if (items.length === 0 && !listLoading) return null
 
   return (
     <div
@@ -141,9 +159,9 @@ export default function BuildingListPanel({
         display: 'flex',
         flexDirection: 'column',
         background: 'var(--surface)',
-        border: '1px solid var(--border-strong)',
-        borderRadius: '6px',
-        fontSize: '11px',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-panel)',
+        fontSize: '12px',
         backdropFilter: 'blur(4px)',
         overflow: 'hidden',
       }}
@@ -161,17 +179,17 @@ export default function BuildingListPanel({
             style={{
               position: 'absolute',
               inset: 0,
-              width: `${Math.max(0, Math.min(100, loadingProgress))}%`,
+              transform: `scaleX(${Math.max(0, Math.min(100, loadingProgress)) / 100})`,
+              transformOrigin: 'left center',
               background: 'var(--accent)',
               opacity: 0.18,
-              transition: 'width 0.25s ease',
+              transition: 'transform 150ms',
               pointerEvents: 'none',
             }}
           />
         )}
         {listLoading && loadingProgress == null && (
           <div
-            className="machimoki-indeterminate"
             aria-hidden
             style={{
               position: 'absolute',
@@ -180,11 +198,8 @@ export default function BuildingListPanel({
               bottom: 0,
               height: '2px',
               background: 'var(--accent)',
-              opacity: 0.85,
-              backgroundImage:
-                'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%)',
-              backgroundSize: '200% 100%',
-              animation: 'machimoki-indeterminate 1.2s linear infinite',
+              opacity: 0.5,
+              pointerEvents: 'none',
             }}
           />
         )}
@@ -197,30 +212,37 @@ export default function BuildingListPanel({
             position: 'relative',
             display: 'flex',
             alignItems: 'center',
-            gap: '6px',
-            padding: isCompact ? '10px' : '7px 10px',
+            gap: '8px',
+            padding: '8px 12px',
             background: 'transparent',
             border: 'none',
             width: '100%',
             cursor: 'pointer',
             color: 'var(--text)',
-            fontWeight: 600,
+            fontSize: '12px',
+            fontWeight: 500,
             textAlign: 'left',
           }}
         >
-          <span style={{ color: 'var(--accent)' }}>{open ? '▾' : '▸'}</span>
+          <Icon
+            name={open ? 'chevron-down' : 'chevron-right'}
+            size={16}
+            style={{ color: 'var(--text-dim)', flexShrink: 0 }}
+          />
           <span style={{ flex: 1, minWidth: 0 }}>
             {listLoading
               ? totalTiles != null && loadedTiles != null && totalTiles > 0
-                ? `建物一覧（${loadedTiles}/${totalTiles} タイル 読み込み中）`
+                ? `建物一覧（${loadedTiles}/${totalTiles} タイル）`
                 : '建物一覧（読み込み中…）'
-              : `建物一覧（${items.length}件 / 削除済み ${excludedIds.length}件）`}
+              : `建物一覧（${items.length}件${
+                  excludedIds.length > 0 ? ` / 除外 ${excludedIds.length}` : ''
+                }）`}
           </span>
         </button>
       </div>
       {open && (
         <div id={listId} style={{ display: 'contents' }}>
-          <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
             <input
               type="text"
               aria-label="建物IDで絞り込み"
@@ -230,12 +252,12 @@ export default function BuildingListPanel({
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
-                padding: '4px 6px',
-                fontSize: '11px',
+                padding: '4px 8px',
+                fontSize: '12px',
                 background: 'var(--bg)',
                 color: 'var(--text)',
                 border: '1px solid var(--border-strong)',
-                borderRadius: '3px',
+                borderRadius: 'var(--radius-control)',
               }}
             />
           </div>
@@ -250,8 +272,8 @@ export default function BuildingListPanel({
             >
               {Row}
             </FixedSizeList>
-          ) : (
-            <div style={{ padding: '10px', color: 'var(--text-dim)' }}>該当なし</div>
+          ) : listLoading ? null : (
+            <div style={{ padding: '8px 12px', color: 'var(--text-dim)' }}>該当なし</div>
           )}
         </div>
       )}
