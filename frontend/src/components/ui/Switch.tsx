@@ -29,6 +29,7 @@ export default function Switch({
       type="checkbox"
       className="ui-switch__input"
       role="switch"
+      aria-checked={checked}
       checked={checked}
       disabled={disabled}
       aria-describedby={describedBy}
