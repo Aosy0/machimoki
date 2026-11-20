@@ -6,6 +6,8 @@ interface SwitchProps {
   testId?: string
   /** ラベルをスイッチの左（行頭）に置くか、右に置くか。 */
   labelFirst?: boolean
+  /** 押せない理由などを書いた注記の id。読み上げ時にラベルへ続けて読ませる。 */
+  describedBy?: string
 }
 
 /**
@@ -19,6 +21,7 @@ export default function Switch({
   disabled = false,
   testId,
   labelFirst = false,
+  describedBy,
 }: SwitchProps) {
   const text = <span className="ui-switch__label">{label}</span>
   const input = (
@@ -28,6 +31,7 @@ export default function Switch({
       role="switch"
       checked={checked}
       disabled={disabled}
+      aria-describedby={describedBy}
       data-testid={testId}
       onChange={(e) => onChange(e.target.checked)}
       {...({ switch: '' } as Record<string, string>)}

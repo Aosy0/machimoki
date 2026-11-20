@@ -360,9 +360,13 @@ function ParameterPanel({
               label="影"
               disabled={!shadowsAvailable}
               testId="shadows-toggle"
+              describedBy={shadowsAvailable ? undefined : `${baseId}-shadows-note`}
             />
             {!shadowsAvailable && (
-              <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}>
+              <p
+                id={`${baseId}-shadows-note`}
+                style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}
+              >
                 軽量画質では影を表示できません
               </p>
             )}
@@ -374,9 +378,13 @@ function ParameterPanel({
               onChange={(checked) => handleChange('showTerrainImagery', checked)}
               label="航空写真"
               disabled={parameters.includeTerrain}
+              describedBy={parameters.includeTerrain ? `${baseId}-aerial-note` : undefined}
             />
             {parameters.includeTerrain && (
-              <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}>
+              <p
+                id={`${baseId}-aerial-note`}
+                style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}
+              >
                 地形を含めると地面は模型になります
               </p>
             )}
