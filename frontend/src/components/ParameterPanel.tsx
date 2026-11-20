@@ -663,14 +663,18 @@ function ParameterPanel({
                   borderRadius: 'var(--radius-control)',
                   background:
                     parameters.terrainGridSize == null && parameters.includeTerrain
-                      ? 'var(--accent)'
-                      : 'var(--border)',
+                      ? 'var(--border)'
+                      : 'transparent',
                   color:
                     parameters.terrainGridSize == null && parameters.includeTerrain
                       ? 'var(--text)'
                       : 'var(--text-dim)',
-                  border: '1px solid var(--border-strong)',
-                  fontWeight: parameters.terrainGridSize == null ? 500 : 400,
+                  border:
+                    parameters.terrainGridSize == null && parameters.includeTerrain
+                      ? '1px solid var(--border-strong)'
+                      : '1px solid var(--border)',
+                  fontWeight:
+                    parameters.terrainGridSize == null && parameters.includeTerrain ? 500 : 400,
                 }}
               >
                 自動
@@ -691,13 +695,16 @@ function ParameterPanel({
                       fontVariantNumeric: 'tabular-nums',
                       borderRadius: 'var(--radius-control)',
                       background:
-                        active && parameters.includeTerrain ? 'var(--accent)' : 'var(--border)',
+                        active && parameters.includeTerrain ? 'var(--border)' : 'transparent',
                       color:
                         active && parameters.includeTerrain
                           ? 'var(--text)'
                           : 'var(--text-dim)',
-                      border: '1px solid var(--border-strong)',
-                      fontWeight: active ? 500 : 400,
+                      border:
+                        active && parameters.includeTerrain
+                          ? '1px solid var(--border-strong)'
+                          : '1px solid var(--border)',
+                      fontWeight: active && parameters.includeTerrain ? 500 : 400,
                     }}
                   >
                     {preset.label}
@@ -723,9 +730,11 @@ function ParameterPanel({
               height: 32,
               padding: '0 12px',
               borderRadius: 'var(--radius-control)',
-              border: 'none',
-              background: parameters.includeTerrain ? 'var(--accent)' : 'var(--border-strong)',
-              color: parameters.includeTerrain ? '#fff' : 'var(--text-dim)',
+              border: parameters.includeTerrain
+                ? '1px solid var(--border-strong)'
+                : '1px solid var(--border)',
+              background: 'transparent',
+              color: parameters.includeTerrain ? 'var(--text)' : 'var(--text-dim)',
               fontSize: 14,
               fontWeight: 500,
               cursor: parameters.includeTerrain ? 'pointer' : 'not-allowed',
@@ -779,7 +788,7 @@ function ParameterPanel({
             height: 40,
             padding: 0,
             background: 'var(--accent)',
-            color: 'var(--text)',
+            color: 'var(--accent-ink)',
             border: 'none',
             borderRadius: 'var(--radius-control)',
             fontSize: 14,
