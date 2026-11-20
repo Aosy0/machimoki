@@ -324,11 +324,11 @@ function ParameterPanel({
           </div>
 
           <div style={colorRowStyle}>
-            <label htmlFor={baseId + '-building-color'} style={colorLabelStyle}>
+            <label htmlFor={`${baseId}-building-color`} style={colorLabelStyle}>
               建物色
             </label>
             <input
-              id={baseId + '-building-color'}
+              id={`${baseId}-building-color`}
               type="color"
               value={parameters.buildingColor}
               onChange={(e) => handleChange('buildingColor', e.target.value)}
@@ -337,11 +337,11 @@ function ParameterPanel({
           </div>
 
           <div style={colorRowStyle}>
-            <label htmlFor={baseId + '-terrain-color'} style={colorLabelStyle}>
+            <label htmlFor={`${baseId}-terrain-color`} style={colorLabelStyle}>
               地形色
             </label>
             <input
-              id={baseId + '-terrain-color'}
+              id={`${baseId}-terrain-color`}
               type="color"
               value={parameters.terrainColor}
               onChange={(e) => handleChange('terrainColor', e.target.value)}

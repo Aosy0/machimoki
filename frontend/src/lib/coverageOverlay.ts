@@ -194,7 +194,7 @@ function resolveMuniCategory(code: string, categories: Map<string, LodCategory>)
     }
   } else {
     // 区のコード: 親市本体のカテゴリがあれば候補にする
-    const parent = categories.get(code.slice(0, 3) + '00')
+    const parent = categories.get(`${code.slice(0, 3)}00`)
     if (parent !== undefined) candidates.push(parent)
   }
   if (candidates.length === 0) return 'none'
