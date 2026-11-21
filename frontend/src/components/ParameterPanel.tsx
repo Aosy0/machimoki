@@ -454,8 +454,8 @@ function ParameterPanel({
               </button>
             </div>
             {!parameters.includeTerrain && (
-              <Hint id={idOf('engraving-reason')} label="刻印モードにできない理由">
-                地形を含めないと刻印する面がありません
+              <Hint id={idOf('engraving-reason')} label="刻印モードを有効にする方法">
+                「地形を含める」をオンにすると使えます。地形がないと刻印する面がありません
               </Hint>
             )}
           </div>
@@ -521,8 +521,8 @@ function ParameterPanel({
               />
             </div>
             {!shadowsAvailable && (
-              <Hint id={idOf('shadows-reason')} label="影を表示できない理由">
-                軽量画質では影を描画しません
+              <Hint id={idOf('shadows-reason')} label="影を有効にする方法">
+                プレビュー画質を「軽量」以外にすると使えます。軽量画質では影を描画しません
               </Hint>
             )}
           </div>
@@ -538,8 +538,8 @@ function ParameterPanel({
               />
             </div>
             {parameters.includeTerrain && (
-              <Hint id={idOf('aerial-reason')} label="航空写真を使えない理由">
-                地形を含めると地面は模型になり、地図は表示されません
+              <Hint id={idOf('aerial-reason')} label="航空写真を有効にする方法">
+                「地形を含める」をオフにすると使えます。地形を含めると地面が模型になり、地図は表示されません
               </Hint>
             )}
           </div>
@@ -608,8 +608,8 @@ function ParameterPanel({
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={valueStyle}>{parameters.terrainThickness.toFixed(1)} mm</span>
                       {elevationLocked && (
-                        <Hint id={idOf('thickness-reason')} label="地形厚みを指定できない理由">
-                          実際の標高を反映している間は、底面が標高に沿うため指定できません
+                        <Hint id={idOf('thickness-reason')} label="地形厚みを指定する方法">
+                          「実際の標高を反映する」をオフにすると指定できます。オンにしている間は底面が標高に沿って決まります
                         </Hint>
                       )}
                     </span>
@@ -639,8 +639,8 @@ function ParameterPanel({
                     />
                   </div>
                   {elevationLocked && (
-                    <Hint id={idOf('flatten-reason')} label="底面をフラット化できない理由">
-                      実際の標高を反映している間は、底面が標高に沿うため指定できません
+                    <Hint id={idOf('flatten-reason')} label="底面をフラット化する方法">
+                      「実際の標高を反映する」をオフにすると指定できます。オンにしている間は底面が標高に沿って決まります
                     </Hint>
                   )}
                 </div>
