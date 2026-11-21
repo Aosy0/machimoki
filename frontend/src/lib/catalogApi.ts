@@ -38,6 +38,19 @@ interface PlateauCatalogResponse {
   datasets: PlateauDataset[]
 }
 
+/** 建物以外に重ね表示できるPLATEAUの3Dレイヤー。 */
+export type LayerType = 'brid' | 'tran'
+
+const BUILDING_TYPE_NAME = '建築物モデル'
+
+/** レイヤー → データカタログの type 名。 */
+const LAYER_TYPE_NAME: Record<LayerType, string> = {
+  brid: '橋梁モデル',
+  tran: '交通（道路）モデル',
+}
+
+export const LAYER_KEYS: LayerType[] = ['brid', 'tran']
+
 let cachedDatasets: PlateauDataset[] | null = null
 let cachedDatasetsPromise: Promise<PlateauDataset[]> | null = null
 
@@ -92,6 +105,7 @@ export function clearCatalogApiCache(): void {
   muniCodesCache.clear()
   muniCodesPending.clear()
   tilesetUrlCache.clear()
+  layerMuniCodesCache.clear()
 }
 
 export async function resolveMuniCodes(bounds: {
@@ -279,8 +293,17 @@ export async function resolveMuniCodeLocal(lat: number, lon: number): Promise<st
   return code
 }
 
-export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string> {
-  const key = `${muniCode}:${lod}`
+function matchesMuniCode(d: PlateauDataset, muniCode: string): boolean {
+  return d.ward_code === muniCode || d.city_code === muniCode
+}
+
+/** 指定type（建築物・橋梁・道路など）の3D TilesタイルセットURLを解決する。 */
+async function findTilesetUrlForType(
+  muniCode: string,
+  lod: Lod,
+  typeName: string,
+): Promise<string> {
+  const key = `${muniCode}:${lod}:${typeName}`
   const cached = tilesetUrlCache.get(key)
   if (cached) return cached
   const datasets = await fetchCatalogDatasets()
@@ -288,23 +311,21 @@ export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string
   const targetLod = lod.replace('lod', '')
 
   // texture: false を優先し、無い場合のみ texture: true を許容
-  const candidates = datasets.filter((d) => {
-    if (d.pref_code !== prefCode) return false
-    if (d.format !== '3D Tiles') return false
-    if (d.type !== '建築物モデル') return false
-    if (d.lod !== targetLod) return false
-    if (d.ward_code && d.ward_code === muniCode) return true
-    if (d.city_code === muniCode) return true
-    return false
-  })
+  const candidates = datasets.filter(
+    (d) =>
+      d.pref_code === prefCode &&
+      d.format === '3D Tiles' &&
+      d.type === typeName &&
+      d.lod === targetLod &&
+      matchesMuniCode(d, muniCode),
+  )
 
   if (candidates.length === 0) {
     throw new Error(
-      `該当する3D Tilesデータセットが見つかりません: muniCode=${muniCode}, lod=${lod}`,
+      `該当する3D Tilesデータセットが見つかりません: muniCode=${muniCode}, lod=${lod}, type=${typeName}`,
     )
   }
 
-  // texture: false を優先
   const noTextureCandidate = candidates.find((d) => !d.texture)
   const candidate = noTextureCandidate ?? candidates[0]
 
@@ -312,25 +333,32 @@ export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string
   return candidate.url
 }
 
+export async function findTilesetUrl(muniCode: string, lod: Lod): Promise<string> {
+  return findTilesetUrlForType(muniCode, lod, BUILDING_TYPE_NAME)
+}
+
 export const LOD_ORDER: Lod[] = ['lod1', 'lod2', 'lod3', 'lod4']
 
-/** 指定自治体で利用可能なLOD一覧を返す（lod1 → lod4 順）。 */
-export async function getMuniAvailableLods(muniCode: string): Promise<Lod[]> {
+/** 指定typeで利用可能なLOD一覧を返す（lod1 → lod4 順）。 */
+async function getAvailableLodsForType(muniCode: string, typeName: string): Promise<Lod[]> {
   const datasets = await fetchCatalogDatasets()
   const prefCode = muniCode.slice(0, 2)
   const found = new Set<string>()
   for (const d of datasets) {
     if (d.pref_code !== prefCode) continue
     if (d.format !== '3D Tiles') continue
-    if (d.type !== '建築物モデル') continue
-    const matchesWard = d.ward_code != null && d.ward_code === muniCode
-    const matchesCity = d.city_code === muniCode
-    if (!matchesWard && !matchesCity) continue
+    if (d.type !== typeName) continue
+    if (!matchesMuniCode(d, muniCode)) continue
     if (['1', '2', '3', '4'].includes(d.lod)) {
       found.add(`lod${d.lod}`)
     }
   }
   return LOD_ORDER.filter((lod) => found.has(lod))
+}
+
+/** 指定自治体で利用可能な建物LOD一覧を返す（lod1 → lod4 順）。 */
+export async function getMuniAvailableLods(muniCode: string): Promise<Lod[]> {
+  return getAvailableLodsForType(muniCode, BUILDING_TYPE_NAME)
 }
 
 /**
@@ -352,6 +380,59 @@ export async function findBestTilesetUrl(
     const url = await findTilesetUrl(muniCode, fallbackLod)
     return { url, actualLod: fallbackLod }
   }
+}
+
+const layerMuniCodesCache = new Map<LayerType, Promise<Set<string>>>()
+
+/** レイヤーの3D Tilesを保有する自治体コード一覧（レイヤー単位でキャッシュ）。 */
+export function getLayerMuniCodes(layer: LayerType): Promise<Set<string>> {
+  const cached = layerMuniCodesCache.get(layer)
+  if (cached) return cached
+
+  const task = fetchCatalogDatasets().then((datasets) => {
+    const typeName = LAYER_TYPE_NAME[layer]
+    const codes = new Set<string>()
+    for (const d of datasets) {
+      if (d.format !== '3D Tiles') continue
+      if (d.type !== typeName) continue
+      if (d.city_code) codes.add(d.city_code)
+      if (d.ward_code) codes.add(d.ward_code)
+    }
+    return codes
+  })
+  layerMuniCodesCache.set(layer, task)
+  return task
+}
+
+/**
+ * レイヤーのタイルセットURLを返す。未整備の自治体では null。
+ * 要求LODが未整備の場合は、対応している中で最も詳細なレベルにフォールバックする。
+ */
+export async function findLayerTilesetUrl(
+  muniCode: string,
+  layer: LayerType,
+  requestedLod: Lod,
+): Promise<{ url: string; actualLod: Lod } | null> {
+  const typeName = LAYER_TYPE_NAME[layer]
+  const available = await getAvailableLodsForType(muniCode, typeName)
+  if (available.length === 0) return null
+  // 要求LODが無い場合は最も詳細（末尾）へフォールバックする
+  const actualLod = available.includes(requestedLod) ? requestedLod : available[available.length - 1]
+  const url = await findTilesetUrlForType(muniCode, actualLod, typeName)
+  return { url, actualLod }
+}
+
+/** 選択範囲の自治体のうち、各レイヤーの3D Tilesが含まれるかを返す。 */
+export async function getLayerAvailability(bounds: {
+  west: number
+  south: number
+  east: number
+  north: number
+}): Promise<Record<LayerType, boolean>> {
+  const muniCodes = await resolveMuniCodes(bounds)
+  const [brid, tran] = await Promise.all([getLayerMuniCodes('brid'), getLayerMuniCodes('tran')])
+  const covered = (codes: Set<string>): boolean => muniCodes.some((code) => codes.has(code))
+  return { brid: covered(brid), tran: covered(tran) }
 }
 
 export async function getAvailableLods(bounds: {

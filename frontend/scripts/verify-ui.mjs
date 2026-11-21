@@ -29,6 +29,7 @@ Options:
   --export                        preview 後にエクスポートを実行
   --export-out <path>             エクスポート先 (既定: .screenshots/export-<timestamp>)
   --split                         分割印刷パラメータ（openBottom + splitAtGround）で確認
+  --layers <brid,tran>            橋梁・道路の重ね表示をONにして確認 (preview)
   --engrave                       刻印パラメータで確認（パネル・面プレビュー・エクスポートのメタデータ）
   --fail-on-console               console.error を失敗扱いにする
   --base-url <url>                既定: http://localhost:5173
@@ -95,6 +96,7 @@ async function main() {
         export: { type: 'boolean', default: false },
         split: { type: 'boolean', default: false },
         engrave: { type: 'boolean', default: false },
+        layers: { type: 'string' },
         'export-out': { type: 'string' },
         'fail-on-console': { type: 'boolean', default: false },
         'base-url': { type: 'string', default: 'http://localhost:5173' },
@@ -181,6 +183,7 @@ async function main() {
     engravingOverflowStroke: null,
     engravingViewApi: null,
     engravingMetadata: null,
+    layers: null,
     durationMs: 0,
     error: null,
   }
@@ -400,6 +403,60 @@ async function main() {
         result.previewProfile = await page.evaluate(
           () => window.__previewLoadProfile ?? null,
         )
+      }
+
+      if (values.layers) {
+        // 橋梁・道路レイヤーの重ね表示をONにする。3Dデータが無い自治体ではスイッチが無効。
+        const toggles = { brid: 'bridges-toggle', tran: 'roads-toggle' }
+        const state = {}
+        const countTilesets = () =>
+          page.evaluate(() => {
+            const scene = window.__cesiumViewer?.scene
+            if (!scene) return null
+            let count = 0
+            scene.primitives?._primitives?.forEach?.((p) => {
+              if (p && p.asset) count += 1
+            })
+            return count
+          })
+
+        const beforeTilesets = await countTilesets()
+        for (const name of values.layers.split(',').map((s) => s.trim()).filter(Boolean)) {
+          const testId = toggles[name]
+          if (!testId) throw new Error(`不明な --layers: ${name}（brid,tran）`)
+          const toggle = page.locator(`[data-testid="${testId}"]`)
+          await toggle.waitFor({ state: 'attached', timeout })
+          const available = !(await toggle.isDisabled())
+          state[name] = { available }
+          if (!available) continue
+          if (!(await toggle.isChecked())) await toggle.click()
+          state[name].checked = await toggle.isChecked()
+        }
+        // レイヤーのタイル取得には完了通知が無いため、タイルセットの増加を待つ（上限つき）。
+        if (Object.values(state).some((s) => s.checked)) {
+          await page
+            .waitForFunction(
+              ({ before }) => {
+                const scene = window.__cesiumViewer?.scene
+                if (!scene) return true
+                let count = 0
+                scene.primitives?._primitives?.forEach?.((p) => {
+                  if (p && p.asset) count += 1
+                })
+                return before === null || count > before
+              },
+              { before: beforeTilesets },
+              { timeout: Math.min(timeout, 20000), polling: 250 },
+            )
+            .catch(() => {})
+          // 初回表示はタイルの中身が揃うまで時間がかかる。
+          await page.waitForTimeout(1500)
+        }
+        const afterTilesets = await countTilesets()
+        if (beforeTilesets !== null && afterTilesets !== null) {
+          state.addedTilesets = afterTilesets - beforeTilesets
+        }
+        result.layers = state
       }
 
       if (values.engrave) {

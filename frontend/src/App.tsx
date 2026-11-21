@@ -38,7 +38,7 @@ import { usePreviewQuality } from './hooks/usePreviewQuality'
 import type { SelectionBounds } from './lib/selectionBounds'
 import { useDeveloperMode } from './hooks/useDeveloperMode'
 import type { PipelineState } from './types/pipeline'
-import { getAvailableLods, type Lod } from './lib/catalogApi'
+import { getAvailableLods, getLayerAvailability, type LayerType, type Lod } from './lib/catalogApi'
 import {
   adaptiveTerrainGridSize,
   boundsMaxDimMeters,
@@ -282,6 +282,14 @@ function App() {
   const [buildingsVisible, setBuildingsVisible] = useState(true)
   // 3Dプレビューの影表示ON/OFF（サイドパネルのトグル）。
   const [shadowsVisible, setShadowsVisible] = useState(true)
+  // 3Dプレビューの橋梁・道路の重ね表示ON/OFF（サイドパネルのトグル）。
+  const [bridgesVisible, setBridgesVisible] = useState(false)
+  const [roadsVisible, setRoadsVisible] = useState(false)
+  // 選択範囲の自治体が橋梁・道路の3Dデータを整備しているか。
+  const [layerAvailability, setLayerAvailability] = useState<Record<LayerType, boolean>>({
+    brid: false,
+    tran: false,
+  })
   const { isDevMode } = useDeveloperMode()
 
   const [manualCoords, setManualCoords] = useState({
@@ -460,6 +468,28 @@ function App() {
       .catch(() => {
         setAvailableLods(['lod1', 'lod2'])
       })
+  }, [selectionBounds])
+
+  // 選択範囲に橋梁・道路の3Dデータがあるかを調べ、未整備ならトグルをOFFに戻す。
+  useEffect(() => {
+    if (!selectionBounds) {
+      setLayerAvailability({ brid: false, tran: false })
+      return
+    }
+    let cancelled = false
+    getLayerAvailability(selectionBounds)
+      .then((availability) => {
+        if (cancelled) return
+        setLayerAvailability(availability)
+        if (!availability.brid) setBridgesVisible(false)
+        if (!availability.tran) setRoadsVisible(false)
+      })
+      .catch(() => {
+        if (!cancelled) setLayerAvailability({ brid: false, tran: false })
+      })
+    return () => {
+      cancelled = true
+    }
   }, [selectionBounds])
 
   useEffect(() => {
@@ -1442,6 +1472,8 @@ function App() {
                 onTerrainResolutionBoostChange={setTerrainResolutionBoost}
                 buildingsVisible={buildingsVisible}
                 onBuildingsVisibleChange={setBuildingsVisible}
+                bridgesVisible={bridgesVisible}
+                roadsVisible={roadsVisible}
                 shadowsVisible={shadowsVisible}
                 onBusyChange={setPreviewBusy}
                 engraving={parameters.engraving.enabled ? parameters.engraving : null}
@@ -1711,6 +1743,12 @@ function App() {
               autoTerrainGridSize={autoTerrainGridSize}
               buildingsVisible={buildingsVisible}
               onBuildingsVisibleChange={setBuildingsVisible}
+              bridgesVisible={bridgesVisible}
+              onBridgesVisibleChange={setBridgesVisible}
+              bridgesAvailable={layerAvailability.brid}
+              roadsVisible={roadsVisible}
+              onRoadsVisibleChange={setRoadsVisible}
+              roadsAvailable={layerAvailability.tran}
               shadowsVisible={shadowsVisible}
               onShadowsVisibleChange={setShadowsVisible}
               previewQuality={previewQuality.tier}
@@ -1740,6 +1778,12 @@ function App() {
                 autoTerrainGridSize={autoTerrainGridSize}
                 buildingsVisible={buildingsVisible}
                 onBuildingsVisibleChange={setBuildingsVisible}
+                bridgesVisible={bridgesVisible}
+                onBridgesVisibleChange={setBridgesVisible}
+                bridgesAvailable={layerAvailability.brid}
+                roadsVisible={roadsVisible}
+                onRoadsVisibleChange={setRoadsVisible}
+                roadsAvailable={layerAvailability.tran}
                 shadowsVisible={shadowsVisible}
                 onShadowsVisibleChange={setShadowsVisible}
                 previewQuality={previewQuality.tier}

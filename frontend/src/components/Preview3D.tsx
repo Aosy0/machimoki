@@ -53,7 +53,10 @@ import type { PipelineState } from '../types/pipeline'
 import {
   resolveMuniCodes,
   findBestTilesetUrl,
+  findLayerTilesetUrl,
   getCoverageDetails,
+  LAYER_KEYS,
+  type LayerType,
   type Lod,
 } from '../lib/catalogApi'
 import {
@@ -225,6 +228,53 @@ function createBuildingCustomShader(color: Color): CustomShader {
       }
     `,
   })
+}
+
+/**
+ * 橋梁・道路レイヤーの表示設定。
+ * 道路（tran）は地表と同一面に載るため、Zファイトを避けてわずかに持ち上げる。
+ */
+const LAYER_LIFT_METERS: Record<LayerType, number> = { brid: 0, tran: 0.3 }
+const LAYER_COLORS: Record<LayerType, string> = { brid: '#8fa3ad', tran: '#7d7d7d' }
+
+function layerColor(layer: LayerType): Color {
+  return Color.fromCssColorString(LAYER_COLORS[layer])
+}
+
+/** レイヤーのタイルセットを持ち上げる modelMatrix（持ち上げ不要なら undefined）。 */
+function layerModelMatrix(bounds: SelectionBounds, layer: LayerType): Matrix4 | undefined {
+  const lift = LAYER_LIFT_METERS[layer]
+  if (lift === 0) return undefined
+  const center = Cartesian3.fromDegrees(
+    (bounds.west + bounds.east) / 2,
+    (bounds.south + bounds.north) / 2,
+    0,
+  )
+  // 地表面の法線はほぼ位置ベクトルの向きと一致する（持ち上げ量は1m未満）。
+  const up = Cartesian3.normalize(center, new Cartesian3())
+  return Matrix4.fromTranslation(Cartesian3.multiplyByScalar(up, lift, new Cartesian3()))
+}
+
+/**
+ * Cesium3DTileset の clippingPlanes はタイルセット原点（ルート bounding sphere 中心）の
+ * ENU フレームで解釈される。createGlobeClippingPlanes は選択範囲中心の ENU を
+ * modelMatrix に持つため、原点行列の逆行列を前置してフレームを合わせる。
+ */
+function layerClippingPlanes(
+  tileset: Cesium3DTileset,
+  bounds: SelectionBounds,
+): ClippingPlaneCollection {
+  const planes = createGlobeClippingPlanes(bounds)
+  const origin = (tileset as unknown as { clippingPlanesOriginMatrix?: Matrix4 })
+    .clippingPlanesOriginMatrix
+  if (origin) {
+    planes.modelMatrix = Matrix4.multiply(
+      Matrix4.inverse(origin, new Matrix4()),
+      planes.modelMatrix,
+      new Matrix4(),
+    )
+  }
+  return planes
 }
 
 function clearGlobeClippingPlanes(globe: {
@@ -679,6 +729,10 @@ interface Preview3DProps {
   buildingsVisible?: boolean
   /** 建物表示のON/OFF変更をAppへ通知する（バナーの切替ボタン用）。 */
   onBuildingsVisibleChange?: (visible: boolean) => void
+  /** 橋梁モデル（PLATEAU brid）の重ね表示。 */
+  bridgesVisible?: boolean
+  /** 道路モデル（PLATEAU tran）の重ね表示。 */
+  roadsVisible?: boolean
   /** 影の表示ON/OFF（サイドパネルのトグル）。 */
   shadowsVisible?: boolean
   /**
@@ -768,6 +822,8 @@ export default function Preview3D({
   onTerrainResolutionBoostChange,
   buildingsVisible = true,
   onBuildingsVisibleChange,
+  bridgesVisible = false,
+  roadsVisible = false,
   shadowsVisible = true,
   onBusyChange,
   splitAtGround = false,
@@ -1005,6 +1061,12 @@ export default function Preview3D({
   const fpsWarningEnabledRef = useRef(true)
   const buildingsVisibleRef = useRef(buildingsVisible)
   const prevBuildingsVisibleRef = useRef(buildingsVisible)
+  // 橋梁・道路レイヤー（建物タイルセットとは別に管理する）。
+  const layerTilesetsRef = useRef<Partial<Record<LayerType, Cesium3DTileset[]>>>({})
+  // レイヤーを構築した（構築中の）範囲+LOD。変わったら破棄して作り直す。
+  const layerLoadKeyRef = useRef<string | null>(null)
+  // レイヤーの表示トグル（完成形状の表示切替から復帰するときに使う）。
+  const layerVisibleRef = useRef<Partial<Record<LayerType, boolean>>>({})
 
   // 地形最高解像度ブーストの通知（App側の自動分割数表示・エクスポートに反映）
   useEffect(() => {
@@ -2759,6 +2821,125 @@ export default function Preview3D({
     baseRebuildNonce,
   ])
 
+  // 橋梁・道路レイヤーのタイルセットを破棄する。
+  const disposeLayerTilesets = (): void => {
+    const layerTilesets = layerTilesetsRef.current
+    layerTilesetsRef.current = {}
+    for (const layer of LAYER_KEYS) {
+      for (const ts of layerTilesets[layer] ?? []) {
+        try {
+          viewerRef.current?.scene.primitives.remove(ts)
+        } catch {
+          // 破棄済み・未登録は無視する。
+        }
+      }
+    }
+  }
+
+  // レイヤーの表示をトグル状態と完成形状の表示状態へ同期する。
+  const applyLayerVisibility = (base: boolean): void => {
+    for (const layer of LAYER_KEYS) {
+      const visible = base && layerVisibleRef.current[layer] === true
+      for (const ts of layerTilesetsRef.current[layer] ?? []) ts.show = visible
+    }
+  }
+
+  // 指定レイヤーのタイルセットを読み込む。3Dデータ未整備の自治体は飛ばす。
+  const loadLayerTilesets = async (
+    layer: LayerType,
+    bounds: SelectionBounds,
+    loadKey: string,
+  ): Promise<void> => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    // 空配列は「読み込み中」を表し、同じレイヤーの二重起動を防ぐ。
+    if (layerTilesetsRef.current[layer]) return
+    const tilesets: Cesium3DTileset[] = []
+    layerTilesetsRef.current[layer] = tilesets
+    const discard = (): void => {
+      if (layerTilesetsRef.current[layer] === tilesets) delete layerTilesetsRef.current[layer]
+      for (const ts of tilesets.splice(0)) {
+        try {
+          viewerRef.current?.scene.primitives.remove(ts)
+        } catch {
+          // 破棄済み・未登録は無視する。
+        }
+      }
+    }
+    try {
+      const muniCodes = await resolveMuniCodes(bounds)
+      if (layerLoadKeyRef.current !== loadKey) return
+      const targets = (
+        await Promise.all(muniCodes.map((code) => findLayerTilesetUrl(code, layer, lod)))
+      ).filter((target): target is { url: string; actualLod: Lod } => target !== null)
+      const modelMatrix = layerModelMatrix(bounds, layer)
+      for (const { url } of targets) {
+        if (layerLoadKeyRef.current !== loadKey) {
+          discard()
+          return
+        }
+        const tileset = await Cesium3DTileset.fromUrl(url, {
+          modelMatrix,
+          // 橋梁・道路は面データで葉タイルが数百枚ある。建物と同じ最精細指定だと
+          // 全葉タイルの取得が終わるまで何も出ないため、表示に十分な精度に留める。
+          maximumScreenSpaceError: 16,
+          cacheBytes: 128 * 1024 * 1024,
+          maximumCacheOverflowBytes: 64 * 1024 * 1024,
+          cullWithChildrenBounds: true,
+        })
+        if (layerLoadKeyRef.current !== loadKey) {
+          tileset.destroy()
+          discard()
+          return
+        }
+        viewer.scene.primitives.add(tileset)
+        tilesets.push(tileset)
+        tileset.show = layerVisibleRef.current[layer] === true && !finalShapeActiveRef.current
+        tileset.customShader = createBuildingCustomShader(layerColor(layer))
+        // 橋梁・道路のbatchTableは矩形属性を持たないため、範囲外をGPUでクリップする。
+        tileset.clippingPlanes = layerClippingPlanes(tileset, bounds)
+      }
+      viewer.scene.requestRender()
+    } catch (err) {
+      console.warn('[Preview3D] Failed to load layer tileset:', layer, err)
+      // 1枚も載っていなければ次の機会に再試行できるようエントリを消す。
+      if (tilesets.length === 0) discard()
+    }
+  }
+
+  // 橋梁・道路レイヤーの読み込みと表示切替。
+  // トグルOFFは表示だけを落とし、読み込み済みのタイルは再取得しない。
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    layerVisibleRef.current = { brid: bridgesVisible, tran: roadsVisible }
+
+    const bounds = selectionBounds
+    const loadKey = bounds
+      ? `${bounds.west},${bounds.south},${bounds.east},${bounds.north}|${lod}`
+      : null
+    if (layerLoadKeyRef.current !== loadKey) {
+      disposeLayerTilesets()
+      layerLoadKeyRef.current = loadKey
+    }
+
+    if (bounds) {
+      for (const layer of LAYER_KEYS) {
+        const visible = layerVisibleRef.current[layer] === true
+        const loaded = layerTilesetsRef.current[layer]
+        if (!loaded && visible) {
+          void loadLayerTilesets(layer, bounds, loadKey as string)
+        } else if (loaded) {
+          for (const ts of loaded) ts.show = visible && !finalShapeActiveRef.current
+        }
+      }
+    }
+    viewer.scene.requestRender()
+  }, [selectionBounds, lod, bridgesVisible, roadsVisible])
+
+  // アンマウント時はレイヤーのタイルセットも破棄する。
+  useEffect(() => () => disposeLayerTilesets(), [])
+
   // 最終形状プレビューの破棄（プリミティブの remove & destroy）。
   // 分割表示時は2プリミティブ、非分割時は単体を破棄する。
   const disposeFinalShapePrimitive = (): void => {
@@ -3413,6 +3594,7 @@ export default function Preview3D({
     viewer.scene.globe.show = false
     // 下から見られるよう衝突判定を外す（地形なしのグローブ状態と同じ扱い）。
     viewer.scene.screenSpaceCameraController.enableCollisionDetection = false
+    applyLayerVisibility(false)
     viewer.scene.requestRender()
   }
 
@@ -3428,6 +3610,7 @@ export default function Preview3D({
     }
     viewer.scene.globe.show = !includeTerrain
     viewer.scene.screenSpaceCameraController.enableCollisionDetection = true
+    applyLayerVisibility(true)
     viewer.scene.requestRender()
   }
 
@@ -4548,7 +4731,9 @@ export default function Preview3D({
       requestAnimationFrame(() => {
         hoverRafScheduled = false
         if (handler.isDestroyed()) return
-        const feature = asTileFeature(viewer.scene.pick(pos))
+        // 橋梁・道路のフィーチャは建物として扱わない（除外・ハイライトの対象外）。
+        const picked = asTileFeature(viewer.scene.pick(pos))
+        const feature = picked && tilesetsRef.current.includes(picked.tileset) ? picked : null
         if (feature === hoveredFeatureRef.current) return
         setHoveredFeature(feature && feature.show ? feature : null)
         // 刻印モード中はカーソルを grab/default で管理する（上書きしない）。
@@ -4562,6 +4747,8 @@ export default function Preview3D({
       if (handler.isDestroyed()) return
       const feature = asTileFeature(viewer.scene.pick(click.position))
       if (!feature) return
+      // 橋梁・道路のクリックは建物の除外に使わない。
+      if (!tilesetsRef.current.includes(feature.tileset)) return
       const id = getBuildingId(feature)
       if (!id || excludedIdsRef.current.has(id)) return
       canvas.style.cursor = 'default'

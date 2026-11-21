@@ -51,6 +51,16 @@ interface ParameterPanelProps {
   autoTerrainGridSize?: number
   buildingsVisible: boolean
   onBuildingsVisibleChange: (visible: boolean) => void
+  /** 橋梁モデル（PLATEAU brid）の重ね表示。 */
+  bridgesVisible: boolean
+  onBridgesVisibleChange: (visible: boolean) => void
+  /** 選択範囲の自治体が橋梁モデルを整備しているか。 */
+  bridgesAvailable: boolean
+  /** 道路モデル（PLATEAU tran）の重ね表示。 */
+  roadsVisible: boolean
+  onRoadsVisibleChange: (visible: boolean) => void
+  /** 選択範囲の自治体が道路モデルを整備しているか。 */
+  roadsAvailable: boolean
   /** 影の表示ON/OFF。 */
   shadowsVisible: boolean
   onShadowsVisibleChange: (visible: boolean) => void
@@ -232,6 +242,12 @@ function ParameterPanel({
   autoTerrainGridSize = 128,
   buildingsVisible,
   onBuildingsVisibleChange,
+  bridgesVisible,
+  onBridgesVisibleChange,
+  bridgesAvailable,
+  roadsVisible,
+  onRoadsVisibleChange,
+  roadsAvailable,
   shadowsVisible,
   onShadowsVisibleChange,
   mobile = false,
@@ -508,6 +524,42 @@ function ParameterPanel({
           </div>
 
           <Switch checked={buildingsVisible} onChange={onBuildingsVisibleChange} label="建物" />
+
+          <div style={hintRowStyle}>
+            <div style={hintRowMainStyle}>
+              <Switch
+                checked={bridgesVisible}
+                onChange={onBridgesVisibleChange}
+                label="橋"
+                disabled={!bridgesAvailable}
+                testId="bridges-toggle"
+                describedBy={bridgesAvailable ? undefined : idOf('bridges-reason')}
+              />
+            </div>
+            {!bridgesAvailable && (
+              <Hint id={idOf('bridges-reason')} label="橋を選べない理由">
+                この範囲の自治体は橋梁モデル（3Dデータ）を整備していません
+              </Hint>
+            )}
+          </div>
+
+          <div style={hintRowStyle}>
+            <div style={hintRowMainStyle}>
+              <Switch
+                checked={roadsVisible}
+                onChange={onRoadsVisibleChange}
+                label="道路"
+                disabled={!roadsAvailable}
+                testId="roads-toggle"
+                describedBy={roadsAvailable ? undefined : idOf('roads-reason')}
+              />
+            </div>
+            {!roadsAvailable && (
+              <Hint id={idOf('roads-reason')} label="道路を選べない理由">
+                この範囲の自治体は道路モデル（3Dデータ）を整備していません
+              </Hint>
+            )}
+          </div>
 
           <div style={hintRowStyle}>
             <div style={hintRowMainStyle}>
