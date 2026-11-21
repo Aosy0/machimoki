@@ -7,7 +7,7 @@ import { WebIO } from '@gltf-transform/core'
 import { KHRDracoMeshCompression } from '@gltf-transform/extensions'
 import type { Accessor, Primitive } from '@gltf-transform/core'
 import type { Bounds, LayerType, Lod, RawMesh } from './types.js'
-import { findBestTilesetUrl, resolveMuniCodes } from './catalog.js'
+import { findBestTilesetUrl, findLayerTilesetUrl, resolveMuniCodes } from './catalog.js'
 
 let dracoDecoderPromise: Promise<unknown> | null = null
 
@@ -558,78 +558,54 @@ function primitiveToRawMesh(
 }
 
 export interface BuildLayerMeshesOptions {
-  /** 要求 LOD。未指定ならその自治体で最も詳細な LOD。 */
+  /** 要求 LOD。未指定なら lod3（無ければ公開されている最も詳細な LOD）。 */
   lod?: Lod
 }
 
-/**
- * 橋梁・道路レイヤーのメッシュを選択範囲内のタイルから取得する。
- * 座標系は buildBuildingMeshes と同じ（選択範囲中心の ENU、実寸メートル、
- * x=東, y=上, z=南）。レイヤー未整備なら空配列。
- */
-export async function buildLayerMeshes(
-  _bounds: Bounds,
-  _layer: LayerType,
-  _options: BuildLayerMeshesOptions = {},
-): Promise<RawMesh[]> {
-  throw new Error('buildLayerMeshes is not implemented')
+/** 1つの tileset から範囲内タイルの取得を予約したもの。 */
+interface TilesetTileBatch {
+  /** 取得したタイルのメッシュ（pending の完了後に確定する）。 */
+  meshes: RawMesh[]
+  /** タイル単位の取得処理。 */
+  pending: Promise<void>[]
 }
 
-export async function buildBuildingMeshes(
+/**
+ * tileset を走査し、選択範囲と交差するタイルの取得を開始する。
+ * 呼び出し側は pending をすべて待ってから meshes を読む。
+ * tileset のロードに失敗した場合は警告して空のバッチを返す。
+ */
+async function collectTilesetTiles(
+  tilesetUrl: string,
   bounds: Bounds,
-  lod: Lod,
+  invCenterMatrix: Matrix4,
   excludedGmlIds?: string[],
-): Promise<RawMesh[]> {
-  const centerLon = (bounds.west + bounds.east) / 2
-  const centerLat = (bounds.south + bounds.north) / 2
+): Promise<TilesetTileBatch> {
+  const batch: TilesetTileBatch = { meshes: [], pending: [] }
 
-  const muniCodes = await resolveMuniCodes(bounds)
+  let tileset: Cesium3DTileset
+  try {
+    tileset = await Cesium3DTileset.fromUrl(tilesetUrl)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn(`[meshBuilder] Failed to load tileset ${tilesetUrl}: ${message}`)
+    return batch
+  }
 
-  const centerCartesian = Cartesian3.fromDegrees(centerLon, centerLat, 0)
-  const centerMatrix = Transforms.eastNorthUpToFixedFrame(centerCartesian)
-  const invCenterMatrix = Matrix4.inverse(centerMatrix, new Matrix4())
+  const rootTile = tileset.root as unknown as TileLike
+  const tilesetMatrix = (tileset as any).modelMatrix ?? Matrix4.IDENTITY
 
-  const resultMeshes: RawMesh[] = []
-  const tilePromises: Promise<void>[] = []
+  traverseTiles(rootTile, (tile) => {
+    if (!tileIntersectsBounds(tile, bounds)) return
 
-  for (const muniCode of muniCodes) {
-    let tilesetUrl: string
-    try {
-      const best = await findBestTilesetUrl(muniCode, lod)
-      tilesetUrl = best.url
-      if (best.actualLod !== lod) {
-        console.warn(
-          `[meshBuilder] muniCode=${muniCode} は ${lod} 未整備のため ${best.actualLod} で取得します`,
-        )
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.warn(`[meshBuilder] Failed to find tileset for muniCode=${muniCode}: ${message}`)
-      continue
-    }
+    const contentUrl = getTileContentUrl(tile)
+    if (!contentUrl) return
 
-    let tileset: Cesium3DTileset
-    try {
-      tileset = await Cesium3DTileset.fromUrl(tilesetUrl)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.warn(`[meshBuilder] Failed to load tileset ${tilesetUrl}: ${message}`)
-      continue
-    }
+    const tileLocalMatrix = tile.computedTransform ?? Matrix4.IDENTITY
+    const tileMatrix = Matrix4.multiply(tilesetMatrix, tileLocalMatrix, new Matrix4())
 
-    const rootTile = tileset.root as unknown as TileLike
-    const tilesetMatrix = (tileset as any).modelMatrix ?? Matrix4.IDENTITY
-
-    traverseTiles(rootTile, (tile) => {
-      if (!tileIntersectsBounds(tile, bounds)) return
-
-      const contentUrl = getTileContentUrl(tile)
-      if (!contentUrl) return
-
-      const tileLocalMatrix = tile.computedTransform ?? Matrix4.IDENTITY
-      const tileMatrix = Matrix4.multiply(tilesetMatrix, tileLocalMatrix, new Matrix4())
-
-      const promise = (async () => {
+    batch.pending.push(
+      (async () => {
         try {
           const response = await fetch(contentUrl)
           if (!response.ok) {
@@ -649,17 +625,104 @@ export async function buildBuildingMeshes(
             invCenterMatrix,
             excludedBatchIds,
           )
-          resultMeshes.push(...meshes)
+          batch.meshes.push(...meshes)
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           console.warn(`[meshBuilder] Failed to load tile ${contentUrl}: ${message}`)
         }
-      })()
+      })(),
+    )
+  })
 
-      tilePromises.push(promise)
-    })
+  return batch
+}
+
+async function awaitTilesetTiles(batches: TilesetTileBatch[]): Promise<RawMesh[]> {
+  await Promise.all(batches.flatMap((batch) => batch.pending))
+  return batches.flatMap((batch) => batch.meshes)
+}
+
+/**
+ * 選択範囲中心の ENU（x=東, y=上, z=南, 実寸メートル）への変換行列を返す。
+ */
+function createInvCenterMatrix(bounds: Bounds): Matrix4 {
+  const centerLon = (bounds.west + bounds.east) / 2
+  const centerLat = (bounds.south + bounds.north) / 2
+  const centerCartesian = Cartesian3.fromDegrees(centerLon, centerLat, 0)
+  const centerMatrix = Transforms.eastNorthUpToFixedFrame(centerCartesian)
+  return Matrix4.inverse(centerMatrix, new Matrix4())
+}
+
+/**
+ * 橋梁・道路レイヤーのメッシュを選択範囲内のタイルから取得する。
+ * 座標系は buildBuildingMeshes と同じ（選択範囲中心の ENU、実寸メートル、
+ * x=東, y=上, z=南）。要求 LOD が未整備なら公開されている最も詳細な LOD へ
+ * フォールバックする。レイヤー未整備なら空配列。
+ */
+export async function buildLayerMeshes(
+  bounds: Bounds,
+  layer: LayerType,
+  options: BuildLayerMeshesOptions = {},
+): Promise<RawMesh[]> {
+  const requestedLod = options.lod ?? 'lod3'
+  const muniCodes = await resolveMuniCodes(bounds)
+  const invCenterMatrix = createInvCenterMatrix(bounds)
+
+  const batches: TilesetTileBatch[] = []
+
+  for (const muniCode of muniCodes) {
+    let found: { url: string; actualLod: Lod } | null
+    try {
+      found = await findLayerTilesetUrl(muniCode, layer, requestedLod)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(
+        `[meshBuilder] Failed to find ${layer} tileset for muniCode=${muniCode}: ${message}`,
+      )
+      continue
+    }
+    if (!found) continue
+
+    if (found.actualLod !== requestedLod) {
+      console.warn(
+        `[meshBuilder] muniCode=${muniCode} のレイヤー ${layer} は ${requestedLod} 未整備のため ${found.actualLod} で取得します`,
+      )
+    }
+
+    batches.push(await collectTilesetTiles(found.url, bounds, invCenterMatrix))
   }
 
-  await Promise.all(tilePromises)
-  return resultMeshes
+  return awaitTilesetTiles(batches)
+}
+
+export async function buildBuildingMeshes(
+  bounds: Bounds,
+  lod: Lod,
+  excludedGmlIds?: string[],
+): Promise<RawMesh[]> {
+  const muniCodes = await resolveMuniCodes(bounds)
+  const invCenterMatrix = createInvCenterMatrix(bounds)
+
+  const batches: TilesetTileBatch[] = []
+
+  for (const muniCode of muniCodes) {
+    let tilesetUrl: string
+    try {
+      const best = await findBestTilesetUrl(muniCode, lod)
+      tilesetUrl = best.url
+      if (best.actualLod !== lod) {
+        console.warn(
+          `[meshBuilder] muniCode=${muniCode} は ${lod} 未整備のため ${best.actualLod} で取得します`,
+        )
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(`[meshBuilder] Failed to find tileset for muniCode=${muniCode}: ${message}`)
+      continue
+    }
+
+    batches.push(await collectTilesetTiles(tilesetUrl, bounds, invCenterMatrix, excludedGmlIds))
+  }
+
+  return awaitTilesetTiles(batches)
 }
