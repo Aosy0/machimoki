@@ -329,6 +329,94 @@ input[type="checkbox"]:not(.ui-switch__input) {
   background-image: radial-gradient(circle closest-side, var(--text-muted) 92%, transparent);
 }
 
+/*
+ * 「?」から押せない理由を開く toggletip。ホバーでは開かず、クリックとキーで開閉する。
+ */
+.ui-hint {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.ui-hint__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ui-hint__button:hover,
+.ui-hint__button[aria-expanded='true'] {
+  color: var(--text);
+}
+
+.ui-hint__tip {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  right: 0;
+  width: max-content;
+  max-width: 216px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-solid);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.ui-hint__tip[hidden] {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .ui-hint__button {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+/*
+ * 折りたたむ設定。見出しと同じ大きさの summary にして、開閉は既存の段組みに任せる。
+ */
+.ui-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 16px;
+  font-weight: 500;
+  list-style: none;
+  cursor: pointer;
+}
+
+.ui-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ui-details__chevron {
+  color: var(--text-dim);
+  transition: transform 150ms ease;
+}
+
+.ui-details[open] > summary .ui-details__chevron {
+  transform: rotate(180deg);
+}
+
+.ui-details[open] > summary {
+  margin-bottom: 12px;
+}
+
 .help-detail-body {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;

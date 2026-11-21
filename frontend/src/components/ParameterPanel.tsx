@@ -1,5 +1,6 @@
 import React, { useId } from 'react'
 import Icon from './ui/Icon'
+import Hint from './ui/Hint'
 import Switch from './ui/Switch'
 import {
   BASE_EXTENSION_MM,
@@ -70,15 +71,35 @@ const labelStyle: React.CSSProperties = {
   color: 'var(--text-dim)',
 }
 
+/** 入力の直上に置く見出し。右端には「?」などの補助を並べられる。 */
+const fieldHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  marginBottom: 8,
+}
+
+const fieldLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: 'var(--text-dim)',
+}
+
+/** 行の本体を伸ばし、右端の補助（「?」）の位置をそろえる。 */
+const hintRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+}
+
+const hintRowMainStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+}
+
+// 見た目は index.css の select に任せ、幅だけそろえる。
 const selectStyle: React.CSSProperties = {
   width: '100%',
-  height: 32,
-  padding: '0 8px',
-  background: 'var(--border)',
-  border: '1px solid var(--border-strong)',
-  borderRadius: 'var(--radius-control)',
-  color: 'var(--text)',
-  fontSize: 14,
 }
 
 const sectionStyle: React.CSSProperties = {
@@ -99,11 +120,6 @@ const colorRowStyle: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 8,
   height: 32,
-}
-
-const colorLabelStyle: React.CSSProperties = {
-  ...labelStyle,
-  marginBottom: 0,
 }
 
 const swatchStyle: React.CSSProperties = {
@@ -133,14 +149,47 @@ const valueStyle: React.CSSProperties = {
   fontVariantNumeric: 'tabular-nums',
 }
 
+const noteStyle: React.CSSProperties = {
+  margin: '4px 0 0',
+  fontSize: 12,
+  color: 'var(--text-dim)',
+}
+
+const flatNoteStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 12,
+  color: 'var(--text-dim)',
+}
+
+const warnNoteStyle: React.CSSProperties = {
+  ...noteStyle,
+  color: 'var(--warn)',
+}
+
+function gridButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    flex: '1 1 0',
+    height: 32,
+    padding: 0,
+    fontSize: 13,
+    fontVariantNumeric: 'tabular-nums',
+    borderRadius: 'var(--radius-control)',
+    background: active ? 'var(--border)' : 'transparent',
+    color: active ? 'var(--text)' : 'var(--text-dim)',
+    border: active ? '1px solid var(--border-strong)' : '1px solid var(--border)',
+    fontWeight: active ? 500 : 400,
+  }
+}
+
 interface CheckRowProps {
   checked: boolean
   onChange: (checked: boolean) => void
   label: string
   disabled?: boolean
+  describedBy?: string
 }
 
-function CheckRow({ checked, onChange, label, disabled = false }: CheckRowProps) {
+function CheckRow({ checked, onChange, label, disabled = false, describedBy }: CheckRowProps) {
   return (
     <label
       style={{
@@ -157,6 +206,7 @@ function CheckRow({ checked, onChange, label, disabled = false }: CheckRowProps)
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-describedby={describedBy}
         onChange={(e) => onChange(e.target.checked)}
         style={{
           width: 16,
@@ -192,6 +242,7 @@ function ParameterPanel({
 }: ParameterPanelProps) {
   // ラベルと入力部品を関連付ける id の接頭辞。インスタンスごとに一意になる。
   const baseId = useId()
+  const idOf = (suffix: string) => `${baseId}-${suffix}`
 
   const handleChange = <K extends keyof Parameters>(key: K, value: Parameters[K]) => {
     onChange({ ...parameters, [key]: value })
@@ -224,6 +275,10 @@ function ParameterPanel({
   // 軽量画質では影そのものを描画しないため、トグルは無効（OFF表示）にする。
   const shadowsAvailable = PREVIEW_QUALITY_PROFILES[previewQuality].shadows
   const shadowsOn = shadowsAvailable && shadowsVisible
+
+  const missingLods = LOD_ORDER.filter((lod) => !availableLods.includes(lod))
+  const missingLodText = missingLods.map((lod) => lodLabels[lod]).join('・')
+  const elevationLocked = parameters.reflectActualElevation
 
   return (
     <div
@@ -302,101 +357,13 @@ function ParameterPanel({
         </div>
 
         <section style={sectionStyle}>
-          <h4 style={groupTitleStyle}>表示</h4>
-          <div>
-            <label htmlFor={`${baseId}-preview-quality`} style={labelStyle}>
-              プレビュー画質
-            </label>
-            <select
-              id={`${baseId}-preview-quality`}
-              data-testid="preview-quality-select"
-              value={previewQualityOverride}
-              onChange={(e) =>
-                onPreviewQualityOverrideChange(e.target.value as PreviewQualityOverride)
-              }
-              style={selectStyle}
-            >
-              <option value="auto">自動（{PREVIEW_QUALITY_PROFILES[previewQuality].label}）</option>
-              <option value="high">高画質</option>
-              <option value="medium">標準</option>
-              <option value="low">軽量</option>
-            </select>
-          </div>
-
-          <div style={colorRowStyle}>
-            <label htmlFor={`${baseId}-building-color`} style={colorLabelStyle}>
-              建物色
-            </label>
-            <input
-              id={`${baseId}-building-color`}
-              type="color"
-              value={parameters.buildingColor}
-              onChange={(e) => handleChange('buildingColor', e.target.value)}
-              style={swatchStyle}
-            />
-          </div>
-
-          <div style={colorRowStyle}>
-            <label htmlFor={`${baseId}-terrain-color`} style={colorLabelStyle}>
-              地形色
-            </label>
-            <input
-              id={`${baseId}-terrain-color`}
-              type="color"
-              value={parameters.terrainColor}
-              onChange={(e) => handleChange('terrainColor', e.target.value)}
-              style={swatchStyle}
-            />
-          </div>
-
-          <Switch checked={buildingsVisible} onChange={onBuildingsVisibleChange} label="建物" />
-
-          <div>
-            <Switch
-              checked={shadowsOn}
-              onChange={onShadowsVisibleChange}
-              label="影"
-              disabled={!shadowsAvailable}
-              testId="shadows-toggle"
-              describedBy={shadowsAvailable ? undefined : `${baseId}-shadows-note`}
-            />
-            {!shadowsAvailable && (
-              <p
-                id={`${baseId}-shadows-note`}
-                style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}
-              >
-                軽量画質では影を表示できません
-              </p>
-            )}
-          </div>
-
-          <div>
-            <Switch
-              checked={parameters.showTerrainImagery}
-              onChange={(checked) => handleChange('showTerrainImagery', checked)}
-              label="航空写真"
-              disabled={parameters.includeTerrain}
-              describedBy={parameters.includeTerrain ? `${baseId}-aerial-note` : undefined}
-            />
-            {parameters.includeTerrain && (
-              <p
-                id={`${baseId}-aerial-note`}
-                style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}
-              >
-                地形を含めると地面は模型になります
-              </p>
-            )}
-          </div>
-        </section>
-
-        <section style={sectionStyle}>
           <h4 style={groupTitleStyle}>出力</h4>
           <div>
-            <label htmlFor={`${baseId}-export-format`} style={labelStyle}>
+            <label htmlFor={idOf('export-format')} style={labelStyle}>
               形式
             </label>
             <select
-              id={`${baseId}-export-format`}
+              id={idOf('export-format')}
               value={parameters.exportFormat}
               onChange={(e) =>
                 handleChange('exportFormat', e.target.value as Parameters['exportFormat'])
@@ -410,28 +377,21 @@ function ParameterPanel({
           </div>
 
           <div>
-            <label htmlFor={`${baseId}-up-axis`} style={labelStyle}>
-              上方向の軸
-            </label>
+            <div style={fieldHeaderStyle}>
+              <label htmlFor={idOf('lod')} style={fieldLabelStyle}>
+                建物LOD
+              </label>
+              {missingLods.length > 0 && (
+                <Hint id={idOf('lod-reason')} label="選べないLODの理由">
+                  この範囲に {missingLodText} はありません
+                </Hint>
+              )}
+            </div>
             <select
-              id={`${baseId}-up-axis`}
-              value={parameters.upAxis}
-              onChange={(e) => handleChange('upAxis', e.target.value as Parameters['upAxis'])}
-              style={selectStyle}
-            >
-              <option value="z-up">Z軸上向き</option>
-              <option value="y-up">Y軸上向き</option>
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor={`${baseId}-lod`} style={labelStyle}>
-              建物LOD
-            </label>
-            <select
-              id={`${baseId}-lod`}
+              id={idOf('lod')}
               value={parameters.lod}
               onChange={(e) => handleChange('lod', e.target.value as Parameters['lod'])}
+              aria-describedby={missingLods.length > 0 ? idOf('lod-reason') : undefined}
               style={selectStyle}
             >
               {LOD_ORDER.map((lod) => (
@@ -441,258 +401,53 @@ function ParameterPanel({
               ))}
             </select>
             {parameters.lod !== 'lod1' && (
-              <p style={{ fontSize: 12, color: 'var(--warn)', margin: '4px 0 0' }}>
-                中庭などの開口部が造形できない場合があります
-              </p>
+              <p style={warnNoteStyle}>中庭などの開口部が造形できない場合があります</p>
             )}
           </div>
-
-          <CheckRow
-            checked={parameters.includeSpanningBuildings}
-            onChange={(checked) => handleChange('includeSpanningBuildings', checked)}
-            label="領域をまたぐ建物を含める"
-          />
         </section>
 
         <section style={sectionStyle}>
           <h4 style={groupTitleStyle}>地形</h4>
-
           <CheckRow
             checked={parameters.includeTerrain}
             onChange={(checked) => handleChange('includeTerrain', checked)}
             label="地形を含める"
           />
-
-          <div>
-            <label htmlFor={`${baseId}-terrain-thickness`} style={rangeLabelStyle}>
-              <span>地形厚み</span>
-              <span style={valueStyle}>{parameters.terrainThickness.toFixed(1)} mm</span>
-            </label>
-            <input
-              id={`${baseId}-terrain-thickness`}
-              type="range"
-              min={1}
-              max={50}
-              value={parameters.terrainThickness}
-              onChange={(e) => handleChange('terrainThickness', Number(e.target.value))}
-              disabled={parameters.reflectActualElevation || !parameters.includeTerrain}
-              style={{ width: '100%' }}
-              aria-valuetext={`${parameters.terrainThickness.toFixed(1)} mm`}
-            />
-          </div>
-
-          <CheckRow
-            checked={parameters.flattenBottom}
-            onChange={(checked) => handleChange('flattenBottom', checked)}
-            label="底面をフラット化"
-            disabled={parameters.reflectActualElevation || !parameters.includeTerrain}
-          />
-
-          <CheckRow
-            checked={parameters.reflectActualElevation}
-            onChange={(checked) => handleChange('reflectActualElevation', checked)}
-            label="実際の標高を反映する"
-            disabled={!parameters.includeTerrain}
-          />
-          {parameters.reflectActualElevation && parameters.includeTerrain && (
-            <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
-              谷などの低地は土台が厚くなり、材料と印刷時間が増えます
-            </p>
-          )}
-
-          <CheckRow
-            checked={parameters.openBottom}
-            onChange={handleOpenBottomChange}
-            label="底面を開口（中空シェル）"
-            disabled={!parameters.includeTerrain}
-          />
-
-          {parameters.openBottom && (
-            <div style={{ marginLeft: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div>
-                <label htmlFor={`${baseId}-shell-thickness`} style={rangeLabelStyle}>
-                  <span>シェル厚み</span>
-                  <span style={valueStyle}>{parameters.shellThickness.toFixed(1)} mm</span>
-                </label>
-                <input
-                  id={`${baseId}-shell-thickness`}
-                  type="range"
-                  min={0.8}
-                  max={Math.min(
-                    5,
-                    Math.max(0.8, parameters.terrainThickness - MIN_FRAME_HEIGHT_MM),
-                    Math.max(
-                      0.8,
-                      (parameters.terrainThickness - BASE_EXTENSION_MM) / FRAME_MITER_DEPTH_RATIO,
-                    ),
-                  )}
-                  step={0.1}
-                  value={parameters.shellThickness}
-                  onChange={(e) => handleChange('shellThickness', Number(e.target.value))}
-                  disabled={!parameters.includeTerrain}
-                  style={{ width: '100%' }}
-                  aria-valuetext={`${parameters.shellThickness.toFixed(1)} mm`}
-                />
-                {(parameters.terrainThickness - parameters.shellThickness < MIN_FRAME_HEIGHT_MM ||
-                  !hasMiterBase(parameters.terrainThickness, parameters.shellThickness)) && (
-                  <p style={{ fontSize: 12, color: 'var(--warn)', margin: '4px 0 0' }}>
-                    地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)} mm 以上、かつシェル厚み
-                    × {FRAME_MITER_DEPTH_RATIO} より大きい必要があります
-                  </p>
-                )}
-              </div>
-
-              <CheckRow
-                checked={parameters.hollowBuildings}
-                onChange={(checked) => handleChange('hollowBuildings', checked)}
-                label="建物内部も中空化"
-                disabled={!parameters.includeTerrain}
-              />
-
-              {parameters.hollowBuildings && parameters.includeTerrain && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'baseline',
-                      justifyContent: 'space-between',
-                      fontSize: 12,
-                      color: 'var(--text-dim)',
-                    }}
-                  >
-                    <span>内部高さ</span>
-                    <span style={valueStyle}>
-                      {Math.max(0, parameters.terrainThickness - parameters.shellThickness).toFixed(
-                        1,
-                      )}{' '}
-                      mm
-                    </span>
-                  </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
-                    内側にサポート材が必要です
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          <CheckRow
-            checked={parameters.splitAtGround}
-            onChange={handleSplitAtGroundChange}
-            label="土台と建物に分割"
-            disabled={!parameters.includeTerrain}
-          />
-          {parameters.splitAtGround && parameters.includeTerrain && (
-            <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>底面開口も自動でON</p>
-          )}
-
-          <div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'baseline',
-                justifyContent: 'space-between',
-                marginBottom: 8,
-              }}
-            >
-              <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>地形メッシュ解像度</span>
-              <span style={valueStyle}>
-                {parameters.terrainGridSize == null
-                  ? `自動 ${autoTerrainGridSize}分割`
-                  : `${parameters.terrainGridSize}分割`}
-              </span>
-            </div>
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button
-                type="button"
-                onClick={() => handleChange('terrainGridSize', null)}
-                disabled={!parameters.includeTerrain}
-                style={{
-                  flex: '1 1 0',
-                  height: 32,
-                  padding: 0,
-                  fontSize: 13,
-                  fontVariantNumeric: 'tabular-nums',
-                  borderRadius: 'var(--radius-control)',
-                  background:
-                    parameters.terrainGridSize == null && parameters.includeTerrain
-                      ? 'var(--border)'
-                      : 'transparent',
-                  color:
-                    parameters.terrainGridSize == null && parameters.includeTerrain
-                      ? 'var(--text)'
-                      : 'var(--text-dim)',
-                  border:
-                    parameters.terrainGridSize == null && parameters.includeTerrain
-                      ? '1px solid var(--border-strong)'
-                      : '1px solid var(--border)',
-                  fontWeight:
-                    parameters.terrainGridSize == null && parameters.includeTerrain ? 500 : 400,
-                }}
-              >
-                自動
-              </button>
-              {TERRAIN_GRID_PRESETS.map((preset) => {
-                const active = parameters.terrainGridSize === preset.value
-                return (
-                  <button
-                    key={preset.value}
-                    type="button"
-                    onClick={() => handleChange('terrainGridSize', preset.value)}
-                    disabled={!parameters.includeTerrain}
-                    style={{
-                      flex: '1 1 0',
-                      height: 32,
-                      padding: 0,
-                      fontSize: 13,
-                      fontVariantNumeric: 'tabular-nums',
-                      borderRadius: 'var(--radius-control)',
-                      background:
-                        active && parameters.includeTerrain ? 'var(--border)' : 'transparent',
-                      color:
-                        active && parameters.includeTerrain ? 'var(--text)' : 'var(--text-dim)',
-                      border:
-                        active && parameters.includeTerrain
-                          ? '1px solid var(--border-strong)'
-                          : '1px solid var(--border)',
-                      fontWeight: active && parameters.includeTerrain ? 500 : 400,
-                    }}
-                  >
-                    {preset.label}
-                  </button>
-                )
-              })}
-            </div>
-            <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: '4px 0 0' }}>
-              処理時間が増えます
-            </p>
-          </div>
         </section>
 
         <section style={sectionStyle}>
           <h4 style={groupTitleStyle}>刻印</h4>
-          <button
-            type="button"
-            data-testid="engraving-mode-button"
-            disabled={!parameters.includeTerrain}
-            onClick={onEnterEngravingMode}
-            style={{
-              width: '100%',
-              height: 32,
-              padding: '0 12px',
-              borderRadius: 'var(--radius-control)',
-              border: parameters.includeTerrain
-                ? '1px solid var(--border-strong)'
-                : '1px solid var(--border)',
-              background: 'transparent',
-              color: parameters.includeTerrain ? 'var(--text)' : 'var(--text-dim)',
-              fontSize: 14,
-              fontWeight: 500,
-              cursor: parameters.includeTerrain ? 'pointer' : 'not-allowed',
-            }}
-          >
-            {parameters.engraving.enabled ? '刻印を編集' : '刻印モードを開始'}
-          </button>
+          <div style={hintRowStyle}>
+            <div style={hintRowMainStyle}>
+              <button
+                type="button"
+                data-testid="engraving-mode-button"
+                disabled={!parameters.includeTerrain}
+                onClick={onEnterEngravingMode}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  padding: '0 12px',
+                  borderRadius: 'var(--radius-control)',
+                  border: parameters.includeTerrain
+                    ? '1px solid var(--border-strong)'
+                    : '1px solid var(--border)',
+                  background: 'transparent',
+                  color: parameters.includeTerrain ? 'var(--text)' : 'var(--text-dim)',
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: parameters.includeTerrain ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {parameters.engraving.enabled ? '刻印を編集' : '刻印モードを開始'}
+              </button>
+            </div>
+            {!parameters.includeTerrain && (
+              <Hint id={idOf('engraving-reason')} label="刻印モードにできない理由">
+                地形を含めないと刻印する面がありません
+              </Hint>
+            )}
+          </div>
           {parameters.engraving.enabled && (
             <button
               type="button"
@@ -714,10 +469,308 @@ function ParameterPanel({
               刻印を削除
             </button>
           )}
-          <p style={{ fontSize: 12, color: 'var(--text-dim)', margin: 0 }}>
-            {parameters.includeTerrain ? 'モード中は視点回転が固定されます' : '地形が必要です'}
-          </p>
+          {parameters.includeTerrain && (
+            <p style={flatNoteStyle}>モード中は視点回転が固定されます</p>
+          )}
         </section>
+
+        <section style={sectionStyle}>
+          <h4 style={groupTitleStyle}>表示</h4>
+          <div>
+            <label htmlFor={idOf('preview-quality')} style={labelStyle}>
+              プレビュー画質
+            </label>
+            <select
+              id={idOf('preview-quality')}
+              data-testid="preview-quality-select"
+              value={previewQualityOverride}
+              onChange={(e) =>
+                onPreviewQualityOverrideChange(e.target.value as PreviewQualityOverride)
+              }
+              style={selectStyle}
+            >
+              <option value="auto">自動（{PREVIEW_QUALITY_PROFILES[previewQuality].label}）</option>
+              <option value="high">高画質</option>
+              <option value="medium">標準</option>
+              <option value="low">軽量</option>
+            </select>
+          </div>
+
+          <Switch checked={buildingsVisible} onChange={onBuildingsVisibleChange} label="建物" />
+
+          <div style={hintRowStyle}>
+            <div style={hintRowMainStyle}>
+              <Switch
+                checked={shadowsOn}
+                onChange={onShadowsVisibleChange}
+                label="影"
+                disabled={!shadowsAvailable}
+                testId="shadows-toggle"
+                describedBy={shadowsAvailable ? undefined : idOf('shadows-reason')}
+              />
+            </div>
+            {!shadowsAvailable && (
+              <Hint id={idOf('shadows-reason')} label="影を表示できない理由">
+                軽量画質では影を描画しません
+              </Hint>
+            )}
+          </div>
+
+          <div style={hintRowStyle}>
+            <div style={hintRowMainStyle}>
+              <Switch
+                checked={parameters.showTerrainImagery}
+                onChange={(checked) => handleChange('showTerrainImagery', checked)}
+                label="航空写真"
+                disabled={parameters.includeTerrain}
+                describedBy={parameters.includeTerrain ? idOf('aerial-reason') : undefined}
+              />
+            </div>
+            {parameters.includeTerrain && (
+              <Hint id={idOf('aerial-reason')} label="航空写真を使えない理由">
+                地形を含めると地面は模型になり、地図は表示されません
+              </Hint>
+            )}
+          </div>
+        </section>
+
+        <details className="ui-details">
+          <summary>
+            詳細設定
+            <Icon name="chevron-down" size={16} className="ui-details__chevron" />
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label htmlFor={idOf('up-axis')} style={labelStyle}>
+                上方向の軸
+              </label>
+              <select
+                id={idOf('up-axis')}
+                value={parameters.upAxis}
+                onChange={(e) => handleChange('upAxis', e.target.value as Parameters['upAxis'])}
+                style={selectStyle}
+              >
+                <option value="z-up">Z軸上向き</option>
+                <option value="y-up">Y軸上向き</option>
+              </select>
+            </div>
+
+            <CheckRow
+              checked={parameters.includeSpanningBuildings}
+              onChange={(checked) => handleChange('includeSpanningBuildings', checked)}
+              label="領域をまたぐ建物を含める"
+            />
+
+            <div style={colorRowStyle}>
+              <label htmlFor={idOf('building-color')} style={fieldLabelStyle}>
+                建物色
+              </label>
+              <input
+                id={idOf('building-color')}
+                type="color"
+                value={parameters.buildingColor}
+                onChange={(e) => handleChange('buildingColor', e.target.value)}
+                style={swatchStyle}
+              />
+            </div>
+
+            <div style={colorRowStyle}>
+              <label htmlFor={idOf('terrain-color')} style={fieldLabelStyle}>
+                地形色
+              </label>
+              <input
+                id={idOf('terrain-color')}
+                type="color"
+                value={parameters.terrainColor}
+                onChange={(e) => handleChange('terrainColor', e.target.value)}
+                style={swatchStyle}
+              />
+            </div>
+
+            {parameters.includeTerrain && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+                <div>
+                  <div style={fieldHeaderStyle}>
+                    <label htmlFor={idOf('terrain-thickness')} style={fieldLabelStyle}>
+                      地形厚み
+                    </label>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={valueStyle}>{parameters.terrainThickness.toFixed(1)} mm</span>
+                      {elevationLocked && (
+                        <Hint id={idOf('thickness-reason')} label="地形厚みを指定できない理由">
+                          実際の標高を反映している間は、底面が標高に沿うため指定できません
+                        </Hint>
+                      )}
+                    </span>
+                  </div>
+                  <input
+                    id={idOf('terrain-thickness')}
+                    type="range"
+                    min={1}
+                    max={50}
+                    value={parameters.terrainThickness}
+                    onChange={(e) => handleChange('terrainThickness', Number(e.target.value))}
+                    disabled={elevationLocked}
+                    aria-describedby={elevationLocked ? idOf('thickness-reason') : undefined}
+                    style={{ width: '100%' }}
+                    aria-valuetext={`${parameters.terrainThickness.toFixed(1)} mm`}
+                  />
+                </div>
+
+                <div style={hintRowStyle}>
+                  <div style={hintRowMainStyle}>
+                    <CheckRow
+                      checked={parameters.flattenBottom}
+                      onChange={(checked) => handleChange('flattenBottom', checked)}
+                      label="底面をフラット化"
+                      disabled={elevationLocked}
+                      describedBy={elevationLocked ? idOf('flatten-reason') : undefined}
+                    />
+                  </div>
+                  {elevationLocked && (
+                    <Hint id={idOf('flatten-reason')} label="底面をフラット化できない理由">
+                      実際の標高を反映している間は、底面が標高に沿うため指定できません
+                    </Hint>
+                  )}
+                </div>
+
+                <CheckRow
+                  checked={parameters.reflectActualElevation}
+                  onChange={(checked) => handleChange('reflectActualElevation', checked)}
+                  label="実際の標高を反映する"
+                />
+                {parameters.reflectActualElevation && (
+                  <p style={flatNoteStyle}>
+                    谷などの低地は土台が厚くなり、材料と印刷時間が増えます
+                  </p>
+                )}
+
+                <CheckRow
+                  checked={parameters.openBottom}
+                  onChange={handleOpenBottomChange}
+                  label="底面を開口（中空シェル）"
+                />
+
+                {parameters.openBottom && (
+                  <div
+                    style={{ marginLeft: 24, display: 'flex', flexDirection: 'column', gap: 12 }}
+                  >
+                    <div>
+                      <label htmlFor={idOf('shell-thickness')} style={rangeLabelStyle}>
+                        <span>シェル厚み</span>
+                        <span style={valueStyle}>{parameters.shellThickness.toFixed(1)} mm</span>
+                      </label>
+                      <input
+                        id={idOf('shell-thickness')}
+                        type="range"
+                        min={0.8}
+                        max={Math.min(
+                          5,
+                          Math.max(0.8, parameters.terrainThickness - MIN_FRAME_HEIGHT_MM),
+                          Math.max(
+                            0.8,
+                            (parameters.terrainThickness - BASE_EXTENSION_MM) /
+                              FRAME_MITER_DEPTH_RATIO,
+                          ),
+                        )}
+                        step={0.1}
+                        value={parameters.shellThickness}
+                        onChange={(e) => handleChange('shellThickness', Number(e.target.value))}
+                        style={{ width: '100%' }}
+                        aria-valuetext={`${parameters.shellThickness.toFixed(1)} mm`}
+                      />
+                      {(parameters.terrainThickness - parameters.shellThickness <
+                        MIN_FRAME_HEIGHT_MM ||
+                        !hasMiterBase(parameters.terrainThickness, parameters.shellThickness)) && (
+                        <p style={warnNoteStyle}>
+                          地形厚みはシェル厚み + {MIN_FRAME_HEIGHT_MM.toFixed(1)} mm
+                          以上、かつシェル厚み × {FRAME_MITER_DEPTH_RATIO} より大きい必要があります
+                        </p>
+                      )}
+                    </div>
+
+                    <CheckRow
+                      checked={parameters.hollowBuildings}
+                      onChange={(checked) => handleChange('hollowBuildings', checked)}
+                      label="建物内部も中空化"
+                    />
+
+                    {parameters.hollowBuildings && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'baseline',
+                            justifyContent: 'space-between',
+                            fontSize: 12,
+                            color: 'var(--text-dim)',
+                          }}
+                        >
+                          <span>内部高さ</span>
+                          <span style={valueStyle}>
+                            {Math.max(
+                              0,
+                              parameters.terrainThickness - parameters.shellThickness,
+                            ).toFixed(1)}{' '}
+                            mm
+                          </span>
+                        </div>
+                        <p style={flatNoteStyle}>内側にサポート材が必要です</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <CheckRow
+                  checked={parameters.splitAtGround}
+                  onChange={handleSplitAtGroundChange}
+                  label="土台と建物に分割"
+                />
+                {parameters.splitAtGround && <p style={flatNoteStyle}>底面開口も自動でON</p>}
+
+                <div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      justifyContent: 'space-between',
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span style={fieldLabelStyle}>地形メッシュ解像度</span>
+                    <span style={valueStyle}>
+                      {parameters.terrainGridSize == null
+                        ? `自動 ${autoTerrainGridSize}分割`
+                        : `${parameters.terrainGridSize}分割`}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => handleChange('terrainGridSize', null)}
+                      style={gridButtonStyle(parameters.terrainGridSize == null)}
+                    >
+                      自動
+                    </button>
+                    {TERRAIN_GRID_PRESETS.map((preset) => (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        onClick={() => handleChange('terrainGridSize', preset.value)}
+                        style={gridButtonStyle(parameters.terrainGridSize === preset.value)}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  {parameters.terrainGridSize != null && (
+                    <p style={noteStyle}>処理時間が増えます</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </details>
       </div>
 
       <div
