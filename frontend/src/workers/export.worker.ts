@@ -11,10 +11,11 @@ import {
 import {
   createManifoldFromMesh,
   exportMeshesToSTL,
-  exportTo3MF,
+  exportMeshWithTriangleColorsTo3MF,
 } from '../../../core/src/manifoldOps.ts'
+import { assignTriangleColors } from '../../../core/src/exportColors.ts'
 import { setEngravingFontProvider } from '../../../core/src/engraving/fontProvider.ts'
-import type { Bounds, ExportOptions, RawMesh } from '../../../core/src/types.ts'
+import type { Bounds, ExportOptions, LayerMeshes, RawMesh } from '../../../core/src/types.ts'
 
 setWasmUrl(wasmUrl)
 
@@ -30,6 +31,8 @@ export type ExportWorkerRequest = {
   terrainMesh: RawMesh | null
   bounds: Bounds
   options: ExportOptions
+  /** 形状に含める橋梁・道路（未指定 = 層なし）。座標系は buildingMeshes と同じ。 */
+  layerMeshes?: LayerMeshes | null
 }
 
 export type ExportWorkerSerializeRequest = {
@@ -54,14 +57,21 @@ self.onmessage = async (e: MessageEvent<ExportWorkerRequest | ExportWorkerSerial
     await handleSerialize(e.data as ExportWorkerSerializeRequest)
     return
   }
-  const { buildingMeshes, terrainMesh, bounds, options } = e.data as ExportWorkerRequest
+  const { buildingMeshes, terrainMesh, bounds, options, layerMeshes } =
+    e.data as ExportWorkerRequest
   try {
     ;(self as unknown as { postMessage: (msg: unknown) => void }).postMessage({
       type: 'progress',
       progress: 10,
       message: 'WASM初期化中...',
     } as ExportWorkerResponse)
-    const result = await buildPrintableModelFromMeshes(buildingMeshes, terrainMesh, bounds, options)
+    const result = await buildPrintableModelFromMeshes(
+      buildingMeshes,
+      terrainMesh,
+      bounds,
+      options,
+      layerMeshes,
+    )
     ;(self as unknown as { postMessage: (msg: unknown) => void }).postMessage({
       type: 'done',
       buffer: result.buffer,
@@ -121,16 +131,25 @@ async function handleSerialize(req: ExportWorkerSerializeRequest): Promise<void>
     if (req.options.format === 'stl') {
       buffer = exportMeshesToSTL([mesh], upAxis)
     } else {
-      const manifold = await createManifoldFromMesh(mesh)
-      try {
-        // 3mf の色はフル経路と同じく、地形ありは地形色、なしは建物色にする。
-        const modelColor = req.options.includeTerrain
-          ? (req.options.terrainColor ?? '#ffffff')
-          : (req.options.buildingColor ?? '#ffffff')
-        buffer = await exportTo3MF(manifold, modelColor, upAxis, engravingMetadata(req.options))
-      } finally {
-        manifold.delete()
-      }
+      // キャッシュ済み完成メッシュでもフル経路と同じ規則で三角形ごとに色を付ける
+      // （道路は地形の色替えのみ）。Manifold への再インポートはしない。
+      const colors = assignTriangleColors({
+        mesh,
+        terrainMesh: req.terrainMesh,
+        scale: req.options.scale ?? 1,
+        colors: {
+          terrain: req.options.terrainColor ?? '#ffffff',
+          building: req.options.buildingColor ?? '#ffffff',
+          bridge: req.options.bridgeColor ?? '#8fa3ad',
+          road: req.options.roadColor ?? '#7d7d7d',
+        },
+      })
+      buffer = exportMeshWithTriangleColorsTo3MF(
+        mesh,
+        { palette: colors.palette, perTriangle: colors.perTriangle },
+        upAxis,
+        engravingMetadata(req.options),
+      )
     }
     post({ type: 'done', buffer, warnings: [], split: false })
   } catch (err) {

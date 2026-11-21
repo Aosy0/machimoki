@@ -6,7 +6,7 @@
  * 破棄して次回リトライできるようにする。
  */
 
-import type { Bounds, RawMesh, TerrainSample } from '@machimoki/core'
+import type { Bounds, LayerType, RawMesh, TerrainSample } from '@machimoki/core'
 import type { Lod } from './catalogApi'
 
 export interface MeshDatasetParams {
@@ -91,14 +91,51 @@ export function createLatestPromiseCache<T>(): LatestPromiseCache<T> {
   }
 }
 
+/** エクスポートに含める橋梁・道路レイヤーの取得条件。 */
+export interface LayerMeshParams {
+  bounds: Bounds
+  /** 要求 LOD。未指定ならその自治体で最も詳細な LOD。 */
+  lod?: Lod
+  layer: LayerType
+}
+
+/** レイヤーメッシュの取得キー。 */
+export function layerMeshesKey(params: LayerMeshParams): string {
+  return JSON.stringify({
+    layer: params.layer,
+    bounds: params.bounds,
+    lod: params.lod ?? null,
+  })
+}
+
 const buildingCache = createLatestPromiseCache<RawMesh[]>()
 const terrainSampleCache = createLatestPromiseCache<TerrainSample>()
+// 橋梁と道路は取得元が別なので、latest 1件のキャッシュもレイヤー別に持つ。
+const layerMeshesCache: Record<LayerType, LatestPromiseCache<RawMesh[]>> = {
+  brid: createLatestPromiseCache<RawMesh[]>(),
+  tran: createLatestPromiseCache<RawMesh[]>(),
+}
 
 /** 建物メッシュを取得する（同じキーの取得中/取得済み Promise を共有する）。 */
 export function loadBuildingMeshes(params: MeshDatasetParams): Promise<RawMesh[]> {
   return buildingCache.get(buildingMeshesKey(params), async () => {
     const { buildBuildingMeshes } = await import('@machimoki/core')
     return buildBuildingMeshes(params.bounds, params.lod, params.excludedGmlIds)
+  })
+}
+
+/**
+ * 橋梁・道路レイヤーのメッシュを取得する（レイヤーごとに取得中の Promise を共有）。
+ * 座標系は建物メッシュと同じ選択範囲中心の ENU・実寸メートル。
+ */
+export function loadLayerMeshes(params: LayerMeshParams): Promise<RawMesh[]> {
+  return layerMeshesCache[params.layer].get(layerMeshesKey(params), async () => {
+    const { buildLayerMeshes } = await import('@machimoki/core')
+    return buildLayerMeshes(
+      params.bounds,
+      params.layer,
+      params.lod ? { lod: params.lod } : undefined,
+    )
   })
 }
 
