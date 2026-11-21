@@ -698,6 +698,13 @@ interface EngravingOverlayGeometryCache {
   geometry: EngravingOverlayGeometry | null
 }
 
+/** 3Dシーン内の追加読み込み（橋・道路・地図画像）の進行状態。 */
+export interface SceneLoadState {
+  bridges: boolean
+  roads: boolean
+  imagery: boolean
+}
+
 interface Preview3DProps {
   selectionBounds: SelectionBounds | null
   /** 端末に応じた描画品質（影・MSAA・AO・解像度）。 */
@@ -733,6 +740,8 @@ interface Preview3DProps {
   bridgesVisible?: boolean
   /** 道路モデル（PLATEAU tran）の重ね表示。 */
   roadsVisible?: boolean
+  /** 橋・道路・地図画像の読み込み状態が変わったときAppへ通知する。 */
+  onSceneLoadChange?: (state: SceneLoadState) => void
   /** 影の表示ON/OFF（サイドパネルのトグル）。 */
   shadowsVisible?: boolean
   /**
@@ -824,6 +833,7 @@ export default function Preview3D({
   onBuildingsVisibleChange,
   bridgesVisible = false,
   roadsVisible = false,
+  onSceneLoadChange,
   shadowsVisible = true,
   onBusyChange,
   splitAtGround = false,
@@ -1067,6 +1077,32 @@ export default function Preview3D({
   const layerLoadKeyRef = useRef<string | null>(null)
   // レイヤーの表示トグル（完成形状の表示切替から復帰するときに使う）。
   const layerVisibleRef = useRef<Partial<Record<LayerType, boolean>>>({})
+  // 追加読み込み（橋・道路・地図画像）のUI表示用状態。
+  const [layerLoading, setLayerLoading] = useState<Record<LayerType, boolean>>({
+    brid: false,
+    tran: false,
+  })
+  const [imageryLoading, setImageryLoading] = useState(false)
+  const layerLoadTimerRef = useRef<Partial<Record<LayerType, ReturnType<typeof setTimeout>>>>({})
+  const layerLoadAttemptRef = useRef<Partial<Record<LayerType, object>>>({})
+  const imageryLoadCancelRef = useRef<(() => void) | null>(null)
+
+  // 追加読み込みの状態をAppのプレビュー内インジケーターへ伝える。
+  useEffect(() => {
+    onSceneLoadChange?.({
+      bridges: layerLoading.brid && bridgesVisible,
+      roads: layerLoading.tran && roadsVisible,
+      imagery: imageryLoading,
+    })
+  }, [layerLoading, bridgesVisible, roadsVisible, imageryLoading, onSceneLoadChange])
+
+  // アンマウント時にApp側の表示を残さない。
+  useEffect(
+    () => () => {
+      onSceneLoadChange?.({ bridges: false, roads: false, imagery: false })
+    },
+    [onSceneLoadChange],
+  )
 
   // 地形最高解像度ブーストの通知（App側の自動分割数表示・エクスポートに反映）
   useEffect(() => {
@@ -1834,6 +1870,29 @@ export default function Preview3D({
     appliedImageryStyleRef.current = imageryStyle
     applyContour(viewer, imageryStyle)
     viewer.scene.requestRender()
+
+    // 画像タイルはスイッチを切り替えた直後ではなく、10秒前後遅れて揃う。
+    // 地表のタイルが揃うまで読み込み中を出す（キャッシュだけで済む場合は短時間で消す）。
+    setImageryLoading(true)
+    const startedAt = Date.now()
+    let sawLoading = false
+    const interval = setInterval(() => {
+      const globe = viewer.scene.globe
+      if (!globe.tilesLoaded) sawLoading = true
+      const elapsed = Date.now() - startedAt
+      if ((globe.tilesLoaded && (sawLoading || elapsed >= 1500)) || elapsed >= 60_000) {
+        clearInterval(interval)
+        if (imageryLoadCancelRef.current === cancel) imageryLoadCancelRef.current = null
+        setImageryLoading(false)
+      }
+    }, 250)
+    const cancel = (): void => {
+      clearInterval(interval)
+      if (imageryLoadCancelRef.current === cancel) imageryLoadCancelRef.current = null
+    }
+    imageryLoadCancelRef.current?.()
+    imageryLoadCancelRef.current = cancel
+    return cancel
   }, [imageryStyle])
 
   // 他タブ（App.tsx等）とlocalStorage経由でスタイルを同期する
@@ -2826,6 +2885,12 @@ export default function Preview3D({
     const layerTilesets = layerTilesetsRef.current
     layerTilesetsRef.current = {}
     for (const layer of LAYER_KEYS) {
+      const timer = layerLoadTimerRef.current[layer]
+      if (timer !== undefined) {
+        clearTimeout(timer)
+        delete layerLoadTimerRef.current[layer]
+      }
+      delete layerLoadAttemptRef.current[layer]
       for (const ts of layerTilesets[layer] ?? []) {
         try {
           viewerRef.current?.scene.primitives.remove(ts)
@@ -2834,6 +2899,7 @@ export default function Preview3D({
         }
       }
     }
+    setLayerLoading((prev) => (prev.brid || prev.tran ? { brid: false, tran: false } : prev))
   }
 
   // レイヤーの表示をトグル状態と完成形状の表示状態へ同期する。
@@ -2856,6 +2922,30 @@ export default function Preview3D({
     if (layerTilesetsRef.current[layer]) return
     const tilesets: Cesium3DTileset[] = []
     layerTilesetsRef.current[layer] = tilesets
+    const attempt = {}
+    layerLoadAttemptRef.current[layer] = attempt
+    setLayerLoading((prev) => (prev[layer] ? prev : { ...prev, [layer]: true }))
+
+    const clearLoading = (): void => {
+      // 選択範囲の変更などで作り直された後の古い読み込みは状態を触らない。
+      if (layerLoadAttemptRef.current[layer] !== attempt) return
+      delete layerLoadAttemptRef.current[layer]
+      const timer = layerLoadTimerRef.current[layer]
+      if (timer !== undefined) {
+        clearTimeout(timer)
+        delete layerLoadTimerRef.current[layer]
+      }
+      setLayerLoading((prev) => (prev[layer] ? { ...prev, [layer]: false } : prev))
+    }
+    // 表示OFF・範囲外などで allTilesLoaded が来ない場合も、必ず表示を終わらせる。
+    layerLoadTimerRef.current[layer] = setTimeout(clearLoading, 60_000)
+
+    let outstanding = 0
+    const settle = (): void => {
+      outstanding -= 1
+      if (outstanding <= 0) clearLoading()
+    }
+
     const discard = (): void => {
       if (layerTilesetsRef.current[layer] === tilesets) delete layerTilesetsRef.current[layer]
       for (const ts of tilesets.splice(0)) {
@@ -2868,42 +2958,68 @@ export default function Preview3D({
     }
     try {
       const muniCodes = await resolveMuniCodes(bounds)
-      if (layerLoadKeyRef.current !== loadKey) return
+      if (layerLoadKeyRef.current !== loadKey) {
+        clearLoading()
+        return
+      }
       const targets = (
         await Promise.all(muniCodes.map((code) => findLayerTilesetUrl(code, layer, lod)))
       ).filter((target): target is { url: string; actualLod: Lod } => target !== null)
+      if (targets.length === 0) {
+        discard()
+        clearLoading()
+        return
+      }
+      outstanding = targets.length
       const modelMatrix = layerModelMatrix(bounds, layer)
       for (const { url } of targets) {
         if (layerLoadKeyRef.current !== loadKey) {
           discard()
+          clearLoading()
           return
         }
-        const tileset = await Cesium3DTileset.fromUrl(url, {
-          modelMatrix,
-          // 橋梁・道路は面データで葉タイルが数百枚ある。建物と同じ最精細指定だと
-          // 全葉タイルの取得が終わるまで何も出ないため、表示に十分な精度に留める。
-          maximumScreenSpaceError: 16,
-          cacheBytes: 128 * 1024 * 1024,
-          maximumCacheOverflowBytes: 64 * 1024 * 1024,
-          cullWithChildrenBounds: true,
-        })
-        if (layerLoadKeyRef.current !== loadKey) {
-          tileset.destroy()
-          discard()
-          return
+        try {
+          const tileset = await Cesium3DTileset.fromUrl(url, {
+            modelMatrix,
+            // 橋梁・道路は面データで葉タイルが数百枚ある。建物と同じ最精細指定だと
+            // 全葉タイルの取得が終わるまで何も出ないため、表示に十分な精度に留める。
+            maximumScreenSpaceError: 16,
+            cacheBytes: 128 * 1024 * 1024,
+            maximumCacheOverflowBytes: 64 * 1024 * 1024,
+            cullWithChildrenBounds: true,
+          })
+          if (layerLoadKeyRef.current !== loadKey) {
+            tileset.destroy()
+            discard()
+            clearLoading()
+            return
+          }
+          viewer.scene.primitives.add(tileset)
+          tilesets.push(tileset)
+          // そのビューで必要なタイルが揃った時点で読み込み表示を消す。
+          let tileSettled = false
+          const onTilesLoaded = (): void => {
+            if (tileSettled) return
+            tileSettled = true
+            settle()
+          }
+          tileset.allTilesLoaded.addEventListener(onTilesLoaded)
+          if (tileset.tilesLoaded) onTilesLoaded()
+          tileset.show = layerVisibleRef.current[layer] === true && !finalShapeActiveRef.current
+          tileset.customShader = createBuildingCustomShader(layerColor(layer))
+          // 橋梁・道路のbatchTableは矩形属性を持たないため、範囲外をGPUでクリップする。
+          tileset.clippingPlanes = layerClippingPlanes(tileset, bounds)
+        } catch (err) {
+          console.warn('[Preview3D] Failed to load layer tileset:', layer, err)
+          settle()
         }
-        viewer.scene.primitives.add(tileset)
-        tilesets.push(tileset)
-        tileset.show = layerVisibleRef.current[layer] === true && !finalShapeActiveRef.current
-        tileset.customShader = createBuildingCustomShader(layerColor(layer))
-        // 橋梁・道路のbatchTableは矩形属性を持たないため、範囲外をGPUでクリップする。
-        tileset.clippingPlanes = layerClippingPlanes(tileset, bounds)
       }
       viewer.scene.requestRender()
     } catch (err) {
       console.warn('[Preview3D] Failed to load layer tileset:', layer, err)
       // 1枚も載っていなければ次の機会に再試行できるようエントリを消す。
       if (tilesets.length === 0) discard()
+      clearLoading()
     }
   }
 

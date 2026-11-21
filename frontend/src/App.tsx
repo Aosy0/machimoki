@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { Map as MapLibreMap } from 'maplibre-gl'
-import Preview3D, { DEFAULT_BUILDING_COLOR } from './components/Preview3D'
+import Preview3D, { DEFAULT_BUILDING_COLOR, type SceneLoadState } from './components/Preview3D'
 import ParameterPanel from './components/ParameterPanel'
 import type { Parameters } from './components/ParameterPanel'
 import LoadingOverlay from './components/LoadingOverlay'
@@ -76,6 +76,30 @@ const TABS = [
 const SELECTION_STORAGE_KEY = 'machimoki.selectionBounds'
 const PARAMETERS_STORAGE_KEY = 'machimoki.parameters'
 const TAB_STORAGE_KEY = 'machimoki.activeTab'
+
+/** プレビュー下部の読み込み表示（パイプライン・追加読み込みで共通）。 */
+const PREVIEW_LOAD_INDICATOR_STYLE = {
+  position: 'absolute',
+  left: '50%',
+  bottom: '16px',
+  transform: 'translateX(-50%)',
+  zIndex: 30,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '4px 12px',
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius-panel)',
+  color: 'var(--text-dim)',
+  fontSize: 12,
+  fontVariantNumeric: 'tabular-nums',
+  pointerEvents: 'none',
+  maxWidth: 'calc(100% - 32px)',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+} as const
 
 const DEFAULT_PARAMETERS: Parameters = {
   terrainThickness: 10,
@@ -286,6 +310,12 @@ function App() {
   // 3Dプレビューの橋梁・道路の重ね表示ON/OFF（サイドパネルのトグル）。
   const [bridgesVisible, setBridgesVisible] = useState(false)
   const [roadsVisible, setRoadsVisible] = useState(false)
+  // 橋・道路・地図画像のタイル読み込み状態（プレビュー下部に表示する）。
+  const [sceneLoad, setSceneLoad] = useState<SceneLoadState>({
+    bridges: false,
+    roads: false,
+    imagery: false,
+  })
   // 選択範囲の自治体が橋梁・道路の3Dデータを整備しているか。
   const [layerAvailability, setLayerAvailability] = useState<Record<LayerType, boolean>>({
     brid: false,
@@ -1159,6 +1189,20 @@ function App() {
   const bannerButtonHeight = hasCoarsePointer ? 44 : 40
   const bannerIconSize = hasCoarsePointer ? 44 : 32
 
+  const sceneLoadParts: string[] = []
+  if (sceneLoad.bridges) sceneLoadParts.push('橋')
+  if (sceneLoad.roads) sceneLoadParts.push('道路')
+  if (sceneLoad.imagery) sceneLoadParts.push(parameters.showTerrainImagery ? '航空写真' : '地図')
+  const sceneLoadLabel =
+    sceneLoadParts.length > 0 ? `${sceneLoadParts.join('・')}を読み込み中…` : null
+  // パイプラインの既存表示が出ている間は、追加読み込みの表示を重ねない。
+  const pipelineLoadIndicatorVisible =
+    !previewBusy &&
+    (pipelineState.background ||
+      (pipelineState.phase !== 'idle' &&
+        pipelineState.phase !== 'complete' &&
+        pipelineState.phase !== 'error'))
+
   return (
     <div className="app-root">
       {/* Tab bar with app name */}
@@ -1521,6 +1565,7 @@ function App() {
                 onBuildingsVisibleChange={setBuildingsVisible}
                 bridgesVisible={bridgesVisible}
                 roadsVisible={roadsVisible}
+                onSceneLoadChange={setSceneLoad}
                 shadowsVisible={shadowsVisible}
                 onBusyChange={setPreviewBusy}
                 engraving={parameters.engraving.enabled ? parameters.engraving : null}
@@ -1706,44 +1751,29 @@ function App() {
               visible={previewBusyOverlay}
               progress={previewBusyFallback ? undefined : pipelineState.progress}
             />
-            {!previewBusy &&
-              (pipelineState.background ||
-                (!pipelineState.background &&
-                  pipelineState.phase !== 'idle' &&
-                  pipelineState.phase !== 'complete' &&
-                  pipelineState.phase !== 'error')) && (
-                // 初回のタイル読み込み・パラメータ変更の再生成中は、画面を覆わず
-                // 隅に小さく表示する（地形・到着済みの建物は操作可能なまま）。
-                <div
-                  data-testid="preview-load-indicator"
-                  style={{
-                    position: 'absolute',
-                    left: '50%',
-                    bottom: '16px',
-                    transform: 'translateX(-50%)',
-                    zIndex: 30,
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '4px 12px',
-                    background: 'var(--surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 'var(--radius-panel)',
-                    color: 'var(--text-dim)',
-                    fontSize: 12,
-                    fontVariantNumeric: 'tabular-nums',
-                    pointerEvents: 'none',
-                    maxWidth: 'calc(100% - 32px)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  <span>
-                    {pipelineState.background ? '更新中…' : pipelineState.message || '読み込み中…'}{' '}
-                    {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
-                  </span>
-                </div>
-              )}
+            {pipelineLoadIndicatorVisible && (
+              // 初回のタイル読み込み・パラメータ変更の再生成中は、画面を覆わず
+              // 隅に小さく表示する（地形・到着済みの建物は操作可能なまま）。
+              <div data-testid="preview-load-indicator" style={PREVIEW_LOAD_INDICATOR_STYLE}>
+                <span>
+                  {pipelineState.background ? '更新中…' : pipelineState.message || '読み込み中…'}{' '}
+                  {Math.max(0, Math.min(100, Math.round(pipelineState.progress)))}%
+                </span>
+              </div>
+            )}
+            {!pipelineLoadIndicatorVisible && sceneLoadLabel && (
+              // 橋・道路・地図画像はパイプライン完了後に別途読み込むため、
+              // スイッチを切り替えた直後にも読み込み中であることを示す。
+              <div
+                data-testid="scene-load-indicator"
+                role="status"
+                aria-live="polite"
+                style={PREVIEW_LOAD_INDICATOR_STYLE}
+              >
+                <span className="ui-inline-spinner" aria-hidden="true" />
+                <span>{sceneLoadLabel}</span>
+              </div>
+            )}
             <LoadingOverlay
               message="エクスポート中…"
               visible={isExporting && pipelineState.phase === 'idle'}
