@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildingMeshesKey,
   createLatestPromiseCache,
+  layerMeshesKey,
   terrainMeshKey,
   terrainSampleKey,
+  type LayerMeshParams,
   type MeshDatasetParams,
 } from './meshDataCache'
 
@@ -72,6 +74,29 @@ describe('建物/地形の取得キー', () => {
 
     // gridSize は地形サンプル形状が変わるので再取得・再送対象。
     expect(terrainSampleKey({ ...baseParams, terrainGridSize: 256 })).not.toBe(sample)
+  })
+})
+
+describe('レイヤーメッシュの取得キー', () => {
+  const baseLayer: LayerMeshParams = {
+    bounds: baseParams.bounds,
+    lod: 'lod1',
+    layer: 'brid',
+  }
+
+  it('レイヤー・bounds・lod が変わればキーが変わる', () => {
+    const key = layerMeshesKey(baseLayer)
+    expect(layerMeshesKey({ ...baseLayer, layer: 'tran' })).not.toBe(key)
+    expect(layerMeshesKey({ ...baseLayer, lod: 'lod2' })).not.toBe(key)
+    expect(
+      layerMeshesKey({ ...baseLayer, bounds: { ...baseParams.bounds, north: 35.71 } }),
+    ).not.toBe(key)
+  })
+
+  it('lod 未指定は null として扱う', () => {
+    expect(layerMeshesKey({ ...baseLayer, lod: undefined })).toBe(
+      JSON.stringify({ layer: 'brid', bounds: baseParams.bounds, lod: null }),
+    )
   })
 })
 

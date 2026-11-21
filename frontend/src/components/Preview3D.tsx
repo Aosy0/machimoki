@@ -48,6 +48,7 @@ CreditDisplay.cesiumCredit = new Credit('© Cesium', true)
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PreviewQualityProfile } from '../lib/previewQuality'
 import { sunLightDirection } from '../lib/previewLighting'
+import { LAYER_COLORS } from '../lib/layerColors'
 import { CAD_LIGHTING_GLSL } from '../lib/cadShader'
 import type { PipelineState } from '../types/pipeline'
 import {
@@ -235,7 +236,6 @@ function createBuildingCustomShader(color: Color): CustomShader {
  * 道路（tran）は地表と同一面に載るため、Zファイトを避けてわずかに持ち上げる。
  */
 const LAYER_LIFT_METERS: Record<LayerType, number> = { brid: 0, tran: 0.3 }
-const LAYER_COLORS: Record<LayerType, string> = { brid: '#8fa3ad', tran: '#7d7d7d' }
 
 function layerColor(layer: LayerType): Color {
   return Color.fromCssColorString(LAYER_COLORS[layer])

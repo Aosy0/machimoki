@@ -1,4 +1,4 @@
-import type { Bounds, ExportOptions, RawMesh } from '@machimoki/core'
+import type { Bounds, ExportOptions, LayerMeshes, RawMesh } from '@machimoki/core'
 import type { ExportWorkerRequest, ExportWorkerResponse } from '../workers/export.worker.ts'
 
 function downloadBuffer(buffer: Uint8Array, filename: string, mimeType: string) {
@@ -13,12 +13,28 @@ function downloadBuffer(buffer: Uint8Array, filename: string, mimeType: string) 
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+/**
+ * フル生成ジョブのリクエストを組み立てる。
+ * 層メッシュはプレビュー/エクスポートで共有するキャッシュを保持したままにしたいので、
+ * postMessage の transfer 対象には含めない（参照をそのまま渡す）。
+ */
+export function createExportWorkerRequest(
+  bounds: Bounds,
+  options: ExportOptions,
+  buildingMeshes: RawMesh[],
+  terrainMesh: RawMesh | null,
+  layerMeshes?: LayerMeshes | null,
+): ExportWorkerRequest {
+  return { buildingMeshes, terrainMesh, bounds, options, layerMeshes: layerMeshes ?? null }
+}
+
 export async function runWorkerExport(
   bounds: Bounds,
   options: ExportOptions,
   buildingMeshes: RawMesh[],
   terrainMesh: RawMesh | null,
   onProgress?: (progress: number, message: string) => void,
+  layerMeshes?: LayerMeshes | null,
 ): Promise<{ buffer: Uint8Array; warnings: string[]; split: boolean }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('../workers/export.worker.ts', import.meta.url), {
@@ -43,7 +59,8 @@ export async function runWorkerExport(
       reject(err.error ?? new Error(err.message))
     }
 
-    const req: ExportWorkerRequest = { buildingMeshes, terrainMesh, bounds, options }
+    const req = createExportWorkerRequest(bounds, options, buildingMeshes, terrainMesh, layerMeshes)
+    // transfer は渡さない（建物・地形・層メッシュのバッファを切り離さない）。
     worker.postMessage(req)
   })
 }
