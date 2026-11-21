@@ -6,7 +6,7 @@ import type { Lod } from './catalogApi'
  * 完成メッシュキャッシュのバージョン。形状生成ロジックが変わったら上げる。
  * バージョンが違うキーは一致しないため、古いキャッシュを誤って使わない。
  */
-export const FINAL_SHAPE_CACHE_VERSION = 12
+export const FINAL_SHAPE_CACHE_VERSION = 13
 
 /** 完成メッシュのジオメトリに影響するパラメータのみ（色は含めない）。 */
 export interface FinalShapeGeometryParams {
@@ -24,6 +24,12 @@ export interface FinalShapeGeometryParams {
   shellThickness?: number
   hollowBuildings?: boolean
   splitAtGround?: boolean
+  /**
+   * 形状に含めるレイヤー（例 'brid,tran'）。未指定は空文字。
+   * プレビューの最終形状はレイヤーを含めないため、層を含む形状をキャッシュする
+   * 場合だけ呼び出し側が指定する。
+   */
+  layers?: string
   /** 刻印設定（enabled のときだけ形状に影響する） */
   engraving?: EngravingOptions | null
 }
@@ -53,6 +59,7 @@ export function finalShapeGeometryKey(params: FinalShapeGeometryParams): string 
     shellThickness: params.shellThickness ?? null,
     hollowBuildings: params.hollowBuildings ?? true,
     splitAtGround: params.splitAtGround ?? false,
+    layers: params.layers ?? '',
     engraving: params.engraving?.enabled ? params.engraving : null,
   })
 }

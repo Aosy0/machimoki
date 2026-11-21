@@ -2,7 +2,7 @@
  * GSI reverse geocoding + PLATEAU catalog API client.
  */
 
-import type { Lod } from './types.js'
+import type { LayerType, Lod } from './types.js'
 
 const GSI_REVERSE_GEOCODER_URL =
   'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress'
@@ -105,6 +105,9 @@ export async function resolveMuniCode(
 const muniCodesCache = new Map<string, string[]>()
 const muniCodesPending = new Map<string, Promise<string[]>>()
 const tilesetUrlCache = new Map<string, string>()
+// レイヤーは自治体×レイヤーで公開 LOD を、自治体×レイヤー×LOD で URL を覚える。
+const layerLodsCache = new Map<string, Lod[]>()
+const layerTilesetUrlCache = new Map<string, string>()
 
 function boundsKey(bounds: { west: number; south: number; east: number; north: number }): string {
   const f = (n: number): string => Number(n).toFixed(6)
@@ -115,6 +118,8 @@ export function clearCatalogCache(): void {
   muniCodesCache.clear()
   muniCodesPending.clear()
   tilesetUrlCache.clear()
+  layerLodsCache.clear()
+  layerTilesetUrlCache.clear()
 }
 
 export async function resolveMuniCodes(bounds: {
@@ -350,6 +355,90 @@ export async function getMuniAvailableLods(muniCode: string): Promise<Lod[]> {
     }
   }
   return LOD_ORDER.filter((lod) => found.has(lod))
+}
+
+/** レイヤー種別ごとの PLATEAU データセット type 名。 */
+const LAYER_DATASET_TYPES: Record<LayerType, string> = {
+  brid: '橋梁モデル',
+  tran: '交通（道路）モデル',
+}
+
+function layerDatasetKey(muniCode: string, layer: LayerType): string {
+  return `${muniCode}:${layer}`
+}
+
+function isLayerDataset(dataset: PlateauDataset, muniCode: string, layer: LayerType): boolean {
+  if (dataset.pref_code !== muniCode.slice(0, 2)) return false
+  if (dataset.format !== '3D Tiles') return false
+  if (dataset.type !== LAYER_DATASET_TYPES[layer]) return false
+  if (dataset.ward_code && dataset.ward_code === muniCode) return true
+  return dataset.city_code === muniCode
+}
+
+/**
+ * レイヤー（橋梁・道路）でその自治体が公開している LOD を返す。
+ * レイヤー未整備なら空配列。
+ */
+export async function getMuniAvailableLayerLods(
+  muniCode: string,
+  layer: LayerType,
+): Promise<Lod[]> {
+  const key = layerDatasetKey(muniCode, layer)
+  const cached = layerLodsCache.get(key)
+  if (cached) return [...cached]
+
+  const datasets = await fetchCatalogDatasets()
+  const found = new Set<string>()
+  for (const dataset of datasets) {
+    if (!isLayerDataset(dataset, muniCode, layer)) continue
+    if (['1', '2', '3', '4'].includes(dataset.lod)) {
+      found.add(`lod${dataset.lod}`)
+    }
+  }
+
+  const lods = LOD_ORDER.filter((lod) => found.has(lod))
+  layerLodsCache.set(key, lods)
+  return [...lods]
+}
+
+async function findLayerTilesetUrlForLod(
+  muniCode: string,
+  layer: LayerType,
+  lod: Lod,
+): Promise<string | null> {
+  const key = `${layerDatasetKey(muniCode, layer)}:${lod}`
+  const cached = layerTilesetUrlCache.get(key)
+  if (cached) return cached
+
+  const datasets = await fetchCatalogDatasets()
+  const targetLod = lod.replace('lod', '')
+  const candidates = datasets.filter(
+    (dataset) => isLayerDataset(dataset, muniCode, layer) && dataset.lod === targetLod,
+  )
+  const candidate = candidates.find((dataset) => !dataset.texture) ?? candidates[0]
+  if (!candidate) return null
+
+  layerTilesetUrlCache.set(key, candidate.url)
+  return candidate.url
+}
+
+/**
+ * レイヤー（橋梁・道路）の tileset URL を返す。要求 LOD が無ければ最も詳細な
+ * 公開 LOD へフォールバックする。未整備なら null。
+ */
+export async function findLayerTilesetUrl(
+  muniCode: string,
+  layer: LayerType,
+  requestedLod: Lod,
+): Promise<{ url: string; actualLod: Lod } | null> {
+  const available = await getMuniAvailableLayerLods(muniCode, layer)
+  if (available.length === 0) return null
+
+  const actualLod = available.includes(requestedLod)
+    ? requestedLod
+    : available[available.length - 1]
+  const url = await findLayerTilesetUrlForLod(muniCode, layer, actualLod)
+  return url ? { url, actualLod } : null
 }
 
 export async function findBestTilesetUrl(

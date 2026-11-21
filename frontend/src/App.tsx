@@ -17,7 +17,8 @@ import { exportModel } from './lib/apiClient'
 import { runWorkerExport, runWorkerSerialize, triggerDownload } from './lib/workerExport'
 import { finalShapeGeometryKey } from './lib/finalShapeKey'
 import { loadFinalShapeCache } from './lib/finalShapeCache'
-import { loadBuildingMeshes, loadTerrainMesh } from './lib/meshDataCache'
+import { loadBuildingMeshes, loadLayerMeshes, loadTerrainMesh } from './lib/meshDataCache'
+import { LAYER_COLORS } from './lib/layerColors'
 import EngravingPanel from './components/EngravingPanel'
 import type { EngravingOptions } from '../../core/src/engraving/types.ts'
 import { defaultEngravingOptions } from '../../core/src/engraving/types.ts'
@@ -707,6 +708,7 @@ function App() {
       message: 'エクスポート準備中…',
       error: null,
     })
+    const useWorker = parameters.exportFormat !== 'machimoki'
     const exportOptions = {
       terrainThickness: parameters.terrainThickness,
       flattenBottom: parameters.flattenBottom,
@@ -728,12 +730,22 @@ function App() {
       pickPoints,
       excludedGmlIds: excludedBuildingIds.length > 0 ? excludedBuildingIds : undefined,
       engraving: parameters.engraving.enabled ? parameters.engraving : undefined,
+      // 橋梁・道路はローカル（Worker）生成だけが形状/色に反映する。machimoki は API 経路。
+      ...(useWorker
+        ? {
+            includeBridges: bridgesVisible,
+            includeRoads: roadsVisible,
+            bridgeColor: LAYER_COLORS.brid,
+            roadColor: LAYER_COLORS.tran,
+          }
+        : {}),
     }
-    const useWorker = exportOptions.format !== 'machimoki'
+    // 層はキャッシュ済みの完成メッシュに含まれないため、層ONではキャッシュ経路を使わない。
+    const layerExportActive = useWorker && (bridgesVisible || roadsVisible)
     let workerError: unknown = null
     // 完成メッシュの永続キャッシュを照会し、ヒットしたら取得と形状生成を
     // スキップしてシリアライズのみ行う（プレビューと同一キーで共有）。
-    if (useWorker) {
+    if (useWorker && !layerExportActive) {
       let cachedMesh: {
         positions: Float32Array
         indices: Uint32Array
@@ -857,6 +869,25 @@ function App() {
           })
           terrainMesh = await loadTerrainMesh(meshParams)
         }
+        let layerMeshes: import('@machimoki/core').LayerMeshes | null = null
+        if (layerExportActive) {
+          setPipelineState({
+            phase: 'acquiring',
+            progress: 40,
+            message: '橋梁・道路データ取得中…',
+            error: null,
+          })
+          // 橋梁と道路は取得元が別なので並列に取る（同じ条件ならキャッシュを再利用）。
+          const [brid, tran] = await Promise.all([
+            bridgesVisible
+              ? loadLayerMeshes({ ...meshParams, layer: 'brid' })
+              : Promise.resolve([] as import('@machimoki/core').RawMesh[]),
+            roadsVisible
+              ? loadLayerMeshes({ ...meshParams, layer: 'tran' })
+              : Promise.resolve([] as import('@machimoki/core').RawMesh[]),
+          ])
+          layerMeshes = { brid, tran }
+        }
         setPipelineState({
           phase: 'composing',
           progress: 50,
@@ -875,6 +906,7 @@ function App() {
               message: m,
               error: null,
             }),
+          layerMeshes,
         )
         if (warnings.length > 0) console.warn('[Machimoki] warnings:', warnings)
         triggerDownload(buffer, exportOptions.format, split)
@@ -888,6 +920,12 @@ function App() {
       } catch (err) {
         workerError = err
         console.warn('[Machimoki] Workerエクスポート失敗、APIフォールバックへ:', err)
+        if (layerExportActive) {
+          // API 経路は層オプションを受け取らないため、フォールバックでは層が落ちる。
+          console.warn('[Machimoki] warnings:', [
+            'サーバー再試行では橋梁・道路が反映されない場合があります',
+          ])
+        }
         setPipelineState({
           phase: 'composing',
           progress: 50,
@@ -935,7 +973,16 @@ function App() {
     } finally {
       setIsExporting(false)
     }
-  }, [parameters, selectionBounds, scale, pickPoints, excludedBuildingIds, resolvedTerrainGridSize])
+  }, [
+    parameters,
+    selectionBounds,
+    scale,
+    pickPoints,
+    excludedBuildingIds,
+    resolvedTerrainGridSize,
+    bridgesVisible,
+    roadsVisible,
+  ])
 
   const displayErrorMessage = errorMessage || selectionErrorMessage || pipelineState.error
   // 重い処理が進行中なら、他のタスクの complete/background に上書きされても

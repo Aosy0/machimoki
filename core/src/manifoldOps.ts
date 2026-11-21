@@ -227,6 +227,127 @@ export async function createSlicePrism(
 }
 
 /**
+ * 三角形ごとに色を持つ 3MF を生成する。
+ *
+ * 1つの object の material に <m:colorgroup> を置き、各 <triangle> の
+ * pid/p1 で色を上書きする。単色（白のみ）なら material 拡張を出さない。
+ */
+export function exportMeshWithTriangleColorsTo3MF(
+  mesh: RawMesh,
+  colors: { palette: string[]; perTriangle: Uint8Array },
+  upAxis: UpAxis = 'z-up',
+  metadata?: Record<string, string>,
+): Uint8Array {
+  const indices = mesh.indices
+  const triangleCount = Math.floor(indices.length / 3)
+  if (colors.perTriangle.length !== triangleCount) {
+    throw new Error(
+      'perTriangle length (' +
+        colors.perTriangle.length +
+        ') does not match triangle count (' +
+        triangleCount +
+        ')',
+    )
+  }
+
+  // 色は 3MF の #RRGGBBAA に正規化してから重複を除く。
+  // paletteToGroup は元の palette 添字 → colorgroup 内の添字の対応。
+  const palette: string[] = []
+  const groupIndexByColor = new Map<string, number>()
+  const paletteToGroup = new Int32Array(colors.palette.length)
+  for (let i = 0; i < colors.palette.length; i++) {
+    const normalized = normalizeColor(colors.palette[i])
+    let groupIndex = groupIndexByColor.get(normalized)
+    if (groupIndex === undefined) {
+      groupIndex = palette.length
+      palette.push(normalized)
+      groupIndexByColor.set(normalized, groupIndex)
+    }
+    paletteToGroup[i] = groupIndex
+  }
+  // 白1色だけなら従来の白モデルと同じく material 拡張も pid/p1 も出さない。
+  const useMaterial = palette.length > 0 && !(palette.length === 1 && palette[0] === '#FFFFFFFF')
+
+  const positions = scalePositions(transformForUpAxis(mesh.positions, upAxis), METERS_TO_MM)
+  const precision = 7
+  const out: string[] = []
+
+  const materialNamespace = useMaterial
+    ? ' xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"'
+    : ''
+  out.push(
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"' +
+      materialNamespace +
+      '>\n' +
+      build3mfMetadataXml(metadata) +
+      '  <resources>\n',
+  )
+
+  if (useMaterial) {
+    out.push('    <m:colorgroup id="1">\n')
+    for (const color of palette) {
+      out.push(`      <m:color color="${color}"/>\n`)
+    }
+    out.push('    </m:colorgroup>\n')
+  }
+
+  out.push(
+    '    <object id="1" type="model"' +
+      (useMaterial ? ' pid="1" pindex="0"' : '') +
+      '>\n' +
+      '      <mesh>\n' +
+      '        <vertices>\n',
+  )
+
+  for (let i = 0; i < positions.length; i += 3) {
+    out.push(
+      '          <vertex x="' +
+        positions[i].toPrecision(precision) +
+        '" y="' +
+        positions[i + 1].toPrecision(precision) +
+        '" z="' +
+        positions[i + 2].toPrecision(precision) +
+        '" />\n',
+    )
+  }
+
+  out.push('        </vertices>\n        <triangles>\n')
+
+  for (let t = 0; t < triangleCount; t++) {
+    let colorAttributes = ''
+    if (useMaterial) {
+      const paletteIndex = Math.min(colors.perTriangle[t], paletteToGroup.length - 1)
+      colorAttributes = ` pid="1" p1="${paletteToGroup[paletteIndex]}"`
+    }
+    out.push(
+      '          <triangle v1="' +
+        indices[t * 3] +
+        '" v2="' +
+        indices[t * 3 + 1] +
+        '" v3="' +
+        indices[t * 3 + 2] +
+        '"' +
+        colorAttributes +
+        ' />\n',
+    )
+  }
+
+  out.push(
+    '        </triangles>\n' +
+      '      </mesh>\n' +
+      '    </object>\n' +
+      '  </resources>\n' +
+      '  <build>\n' +
+      '    <item objectid="1" />\n' +
+      '  </build>\n' +
+      '</model>\n',
+  )
+
+  return createColored3mfZip(out.join(''))
+}
+
+/**
  * Export a Manifold to a 3MF buffer.
  *
  * @param manifold The manifold to export.

@@ -15,6 +15,9 @@ export type UpAxis = 'z-up' | 'y-up'
 
 export type Lod = 'lod1' | 'lod2' | 'lod3' | 'lod4'
 
+/** プレビューに重ねる PLATEAU レイヤー（brid=橋梁, tran=交通/道路）。 */
+export type LayerType = 'brid' | 'tran'
+
 export type ExportFormat = '3mf' | 'stl' | 'machimoki'
 
 export interface ExportOptions {
@@ -58,6 +61,14 @@ export interface ExportOptions {
   splitAtGround?: boolean
   // 側面・底面への刻印設定。enabled のときだけ完成形状に彫り込む。
   engraving?: EngravingOptions
+  // 橋梁レイヤーの形状をエクスポートに含める。デフォルト false。
+  includeBridges?: boolean
+  // 道路レイヤーの範囲を地形の色替えとしてエクスポートに反映する。
+  // 形状は変えない。デフォルト false。
+  includeRoads?: boolean
+  // 3MF に同梱する橋梁・道路の色（#RRGGBB）。
+  bridgeColor?: string
+  roadColor?: string
 }
 
 export interface ExportRequest {
@@ -133,6 +144,12 @@ export interface ValidationResult {
 export interface RawMesh {
   positions: Float32Array
   indices: Uint32Array
+}
+
+/** 橋梁・道路レイヤーのメッシュ（engine 座標・実寸メートル）。 */
+export interface LayerMeshes {
+  brid: RawMesh[]
+  tran: RawMesh[]
 }
 
 export interface CatalogResult {

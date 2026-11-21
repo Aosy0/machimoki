@@ -60,6 +60,7 @@ export {
   exportToSTL,
   mergeRawMeshes,
   exportMeshesTo3MF,
+  exportMeshWithTriangleColorsTo3MF,
   importFrom3MF,
   importFromSTL,
   removeTinyShells,
@@ -72,6 +73,8 @@ export type {
   Bounds,
   ExportOptions,
   ExportResult,
+  LayerMeshes,
+  LayerType,
   RawMesh,
   SplitExportParts,
   UpAxis,
@@ -119,7 +122,15 @@ export type {
 
 export { buildPrintableModel } from './pipeline.js'
 
-export { buildBuildingMeshes } from './meshBuilder.js'
+export { buildBuildingMeshes, buildLayerMeshes } from './meshBuilder.js'
+export type { BuildLayerMeshesOptions } from './meshBuilder.js'
+
+export { assignTriangleColors } from './exportColors.js'
+export type {
+  ExportMeshColors,
+  TriangleColorOptions,
+  TriangleColorResult,
+} from './exportColors.js'
 export { buildTerrainMesh, sampleTerrainGrid, buildTerrainSlabFromSample } from './terrain.js'
 export type { TerrainSample } from './terrain.js'
 
