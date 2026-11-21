@@ -28,11 +28,13 @@ import {
   createManifoldFromMesh,
   createSlicePrism,
   createZipBuffer,
+  exportMeshWithTriangleColorsTo3MF,
   exportMeshesToSTL,
   exportTo3MF,
   exportToSTL,
   unionManifolds,
 } from './manifoldOps.js'
+import { assignTriangleColors } from './exportColors.js'
 import { MIN_FRAME_HEIGHT_MM, splitFrameAndBuildings } from './frameSplit.js'
 import {
   BASE_EXTENSION_MM,
@@ -617,6 +619,8 @@ export interface PrintableGeometryResult {
 
 /** シリアライズ前の内部結果。Manifold の所有権は呼び出し側に移る。 */
 interface PrintableGeometryBuild {
+  /** スケール適用後の橋梁・道路メッシュ（色分け用）。 */
+  scaledLayerMeshes?: LayerMeshes | null
   /** 非分割時の完成 Manifold（分割時は undefined） */
   manifold?: Manifold
   /** 分割前の合体メッシュ（captureMergedMesh 時のみ） */
@@ -696,6 +700,7 @@ async function buildPrintableGeometry(
   bounds: Bounds,
   options: ExportOptions,
   captureMergedMesh = false,
+  layerMeshes?: LayerMeshes | null,
 ): Promise<PrintableGeometryBuild> {
   const scale = options.scale ?? 1
   const includeSpanning = options.includeSpanningBuildings ?? false
@@ -766,6 +771,28 @@ async function buildPrintableGeometry(
   if (terrainMesh && scale !== 1) {
     terrainMesh = scaleRawMesh(terrainMesh, scale)
   }
+  // 橋梁・道路レイヤーはスケール後のモデル座標に揃える。橋梁は形状を union
+  // し、道路は形状を変えず色分けの判定にだけ使う。
+  let scaledLayerMeshes: LayerMeshes | null = null
+  const bridgeManifolds: Manifold[] = []
+  if (layerMeshes && (options.includeBridges || options.includeRoads)) {
+    scaledLayerMeshes = {
+      brid: layerMeshes.brid.map((mesh) => scaleRawMesh(mesh, scale)),
+      tran: layerMeshes.tran.map((mesh) => scaleRawMesh(mesh, scale)),
+    }
+    if (options.includeBridges) {
+      for (const bridgeMesh of scaledLayerMeshes.brid) {
+        if (bridgeMesh.indices.length === 0) continue
+        try {
+          bridgeManifolds.push(await createManifoldFromMesh(bridgeMesh))
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          warnings.push(`橋梁メッシュを読み込めませんでした: ${message}`)
+        }
+      }
+    }
+  }
+
   let terrainMinY = Infinity
   if (hollowActive && terrainMesh) {
     const positions = terrainMesh.positions
@@ -908,7 +935,7 @@ async function buildPrintableGeometry(
   // cavities) so the model has one connected interior and an open underside.
   // 建物は既に Manifold なので、メッシュへ戻して再インポートする往復をせず
   // 直接 union する。地形だけは RawMesh から1回だけ Manifold 化する。
-  if (!terrainMesh && buildingManifolds.length === 0) {
+  if (!terrainMesh && buildingManifolds.length === 0 && bridgeManifolds.length === 0) {
     throw new Error('No printable meshes generated for the requested bounds')
   }
 
@@ -917,12 +944,23 @@ async function buildPrintableGeometry(
   let union: Manifold
   try {
     union = await unionManifolds(
-      terrainManifold ? [terrainManifold, ...buildingManifolds] : buildingManifolds,
+      terrainManifold
+        ? [terrainManifold, ...buildingManifolds, ...bridgeManifolds]
+        : [...buildingManifolds, ...bridgeManifolds],
     )
   } catch (error) {
-    // union が失敗したら地形の一時 Manifold をここで破棄する。
-    terrainManifold?.delete()
-    throw error
+    const message = error instanceof Error ? error.message : String(error)
+    if (bridgeManifolds.length === 0) {
+      // union が失敗したら地形の一時 Manifold をここで破棄する。
+      terrainManifold?.delete()
+      throw error
+    }
+    // 橋梁データは地形と交差する箇所の形状が崩れていることがある。
+    // 橋梁を除外して再試行し、建物・地形の出力は失わない。
+    warnings.push(`橋梁の合成に失敗したため橋梁を除外しました: ${message}`)
+    union = await unionManifolds(
+      terrainManifold ? [terrainManifold, ...buildingManifolds] : buildingManifolds,
+    )
   }
   timings.union = performance.now() - unionStart
   let final: Manifold = union
@@ -1046,6 +1084,7 @@ async function buildPrintableGeometry(
         mesh,
         split,
         terrainMesh,
+        scaledLayerMeshes,
         warnings,
         hollowing: hollowingReport,
         timings,
@@ -1057,6 +1096,7 @@ async function buildPrintableGeometry(
     return {
       manifold: final,
       terrainMesh,
+      scaledLayerMeshes,
       warnings,
       hollowing: hollowingReport,
       timings,
@@ -1066,6 +1106,7 @@ async function buildPrintableGeometry(
     if (!transferred) final.delete()
     terrainManifold?.delete()
     for (const manifold of buildingManifolds) manifold.delete()
+    for (const manifold of bridgeManifolds) manifold.delete()
     for (const cutter of buildingCutters) cutter.delete()
     buildingCutterUnion?.delete()
   }
@@ -1179,15 +1220,30 @@ export async function buildPrintableModelFromMeshes(
   options: ExportOptions,
   layerMeshes?: LayerMeshes | null,
 ): Promise<ExportResult> {
-  void layerMeshes
   if (options.format === 'machimoki') {
     throw new Error(
       "format 'machimoki' is not supported by buildPrintableModelFromMeshes; use exportMachimokiFromMeshes instead",
     )
   }
 
-  const build = await buildPrintableGeometry(buildingMeshes, terrainMesh, bounds, options)
+  const build = await buildPrintableGeometry(
+    buildingMeshes,
+    terrainMesh,
+    bounds,
+    options,
+    false,
+    layerMeshes,
+  )
   const { warnings, hollowing } = build
+  if (options.includeBridges && !(layerMeshes?.brid.length ?? 0)) {
+    warnings.push('橋梁データを取得できなかったため、橋梁は含まれていません')
+  }
+  if (options.includeRoads && !(layerMeshes?.tran.length ?? 0)) {
+    warnings.push('道路データを取得できなかったため、道路の色分けは行われていません')
+  }
+  if (options.splitAtGround && (options.includeBridges || options.includeRoads)) {
+    warnings.push('分割エクスポートでは橋梁・道路の色分けには対応していません')
+  }
   const upAxis = options.upAxis ?? 'z-up'
   try {
     if (options.splitAtGround) {
@@ -1216,15 +1272,26 @@ export async function buildPrintableModelFromMeshes(
       return { buffer: exportMeshesToSTL([mesh], upAxis), warnings, hollowing }
     }
 
-    // 完成 Manifold をそのまま 3MF 化する（メッシュ経由の再インポートを避ける）。
-    const modelColor = terrainMesh
-      ? (options.terrainColor ?? '#ffffff')
-      : (options.buildingColor ?? '#ffffff')
+    // 完成メッシュの三角形ごとに地形・建物・橋梁・道路の色を割り当てる。
+    // 1つの object のまま色分けするので、スライサーで分割オブジェクト扱いに
+    // ならない。
+    const mesh = rawMeshFromManifold(build.manifold)
+    const colors = assignTriangleColors({
+      mesh,
+      terrainMesh: build.terrainMesh,
+      bridgeMeshes: build.scaledLayerMeshes?.brid,
+      roadMeshes: build.scaledLayerMeshes?.tran,
+      scale: options.scale ?? 1,
+      colors: {
+        terrain: options.terrainColor ?? '#ffffff',
+        building: options.buildingColor ?? '#ffffff',
+        bridge: options.bridgeColor ?? '#8fa3ad',
+        road: options.roadColor ?? '#7d7d7d',
+      },
+    })
     const metadata = engravingMetadata(options)
     return {
-      buffer: metadata
-        ? await exportTo3MF(build.manifold, modelColor, upAxis, metadata)
-        : await exportTo3MF(build.manifold, modelColor, upAxis),
+      buffer: exportMeshWithTriangleColorsTo3MF(mesh, colors, upAxis, metadata),
       warnings,
       hollowing,
     }

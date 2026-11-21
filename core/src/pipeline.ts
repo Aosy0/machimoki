@@ -2,8 +2,8 @@
  * High-level orchestration pipeline: bounds + options -> printable model buffer.
  */
 
-import { Bounds, ExportOptions, ExportResult, RawMesh } from './types.js'
-import { buildBuildingMeshes } from './meshBuilder.js'
+import { Bounds, ExportOptions, ExportResult, LayerMeshes, RawMesh } from './types.js'
+import { buildBuildingMeshes, buildLayerMeshes } from './meshBuilder.js'
 import { buildTerrainMesh } from './terrain.js'
 import { printedMmToModelMeters } from './pipelineCore.js'
 import { createMachimokiBuffer } from './machimokiFormat.js'
@@ -58,17 +58,28 @@ async function buildPrintableModelUnsafe(
 
   const buildingMeshes = await buildBuildingMeshes(bounds, lod, options.excludedGmlIds)
 
-  const terrainMesh = includeTerrain
-    ? await buildTerrainMesh(
-        bounds,
-        printedMmToModelMeters(options.terrainThickness, scale),
-        options.flattenBottom,
-        options.terrainGridSize,
-        options.reflectActualElevation ?? false,
-      )
-    : null
+  const wantsLayers = (options.includeBridges ?? false) || (options.includeRoads ?? false)
+  const [terrainMesh, layerMeshes] = await Promise.all([
+    includeTerrain
+      ? buildTerrainMesh(
+          bounds,
+          printedMmToModelMeters(options.terrainThickness, scale),
+          options.flattenBottom,
+          options.terrainGridSize,
+          options.reflectActualElevation ?? false,
+        )
+      : Promise.resolve(null),
+    (async (): Promise<LayerMeshes | null> => {
+      if (!wantsLayers) return null
+      const [brid, tran] = await Promise.all([
+        options.includeBridges ? buildLayerMeshes(bounds, 'brid', { lod }) : Promise.resolve([]),
+        options.includeRoads ? buildLayerMeshes(bounds, 'tran', { lod }) : Promise.resolve([]),
+      ])
+      return { brid, tran }
+    })(),
+  ])
 
-  return buildPrintableModelFromMeshes(buildingMeshes, terrainMesh, bounds, options)
+  return buildPrintableModelFromMeshes(buildingMeshes, terrainMesh, bounds, options, layerMeshes)
 }
 
 export interface MachimokiExportResult extends ExportResult {
