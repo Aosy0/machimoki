@@ -299,7 +299,8 @@ function ParameterPanel({
         color: 'var(--text)',
         display: 'flex',
         flexDirection: 'column',
-        overflowY: 'auto',
+        // スクロールするのは中身だけ。エクスポートは常に右下に残す。
+        overflow: 'hidden',
       }}
     >
       {mobile && (
@@ -322,7 +323,17 @@ function ParameterPanel({
           />
         </div>
       )}
-      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          padding: 16,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 24,
+        }}
+      >
         <div
           style={{
             display: 'flex',
@@ -775,11 +786,10 @@ function ParameterPanel({
 
       <div
         style={{
+          flexShrink: 0,
           padding: 16,
           borderTop: '1px solid var(--border)',
           background: 'var(--bg)',
-          position: 'sticky',
-          bottom: 0,
         }}
       >
         <button
