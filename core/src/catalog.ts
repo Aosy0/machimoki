@@ -2,7 +2,7 @@
  * GSI reverse geocoding + PLATEAU catalog API client.
  */
 
-import type { Lod } from './types.js'
+import type { LayerType, Lod } from './types.js'
 
 const GSI_REVERSE_GEOCODER_URL =
   'https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress'
@@ -350,6 +350,29 @@ export async function getMuniAvailableLods(muniCode: string): Promise<Lod[]> {
     }
   }
   return LOD_ORDER.filter((lod) => found.has(lod))
+}
+
+/**
+ * レイヤー（橋梁・道路）でその自治体が公開している LOD を返す。
+ * レイヤー未整備なら空配列。
+ */
+export async function getMuniAvailableLayerLods(
+  _muniCode: string,
+  _layer: LayerType,
+): Promise<Lod[]> {
+  throw new Error('getMuniAvailableLayerLods is not implemented')
+}
+
+/**
+ * レイヤー（橋梁・道路）の tileset URL を返す。要求 LOD が無ければ最も詳細な
+ * 公開 LOD へフォールバックする。未整備なら null。
+ */
+export async function findLayerTilesetUrl(
+  _muniCode: string,
+  _layer: LayerType,
+  _requestedLod: Lod,
+): Promise<{ url: string; actualLod: Lod } | null> {
+  throw new Error('findLayerTilesetUrl is not implemented')
 }
 
 export async function findBestTilesetUrl(

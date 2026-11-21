@@ -6,7 +6,7 @@ import { Cartesian3, Cesium3DTileset, Math as CesiumMath, Matrix4, Transforms } 
 import { WebIO } from '@gltf-transform/core'
 import { KHRDracoMeshCompression } from '@gltf-transform/extensions'
 import type { Accessor, Primitive } from '@gltf-transform/core'
-import type { Bounds, Lod, RawMesh } from './types.js'
+import type { Bounds, LayerType, Lod, RawMesh } from './types.js'
 import { findBestTilesetUrl, resolveMuniCodes } from './catalog.js'
 
 let dracoDecoderPromise: Promise<unknown> | null = null
@@ -555,6 +555,24 @@ function primitiveToRawMesh(
   }
 
   return { positions: transformedPositions, indices: filteredIndices }
+}
+
+export interface BuildLayerMeshesOptions {
+  /** 要求 LOD。未指定ならその自治体で最も詳細な LOD。 */
+  lod?: Lod
+}
+
+/**
+ * 橋梁・道路レイヤーのメッシュを選択範囲内のタイルから取得する。
+ * 座標系は buildBuildingMeshes と同じ（選択範囲中心の ENU、実寸メートル、
+ * x=東, y=上, z=南）。レイヤー未整備なら空配列。
+ */
+export async function buildLayerMeshes(
+  _bounds: Bounds,
+  _layer: LayerType,
+  _options: BuildLayerMeshesOptions = {},
+): Promise<RawMesh[]> {
+  throw new Error('buildLayerMeshes is not implemented')
 }
 
 export async function buildBuildingMeshes(

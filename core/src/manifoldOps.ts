@@ -237,6 +237,21 @@ export async function createSlicePrism(
  *   values are XML-escaped. 3MF can carry text that does not fit on the model;
  *   STL cannot.
  */
+/**
+ * 三角形ごとに色を持つ 3MF を生成する。
+ *
+ * 1つの object の material に <m:colorgroup> を置き、各 <triangle> の
+ * pid/p1 で色を上書きする。単色（白のみ）なら material 拡張を出さない。
+ */
+export function exportMeshWithTriangleColorsTo3MF(
+  _mesh: RawMesh,
+  _colors: { palette: string[]; perTriangle: Uint8Array },
+  _upAxis: UpAxis = 'z-up',
+  _metadata?: Record<string, string>,
+): Uint8Array {
+  throw new Error('exportMeshWithTriangleColorsTo3MF is not implemented')
+}
+
 export async function exportTo3MF(
   manifold: Manifold,
   color?: string,
