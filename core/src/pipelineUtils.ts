@@ -12,6 +12,7 @@ import {
   ExportResult,
   HollowingRecord,
   HollowingReport,
+  LayerMeshes,
   RawMesh,
   SplitExportParts,
 } from './types.js'
@@ -1176,7 +1177,9 @@ export async function buildPrintableModelFromMeshes(
   terrainMesh: RawMesh | null,
   bounds: Bounds,
   options: ExportOptions,
+  layerMeshes?: LayerMeshes | null,
 ): Promise<ExportResult> {
+  void layerMeshes
   if (options.format === 'machimoki') {
     throw new Error(
       "format 'machimoki' is not supported by buildPrintableModelFromMeshes; use exportMachimokiFromMeshes instead",
