@@ -8,7 +8,7 @@
     <title>PLATEAUの3D都市モデルを3Dプリント用に無料変換｜Machimoki</title>
     <meta
       name="description"
-      content="国土交通省PLATEAUの3D都市モデルから、3Dプリンター用のSTL / 3MFを無料で作成。地図で範囲を選ぶだけ、登録不要・料金なし。地形・建物・刻印・中空シェルまでブラウザ内で処理します。"
+      content="国土交通省PLATEAUの3D都市モデルから、3Dプリンター用のSTL / 3MFを無料で作成。地図で範囲を選ぶだけ、登録不要・料金なし。地形・建物・道路・橋梁・刻印・中空シェルまでブラウザ内で処理します。"
     />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
     <link rel="canonical" href="https://machimoki.aosy.f5.si/plateau-3dprint/" />
@@ -34,7 +34,7 @@
     />
     <meta name="twitter:image" content="https://machimoki.aosy.f5.si/og.png" />
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Machimoki","url":"https://machimoki.aosy.f5.si/","applicationCategory":"DesignApplication","operatingSystem":"Web","inLanguage":"ja","description":"国土交通省PLATEAUの3D都市モデルから、3Dプリント用のSTL / 3MFを無料で作成できるWebツール。","offers":{"@type":"Offer","price":"0","priceCurrency":"JPY"}}</script>
-    <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Machimokiは本当に無料ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。料金はかかりません。アカウント登録も不要で、地図で範囲を選んでそのままSTL / 3MFを書き出せます。"}},{"@type":"Question","name":"PLATEAUのデータはどこから取得していますか？","acceptedAnswer":{"@type":"Answer","text":"国土交通省 Project PLATEAU が公開している3D Tiles（建築物モデル）と、PLATEAUの地形タイル、背景地図に国土地理院の地理院タイルを使用しています。"}},{"@type":"Question","name":"3Dプリントした模型は届きますか？","acceptedAnswer":{"@type":"Answer","text":"いいえ。このサイトは3Dプリント用のデータ（STL / 3MF）を作るツールです。印刷はお手持ちの3Dプリンター、または印刷サービスで行ってください。"}},{"@type":"Question","name":"生成したデータは商用利用できますか？","acceptedAnswer":{"@type":"Answer","text":"はい。PLATEAUの3D都市モデルはCC BY 4.0で提供されており、出典（© PLATEAU）を表示すれば商用利用できます。"}},{"@type":"Question","name":"3MFとSTLはどちらを選べばよいですか？","acceptedAnswer":{"@type":"Answer","text":"通常は3MFをおすすめします。単位（mm）やメタデータを保持でき、スライサーでの取り扱いも安定します。STLは最も一般的な形式で、ほぼすべてのスライサーで開けます。"}},{"@type":"Question","name":"道路や鉄道も含めることはできますか？","acceptedAnswer":{"@type":"Answer","text":"現状の対象は地形と建物（LOD1 / LOD2）です。道路・橋梁・鉄道・植生は含められません。これらを含む模型が必要な場合は、対応している作成サービスの利用をご検討ください。"}},{"@type":"Question","name":"Blenderなどで自分で変換するのと何が違いますか？","acceptedAnswer":{"@type":"Answer","text":"自作の場合、PLATEAUデータのダウンロード、建物メッシュの結合、地面との隙間の埋め、土台の作成、スケール調整を自分で行う必要があります。Machimokiはこの工程を自動化し、水密な1つのメッシュとしてSTL / 3MFに書き出します。"}}]}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Machimokiは本当に無料ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。料金はかかりません。アカウント登録も不要で、地図で範囲を選んでそのままSTL / 3MFを書き出せます。"}},{"@type":"Question","name":"PLATEAUのデータはどこから取得していますか？","acceptedAnswer":{"@type":"Answer","text":"国土交通省 Project PLATEAU が公開している3D Tiles（建築物モデル）と、PLATEAUの地形タイル、背景地図に国土地理院の地理院タイルを使用しています。"}},{"@type":"Question","name":"3Dプリントした模型は届きますか？","acceptedAnswer":{"@type":"Answer","text":"いいえ。このサイトは3Dプリント用のデータ（STL / 3MF）を作るツールです。印刷はお手持ちの3Dプリンター、または印刷サービスで行ってください。"}},{"@type":"Question","name":"生成したデータは商用利用できますか？","acceptedAnswer":{"@type":"Answer","text":"はい。PLATEAUの3D都市モデルはCC BY 4.0で提供されており、出典（© PLATEAU）を表示すれば商用利用できます。"}},{"@type":"Question","name":"3MFとSTLはどちらを選べばよいですか？","acceptedAnswer":{"@type":"Answer","text":"通常は3MFをおすすめします。単位（mm）やメタデータを保持でき、スライサーでの取り扱いも安定します。STLは最も一般的な形式で、ほぼすべてのスライサーで開けます。"}},{"@type":"Question","name":"道路や鉄道も含めることはできますか？","acceptedAnswer":{"@type":"Answer","text":"道路と橋梁は、自治体が3Dデータを整備している範囲で含められます。操作パネルの「橋」「道路」で選択してください。鉄道・植生は現状の対象外です。どうしても必要な場合は、対応している作成サービスの利用をご検討ください。"}},{"@type":"Question","name":"Blenderなどで自分で変換するのと何が違いますか？","acceptedAnswer":{"@type":"Answer","text":"自作の場合、PLATEAUデータのダウンロード、建物メッシュの結合、地面との隙間の埋め、土台の作成、スケール調整を自分で行う必要があります。Machimokiはこの工程を自動化し、水密な1つのメッシュとしてSTL / 3MFに書き出します。"}}]}</script>
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Machimoki","item":"https://machimoki.aosy.f5.si/"},{"@type":"ListItem","position":2,"name":"PLATEAU 3Dプリント","item":"https://machimoki.aosy.f5.si/plateau-3dprint/"}]}</script>
   </head>
   <body class="page-lp">
@@ -72,7 +72,7 @@
               <span class="hero__accent">3Dプリント</span>できる<span class="nobr">データに</span>
             </h1>
             <p class="hero__lead">
-              地図で範囲を選ぶだけで、国土交通省PLATEAUの建物と地形から、3Dプリンターで使える水密な
+              地図で範囲を選ぶだけで、国土交通省PLATEAUの建物・地形・道路・橋梁から、3Dプリンターで使える水密な
               STL / 3MF を作ります。登録も料金も不要で、処理はブラウザの中で完結します。
             </p>
             <div class="cta-row">
@@ -130,7 +130,7 @@
               <h3>地形・建物・刻印を調整する</h3>
               <p>
                 地形の厚み、底面のフラット化、LOD（建物の詳細度）、中空シェル、土台と建物の分割、
-                底面・側面への文字の刻印などを設定します。3Dプレビューで仕上がりを確認できます。
+                底面・側面への文字の刻印、橋・道路の重ね表示（整備自治体のみ）を設定します。3Dプレビューで仕上がりを確認できます。
               </p>
             </li>
             <li>
@@ -186,6 +186,13 @@
               <p>
                 3Dプレビュー上で建物をクリックして除外できます。目立たせたい建物だけを残したり、
                 印刷しやすいボリュームに調整したりできます。
+              </p>
+            </li>
+            <li class="card">
+              <h3>道路・橋梁の重ね表示</h3>
+              <p>
+                自治体が道路・橋梁モデルを整備している範囲では、道路と橋梁を模型に加えられます。
+                3MFでは地形・建物・道路・橋梁を色分けして書き出します。
               </p>
             </li>
           </ul>
@@ -273,7 +280,7 @@
                 </tr>
                 <tr>
                   <th scope="row">含められる地物</th>
-                  <td>地形・建物（LOD1 / LOD2）</td>
+                  <td>地形・建物・道路・橋梁（道路・橋梁は自治体の整備状況による）</td>
                   <td>地形・建物・植生・道路・橋梁・鉄道・水部</td>
                 </tr>
                 <tr>
@@ -291,7 +298,7 @@
           </p>
           <div class="prose">
             <p>
-              道路・植生・鉄道まで含めたい場合や、自分で作業せずデータだけ受け取りたい場合は、
+              植生・鉄道まで含めたい場合や、自分で作業せずデータだけ受け取りたい場合は、
               有料サービスが向いています。一方、<strong>地形と建物を自分の用途に合わせて加工したい</strong>、
               <strong>刻印や中空化まで自分でコントロールしたい</strong>、<strong>何度も試したい</strong>場合は
               Machimoki が向いています。
@@ -310,6 +317,7 @@
             <ul>
               <li>建物: PLATEAU 建築物モデル（LOD1 / LOD2）</li>
               <li>地形: PLATEAU 地形モデル（quantized-mesh）</li>
+              <li>道路・橋梁: PLATEAU 道路モデル・橋梁モデル（整備自治体のみ）</li>
               <li>背景地図: 国土地理院 地理院タイル</li>
             </ul>
             <p>
@@ -358,7 +366,7 @@
             <details>
               <summary>道路や鉄道も含めることはできますか？</summary>
               <div class="faq__answer">
-                <p>現状の対象は地形と建物（LOD1 / LOD2）です。道路・橋梁・鉄道・植生は含められません。これらを含む模型が必要な場合は、対応している作成サービスの利用をご検討ください。</p>
+                <p>道路と橋梁は、自治体が3Dデータを整備している範囲で含められます。操作パネルの「橋」「道路」で選択してください。鉄道・植生は現状の対象外です。どうしても必要な場合は、対応している作成サービスの利用をご検討ください。</p>
               </div>
             </details>
             <details>
