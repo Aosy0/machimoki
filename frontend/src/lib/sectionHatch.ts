@@ -15,6 +15,7 @@ import {
   ShadowMode,
 } from 'cesium'
 import type { RawMesh } from '@machimoki/core'
+import { CAD_LIGHTING_GLSL } from './cadShader'
 import { pickSectionColor } from './sectionColor'
 
 /** 切断面の陰影係数（CAD調の光量に合わせて少し落とす）。 */
@@ -41,6 +42,7 @@ in float batchId;
 in vec2 hatchUV;
 
 out vec3 v_positionEC;
+out vec3 v_normalEC;
 out vec4 v_color;
 out vec2 v_hatch;
 
@@ -49,6 +51,7 @@ void main()
     vec4 p = czm_computePosition();
 
     v_positionEC = (czm_modelViewRelativeToEye * p).xyz;
+    v_normalEC = czm_normal * normal;
     v_color = color;
     v_hatch = hatchUV;
 
@@ -61,14 +64,15 @@ void main()
  * 一定の明るさにし、陰影の有無を比較できるようにする。
  */
 export function hatchFragmentShader(flatShading: boolean): string {
-  // flatShading=false はCAD調と同じ面法線＋環境光ベースの陰影にする。
-  const lightFactor = flatShading
-    ? '1.0'
-    : 'clamp(0.61 + 0.95 * max(dot(normalize(cross(dFdx(v_positionEC), dFdy(v_positionEC))), normalize(czm_lightDirectionEC)), 0.0), 0.0, 1.0)'
+  // flatShading=false はCAD調（建物・地形・最終形状）と同じ明るさ式を使う。
+  const lightFactor = flatShading ? '1.0' : 'cadLightFactor(v_positionEC, v_normalEC)'
   return `
 in vec3 v_positionEC;
+in vec3 v_normalEC;
 in vec4 v_color;
 in vec2 v_hatch;
+
+${CAD_LIGHTING_GLSL}
 
 void main()
 {
