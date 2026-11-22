@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useHasCoarsePointer, useIsCompactLayout } from '../hooks/useMediaQuery'
 import {
   Viewer,
@@ -48,6 +48,7 @@ CreditDisplay.cesiumCredit = new Credit('© Cesium', true)
 import type { SelectionBounds } from '../hooks/useRectangleSelection'
 import type { PreviewQualityProfile } from '../lib/previewQuality'
 import { sunLightDirection } from '../lib/previewLighting'
+import { placeHoverCard, type Box } from '../lib/hoverCardPlacement'
 import { LAYER_COLORS } from '../lib/layerColors'
 import { CAD_LIGHTING_GLSL } from '../lib/cadShader'
 import type { PipelineState } from '../types/pipeline'
@@ -551,6 +552,7 @@ function ContourDebugPanel({
   return (
     <div
       data-testid="contour-debug"
+      data-overlay-zone="contour-debug"
       style={{
         position: 'absolute',
         top: '90px',
@@ -843,6 +845,7 @@ export default function Preview3D({
   onEngravingPositionChange,
   engravingMode = false,
 }: Preview3DProps) {
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<Viewer | null>(null)
   const tilesetsRef = useRef<Cesium3DTileset[]>([])
@@ -1048,8 +1051,12 @@ export default function Preview3D({
   const [excludedIdsState, setExcludedIdsState] = useState<string[]>([])
   const [buildingItems, setBuildingItems] = useState<BuildingListItem[]>([])
   const [listLoading, setListLoading] = useState(false)
-  const [loadedTiles, setLoadedTiles] = useState<number | null>(null)
   const [buildingLoadProgress, setBuildingLoadProgress] = useState<number | null>(null)
+  // 3D側でカーソルが合っている建物。一覧の外部ハイライトとDEVの詳細カードに使う。
+  const [hoveredBuildingId, setHoveredBuildingId] = useState<string | null>(null)
+  const hoveredBuildingIdRef = useRef<string | null>(null)
+  const devCardRef = useRef<HTMLDivElement | null>(null)
+  const devCardCursorRef = useRef<{ x: number; y: number } | null>(null)
   const [coverageWarning, setCoverageWarning] = useState<string | null>(null)
   const [forceBuildingsBounds, setForceBuildingsBounds] = useState<SelectionBounds | null>(null)
   const [canForceBuildings, setCanForceBuildings] = useState(false)
@@ -1063,6 +1070,9 @@ export default function Preview3D({
     Map<Cesium3DTileset, (pending: number, processing: number) => void>
   >(new Map())
   const progressThrottleRef = useRef(0)
+  // 一覧のローディング表示は初回構築の間だけ。カメラ移動によるタイル精細化では出さない。
+  const listLoadSettledRef = useRef(true)
+  const listSettleTimerRef = useRef<number | null>(null)
   const listRafRef = useRef<number | null>(null)
   const fpsGuardCleanupRef = useRef<(() => void) | null>(null)
   const statsCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1292,6 +1302,7 @@ export default function Preview3D({
       if (getBuildingId(feature) === id && feature.show) feature.show = false
     })
     setHoveredFeature(null)
+    clearHoveredBuilding()
     commitExclusions()
   }
 
@@ -1313,6 +1324,75 @@ export default function Preview3D({
       setHoveredFeature(feature)
     })
   }
+
+  /** 3D側のホバー対象（建物ID）を解除する。DEVカードと一覧の外部ハイライトも消える。 */
+  const clearHoveredBuilding = (): void => {
+    hoveredBuildingIdRef.current = null
+    setHoveredBuildingId(null)
+    devCardCursorRef.current = null
+  }
+
+  /**
+   * DEVの建物詳細カードをカーソル近傍へ置く。
+   * UIパネル（data-overlay-zone）とフォーカス中の操作要素に重ならない位置を選ぶ。
+   */
+  const placeDevCard = (): void => {
+    const card = devCardRef.current
+    const cursor = devCardCursorRef.current
+    const wrapper = wrapperRef.current
+    if (!card || !cursor || !wrapper) return
+    const wrapperRect = wrapper.getBoundingClientRect()
+    const obstacles: Box[] = []
+    for (const el of wrapper.querySelectorAll<HTMLElement>('[data-overlay-zone]')) {
+      const rect = el.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) continue
+      obstacles.push({
+        left: rect.left - wrapperRect.left,
+        top: rect.top - wrapperRect.top,
+        width: rect.width,
+        height: rect.height,
+      })
+    }
+    // キーボード操作中の要素もカードで隠さない（WCAG 2.4.11）。
+    const active = document.activeElement
+    if (active instanceof HTMLElement && wrapper.contains(active)) {
+      const rect = active.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        obstacles.push({
+          left: rect.left - wrapperRect.left,
+          top: rect.top - wrapperRect.top,
+          width: rect.width,
+          height: rect.height,
+        })
+      }
+    }
+    const position = placeHoverCard({
+      cursor,
+      size: { width: card.offsetWidth, height: card.offsetHeight },
+      bounds: { width: wrapper.clientWidth, height: wrapper.clientHeight },
+      obstacles,
+    })
+    card.style.transform = `translate(${position.x}px, ${position.y}px)`
+  }
+
+  // カードのマウント直後とDEVのON/OFFで位置を合わせる。
+  useLayoutEffect(() => {
+    if (isDevMode && hoveredBuildingId) placeDevCard()
+  }, [isDevMode, hoveredBuildingId])
+
+  // ウィンドウサイズやフォーカスが変わっても操作要素に重ねない。
+  useEffect(() => {
+    if (!hoveredBuildingId) return
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    const reflow = (): void => placeDevCard()
+    window.addEventListener('resize', reflow)
+    wrapper.addEventListener('focusin', reflow)
+    return () => {
+      window.removeEventListener('resize', reflow)
+      wrapper.removeEventListener('focusin', reflow)
+    }
+  }, [hoveredBuildingId])
 
   // Preview is in real-scale meters, so the in-scene thickness keeps the same
   // proportion as the printed model (thicknessMm converted via export scale).
@@ -1554,8 +1634,12 @@ export default function Preview3D({
     const creditContainer = document.createElement('div')
     creditContainer.style.display = 'none'
 
+    // 建物クリックは自前の「除外」操作に使う。Cesium 既定の選択は InfoBox（建物詳細の
+    // ダイアログ）と選択インジケータを出すため無効化する。
     const viewer = new Viewer(containerRef.current, {
       creditContainer,
+      infoBox: false,
+      selectionIndicator: false,
       // Cesium 既定の白い全画面ボタンは自前の操作系に合わない。
       fullscreenButton: false,
       baseLayerPicker: false,
@@ -1967,9 +2051,15 @@ export default function Preview3D({
     progressThrottleRef.current = 0
     pendingMapRef.current.clear()
     setBuildingItems([])
+    // 次の構築まで一覧のローディングは出さない（カメラ移動による精細化では出さない）。
+    if (listSettleTimerRef.current !== null) {
+      window.clearTimeout(listSettleTimerRef.current)
+      listSettleTimerRef.current = null
+    }
+    listLoadSettledRef.current = false
     setListLoading(false)
-    setLoadedTiles(null)
     setBuildingLoadProgress(null)
+    clearHoveredBuilding()
     setCoverageWarning(null)
     setCanForceBuildings(false)
     fpsGuardCleanupRef.current?.()
@@ -2312,37 +2402,23 @@ export default function Preview3D({
                   (a, b) => a + b,
                   0,
                 )
+                if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
+                // 初回構築の後は、カメラ移動で発生するタイル精細化を一覧の進捗に使わない。
+                if (listLoadSettledRef.current) return
                 const isLoading = currentSum > 0
                 // タイル毎の連続発火で再レンダーが増え地図描画を圧迫するため間引く。
-                // 完了時は必ず反映し、最大値の集計だけは毎回行う。
-                if (isLoading && performance.now() - progressThrottleRef.current < 200) {
-                  if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
-                  return
-                }
+                if (isLoading && performance.now() - progressThrottleRef.current < 200) return
                 progressThrottleRef.current = performance.now()
                 setListLoading(isLoading)
                 if (isLoading) {
-                  if (currentSum > maxTilesRef.current) maxTilesRef.current = currentSum
                   const max = maxTilesRef.current
                   const rawLoaded = Math.max(0, max - currentSum)
-                  setLoadedTiles((prev) => {
-                    const prevVal = prev ?? 0
-                    return Math.max(prevVal, rawLoaded)
-                  })
-                  const loadedForProgress = Math.max(loadedTiles ?? 0, rawLoaded)
-                  const ratio = max > 0 ? loadedForProgress / max : 0
+                  const ratio = max > 0 ? rawLoaded / max : 0
                   const p = 30 + ratio * 55
                   setBuildingLoadProgress((prev) =>
                     prev == null ? p : Math.max(prev, Math.min(85, p)),
                   )
                 } else {
-                  const max = maxTilesRef.current
-                  if (max > 0) {
-                    setLoadedTiles((prev) => {
-                      const prevVal = prev ?? 0
-                      return Math.max(prevVal, max)
-                    })
-                  }
                   setBuildingLoadProgress((prev) => (prev == null ? 90 : Math.max(prev, 90)))
                 }
               }
@@ -2401,13 +2477,15 @@ export default function Preview3D({
         tilesetsRef.current = loadedTilesets
         forEachBuildingFeature(applyStateToFeature)
         setBuildingLoadProgress(100)
-        if (maxTilesRef.current > 0) {
-          setLoadedTiles(maxTilesRef.current)
+        if (listSettleTimerRef.current !== null) {
+          window.clearTimeout(listSettleTimerRef.current)
         }
-        setTimeout(() => {
+        listSettleTimerRef.current = window.setTimeout(() => {
+          listSettleTimerRef.current = null
+          // 以後の精細化（カメラ移動）では一覧のヘッダーをローディングに切り替えない。
+          listLoadSettledRef.current = true
           setListLoading(false)
           setBuildingLoadProgress(null)
-          setLoadedTiles(null)
         }, 800)
         console.log('[Preview3D] Loaded tilesets:', loadedTilesets.length)
 
@@ -2845,6 +2923,8 @@ export default function Preview3D({
           return
         }
         console.error('[Preview3D]', err)
+        listLoadSettledRef.current = true
+        setListLoading(false)
         setBuildingLoadProgress(null)
         onPipelineStateChange?.({
           phase: 'error',
@@ -2861,6 +2941,10 @@ export default function Preview3D({
       cancelled = true
       cancelScheduled?.()
       estimateAbort.abort()
+      if (listSettleTimerRef.current !== null) {
+        window.clearTimeout(listSettleTimerRef.current)
+        listSettleTimerRef.current = null
+      }
       // ベース再読み込み中は最終形状を自動生成しない。待機中の要求があれば破棄する。
       baseReadyRef.current = false
       if (finalShapeAutoTimerRef.current !== null) {
@@ -4831,6 +4915,7 @@ export default function Preview3D({
       handlerRef.current?.destroy()
       handlerRef.current = null
       hoveredFeatureRef.current = null
+      clearHoveredBuilding()
       viewer.scene.canvas.style.cursor = 'default'
       return
     }
@@ -4850,11 +4935,20 @@ export default function Preview3D({
         // 橋梁・道路のフィーチャは建物として扱わない（除外・ハイライトの対象外）。
         const picked = asTileFeature(viewer.scene.pick(pos))
         const feature = picked && tilesetsRef.current.includes(picked.tileset) ? picked : null
-        if (feature === hoveredFeatureRef.current) return
-        setHoveredFeature(feature && feature.show ? feature : null)
+        const next = feature && feature.show ? feature : null
+        // 一覧パネルの外部ハイライトとDEVカードは、ハイライト色とは独立に追従させる。
+        const nextId = next ? getBuildingId(next) : null
+        if (nextId !== hoveredBuildingIdRef.current) {
+          hoveredBuildingIdRef.current = nextId
+          setHoveredBuildingId(nextId)
+        }
+        devCardCursorRef.current = { x: pos.x, y: pos.y }
+        if (isDevModeRef.current && nextId) placeDevCard()
+        if (next === hoveredFeatureRef.current) return
+        setHoveredFeature(next)
         // 刻印モード中はカーソルを grab/default で管理する（上書きしない）。
         if (!engravingEditActiveRef.current) {
-          canvas.style.cursor = feature && feature.show ? 'pointer' : 'default'
+          canvas.style.cursor = next ? 'pointer' : 'default'
         }
       })
     }, ScreenSpaceEventType.MOUSE_MOVE)
@@ -4871,12 +4965,24 @@ export default function Preview3D({
       excludeBuildingById(id)
     }, ScreenSpaceEventType.LEFT_CLICK)
 
+    // 3Dビューからポインタが外れたら、一覧の強調とDEVカードを残さない。
+    const onPointerLeave = (): void => {
+      if (handler.isDestroyed()) return
+      hoveredFeatureRef.current = null
+      setHoveredFeature(null)
+      clearHoveredBuilding()
+      if (!engravingEditActiveRef.current) canvas.style.cursor = 'default'
+    }
+    canvas.addEventListener('pointerleave', onPointerLeave)
+
     handlerRef.current = handler
 
     return () => {
+      canvas.removeEventListener('pointerleave', onPointerLeave)
       handler.destroy()
       handlerRef.current = null
       hoveredFeatureRef.current = null
+      clearHoveredBuilding()
       canvas.style.cursor = 'default'
     }
   }, [selectionBounds])
@@ -5002,8 +5108,12 @@ export default function Preview3D({
     terrainParamsNonce,
   ])
 
+  // DEV時だけ、3Dビューでカーソルが合っている建物の属性をカードで見せる。
+  const devHoveredBuilding =
+    isDevMode && hoveredBuildingId ? (registryRef.current.get(hoveredBuildingId) ?? null) : null
+
   return (
-    <div style={wrapperStyle}>
+    <div ref={wrapperRef} style={wrapperStyle}>
       <div ref={containerRef} data-testid="preview-canvas" style={containerStyle} />
       {/* 刻印オーバーレイ: 面ローカルmm座標（原点=左下、y上向き）で描き、
           transform は scene.postRender で毎フレーム matrix3d を設定する。 */}
@@ -5073,6 +5183,7 @@ export default function Preview3D({
       {!engravingMode && (
         <div
           data-testid="preview-view-controls"
+          data-overlay-zone="view-controls"
           style={{
             position: 'absolute',
             top: '16px',
@@ -5171,6 +5282,7 @@ export default function Preview3D({
       {!engravingMode && selectionBounds && (
         <div
           data-testid="final-shape-section-panel"
+          data-overlay-zone="section-panel"
           style={{
             position: 'absolute',
             top: '56px',
@@ -5243,6 +5355,7 @@ export default function Preview3D({
       {isDevMode && debugInfo && !isCompact && (
         <div
           data-testid="terrain-debug-info"
+          data-overlay-zone="terrain-debug"
           style={{
             position: 'absolute',
             bottom: '48px',
@@ -5272,6 +5385,7 @@ export default function Preview3D({
       {coverageWarning && (
         <div
           data-testid="coverage-warning"
+          data-overlay-zone="coverage-warning"
           style={{
             position: 'absolute',
             top: '56px',
@@ -5354,6 +5468,7 @@ export default function Preview3D({
       )}
       {selectionBounds && (
         <div
+          data-overlay-zone="selection-info"
           style={{
             position: 'absolute',
             top: isCompact ? 'auto' : '16px',
@@ -5410,6 +5525,7 @@ export default function Preview3D({
           excludedIds={excludedIdsState}
           listLoading={listLoading}
           loadingProgress={buildingLoadProgress}
+          hoveredId={hoveredBuildingId}
           onExclude={excludeBuildingById}
           onRestore={restoreBuildingById}
           onHoverItem={highlightBuildingById}
@@ -5420,8 +5536,58 @@ export default function Preview3D({
         scale={scale}
         onScaleChange={onScaleChange ?? (() => {})}
       />
+      {devHoveredBuilding && (
+        <div
+          ref={devCardRef}
+          data-testid="dev-building-card"
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            zIndex: 25,
+            pointerEvents: 'none',
+            background: 'var(--surface-solid)',
+            color: 'var(--text)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-panel)',
+            padding: '8px 10px',
+            fontSize: 12,
+            lineHeight: 1.5,
+            width: 'max-content',
+            maxWidth: 260,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: 'ui-monospace, "SF Mono", "Cascadia Mono", monospace',
+              fontSize: 11,
+              color: 'var(--text-dim)',
+              wordBreak: 'break-all',
+            }}
+          >
+            {devHoveredBuilding.id}
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'auto 1fr',
+              columnGap: 8,
+              marginTop: 4,
+            }}
+          >
+            <span style={{ color: 'var(--text-dim)' }}>高さ</span>
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {devHoveredBuilding.height != null ? `${devHoveredBuilding.height} m` : '—'}
+            </span>
+            <span style={{ color: 'var(--text-dim)' }}>用途</span>
+            <span>{devHoveredBuilding.usage ?? '—'}</span>
+          </div>
+        </div>
+      )}
       <div
         data-testid="preview-attribution"
+        data-overlay-zone="attribution"
         style={{
           position: 'absolute',
           bottom: '24px',
@@ -5441,6 +5607,7 @@ export default function Preview3D({
       {finalShapeOn && finalShapeWarnings.length > 0 && (
         <div
           data-testid="final-shape-warnings"
+          data-overlay-zone="final-shape-warnings"
           style={{
             position: 'absolute',
             bottom: '16px',

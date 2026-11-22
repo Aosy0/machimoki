@@ -100,7 +100,11 @@ export default function ModelSizeOverlay({
   const showReset = Math.abs(scale - autoScale) > 0.0001
 
   return (
-    <div style={panelStyle} onPointerDown={(e) => e.stopPropagation()}>
+    <div
+      data-overlay-zone="model-size"
+      style={panelStyle}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       <button
         type="button"
         style={dragHandleStyle}
