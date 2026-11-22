@@ -479,6 +479,26 @@ input[type="checkbox"]:not(.ui-switch__input) {
   }
 }
 
+/*
+ * 建物一覧の行。3Dビューでカーソルが合った建物は .building-row--external で示す。
+ * 背景色は行の :hover と同じプロパティなので、後ろに置いた外部ハイライトのルールが勝つ。
+ * 左端のバーは inset の box-shadow にしてレイアウトを動かさない。
+ */
+.building-row {
+  background-color: transparent;
+  transition: background-color 120ms ease-out;
+}
+
+.building-row:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.building-row.building-row--external,
+.building-row.building-row--external:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 /* 刻印モードのアニメーション */
 @keyframes machimoki-engraving-banner-in {
   from {

@@ -1,4 +1,4 @@
-import React, { useId, useMemo, useState } from 'react'
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { FixedSizeList, type ListChildComponentProps } from 'react-window'
 import { useIsCompactLayout } from '../hooks/useMediaQuery'
 import Icon from './ui/Icon'
@@ -17,6 +17,8 @@ export interface BuildingListPanelProps {
   onExclude: (id: string) => void
   onRestore: (id: string) => void
   onHoverItem: (id: string | null) => void
+  /** 3Dビュー側でカーソルが合っている建物ID。一覧側の行を外部ハイライトする。 */
+  hoveredId?: string | null
 }
 
 interface RowData {
@@ -25,10 +27,12 @@ interface RowData {
   onExclude: (id: string) => void
   onRestore: (id: string) => void
   onHoverItem: (id: string | null) => void
+  hoveredId: string | null
   compact: boolean
 }
 
-const ITEM_SIZE = 28
+// 行高は通常32px・compact 36px。中のボタンは通常24px・compact 28px。
+const ITEM_SIZE = 32
 const MAX_LIST_HEIGHT = 360
 // 高さの列幅。数値の桁数が変わっても行頭が揃うよう固定する。
 const HEIGHT_COLUMN_WIDTH = 56
@@ -40,8 +44,11 @@ function shortId(id: string): string {
 const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>) => {
   const item = data.items[index]
   const excluded = data.excludedSet.has(item.id)
+  // 3Dビュー由来のハイライト。行自身の :hover より優先する（CSS 側で後勝ち）。
+  const externallyHovered = data.hoveredId === item.id
   return (
     <div
+      className={externallyHovered ? 'building-row building-row--external' : 'building-row'}
       style={{
         ...style,
         display: 'flex',
@@ -49,7 +56,6 @@ const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>
         gap: '8px',
         padding: '0 8px',
         borderBottom: '1px solid var(--border)',
-        opacity: excluded ? 0.55 : 1,
       }}
       onMouseEnter={() => data.onHoverItem(item.id)}
       onMouseLeave={() => data.onHoverItem(null)}
@@ -76,27 +82,33 @@ const Row = React.memo(({ index, style, data }: ListChildComponentProps<RowData>
           textAlign: 'right',
           fontVariantNumeric: 'tabular-nums',
           fontFamily: 'ui-monospace, "SF Mono", monospace',
-          color: 'var(--text-dim)',
+          color: excluded ? 'var(--text-muted)' : 'var(--text-dim)',
         }}
       >
         {item.height ? `${item.height} m` : ''}
       </span>
       <button
         type="button"
+        aria-label={`${item.id} を${excluded ? '戻す' : '除外'}`}
         onClick={() => (excluded ? data.onRestore(item.id) : data.onExclude(item.id))}
         style={{
           flexShrink: 0,
-          minHeight: data.compact ? 32 : 24,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '4px',
+          height: data.compact ? 28 : 24,
           padding: '0 8px',
           fontSize: '12px',
-          lineHeight: 1.2,
+          fontWeight: 500,
+          lineHeight: 1,
           cursor: 'pointer',
           borderRadius: 'var(--radius-control)',
-          border: 'none',
-          background: 'transparent',
+          border: '1px solid var(--border-strong)',
+          background: 'rgba(255, 255, 255, 0.04)',
           color: excluded ? 'var(--text)' : 'var(--text-dim)',
         }}
       >
+        {excluded && <Icon name="reset" size={14} />}
         {excluded ? '戻す' : '除外'}
       </button>
     </div>
@@ -112,6 +124,7 @@ export default function BuildingListPanel({
   onExclude,
   onRestore,
   onHoverItem,
+  hoveredId = null,
 }: BuildingListPanelProps) {
   const [filter, setFilter] = useState('')
   // 開閉ボタンと一覧の対応を支援技術に伝えるための ID。
@@ -128,17 +141,36 @@ export default function BuildingListPanel({
   }, [items, filter])
 
   const itemData = useMemo<RowData>(
-    () => ({ items: filtered, excludedSet, onExclude, onRestore, onHoverItem, compact: isCompact }),
-    [filtered, excludedSet, onExclude, onRestore, onHoverItem, isCompact],
+    () => ({
+      items: filtered,
+      excludedSet,
+      onExclude,
+      onRestore,
+      onHoverItem,
+      hoveredId,
+      compact: isCompact,
+    }),
+    [filtered, excludedSet, onExclude, onRestore, onHoverItem, hoveredId, isCompact],
   )
 
   const listHeight = filtered.length > 0 ? Math.min(MAX_LIST_HEIGHT, filtered.length * itemSize) : 0
+
+  const listRef = useRef<FixedSizeList<RowData>>(null)
+  // hoveredId が変わったときだけスクロールする。毎レンダーでは呼ばない。
+  // filtered も依存に入れるのは、絞り込みで index が変わったときに古い位置へ飛ばさないため。
+  useEffect(() => {
+    if (!hoveredId) return
+    const index = filtered.findIndex((item) => item.id === hoveredId)
+    if (index < 0) return
+    listRef.current?.scrollToItem(index, 'smart')
+  }, [hoveredId, filtered])
 
   // 読み込み中はヘッダー（と進捗）だけを出す。0件で確定したときだけ消す。
   if (items.length === 0 && !listLoading) return null
 
   return (
     <div
+      data-overlay-zone="building-list"
       style={{
         position: 'absolute',
         top: isCompact ? '160px' : '52px',
@@ -240,6 +272,7 @@ export default function BuildingListPanel({
           </div>
           {listHeight > 0 ? (
             <FixedSizeList
+              ref={listRef}
               height={listHeight}
               width="100%"
               itemCount={filtered.length}
