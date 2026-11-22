@@ -34,7 +34,7 @@
     />
     <meta name="twitter:image" content="https://machimoki.aosy.f5.si/og.png" />
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Machimoki","url":"https://machimoki.aosy.f5.si/","applicationCategory":"DesignApplication","operatingSystem":"Web","inLanguage":"ja","description":"国土交通省PLATEAUの3D都市モデルから、3Dプリント用のSTL / 3MFを無料で作成できるWebツール。","offers":{"@type":"Offer","price":"0","priceCurrency":"JPY"}}</script>
-    <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Machimokiは本当に無料ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。料金はかかりません。アカウント登録も不要で、地図で範囲を選んでそのままSTL / 3MFを書き出せます。"}},{"@type":"Question","name":"PLATEAUのデータはどこから取得していますか？","acceptedAnswer":{"@type":"Answer","text":"国土交通省 Project PLATEAU が公開している3D Tiles（建築物モデル）と、PLATEAUの地形タイル、背景地図に国土地理院の地理院タイルを使用しています。"}},{"@type":"Question","name":"3Dプリントした模型は届きますか？","acceptedAnswer":{"@type":"Answer","text":"いいえ。このサイトは3Dプリント用のデータ（STL / 3MF）を作るツールです。印刷はお手持ちの3Dプリンター、または印刷サービスで行ってください。"}},{"@type":"Question","name":"生成したデータは商用利用できますか？","acceptedAnswer":{"@type":"Answer","text":"はい。PLATEAUの3D都市モデルはCC BY 4.0で提供されており、出典（© PLATEAU）を表示すれば商用利用できます。"}},{"@type":"Question","name":"3MFとSTLはどちらを選べばよいですか？","acceptedAnswer":{"@type":"Answer","text":"通常は3MFをおすすめします。単位（mm）やメタデータを保持でき、スライサーでの取り扱いも安定します。STLは最も一般的な形式で、ほぼすべてのスライサーで開けます。"}}]}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Machimokiは本当に無料ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。料金はかかりません。アカウント登録も不要で、地図で範囲を選んでそのままSTL / 3MFを書き出せます。"}},{"@type":"Question","name":"PLATEAUのデータはどこから取得していますか？","acceptedAnswer":{"@type":"Answer","text":"国土交通省 Project PLATEAU が公開している3D Tiles（建築物モデル）と、PLATEAUの地形タイル、背景地図に国土地理院の地理院タイルを使用しています。"}},{"@type":"Question","name":"3Dプリントした模型は届きますか？","acceptedAnswer":{"@type":"Answer","text":"いいえ。このサイトは3Dプリント用のデータ（STL / 3MF）を作るツールです。印刷はお手持ちの3Dプリンター、または印刷サービスで行ってください。"}},{"@type":"Question","name":"生成したデータは商用利用できますか？","acceptedAnswer":{"@type":"Answer","text":"はい。PLATEAUの3D都市モデルはCC BY 4.0で提供されており、出典（© PLATEAU）を表示すれば商用利用できます。"}},{"@type":"Question","name":"3MFとSTLはどちらを選べばよいですか？","acceptedAnswer":{"@type":"Answer","text":"通常は3MFをおすすめします。単位（mm）やメタデータを保持でき、スライサーでの取り扱いも安定します。STLは最も一般的な形式で、ほぼすべてのスライサーで開けます。"}},{"@type":"Question","name":"道路や鉄道も含めることはできますか？","acceptedAnswer":{"@type":"Answer","text":"現状の対象は地形と建物（LOD1 / LOD2）です。道路・橋梁・鉄道・植生は含められません。これらを含む模型が必要な場合は、対応している作成サービスの利用をご検討ください。"}},{"@type":"Question","name":"Blenderなどで自分で変換するのと何が違いますか？","acceptedAnswer":{"@type":"Answer","text":"自作の場合、PLATEAUデータのダウンロード、建物メッシュの結合、地面との隙間の埋め、土台の作成、スケール調整を自分で行う必要があります。Machimokiはこの工程を自動化し、水密な1つのメッシュとしてSTL / 3MFに書き出します。"}}]}</script>
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Machimoki","item":"https://machimoki.aosy.f5.si/"},{"@type":"ListItem","position":2,"name":"PLATEAU 3Dプリント","item":"https://machimoki.aosy.f5.si/plateau-3dprint/"}]}</script>
   </head>
   <body class="page-lp">
@@ -312,6 +312,10 @@
               <li>地形: PLATEAU 地形モデル（quantized-mesh）</li>
               <li>背景地図: 国土地理院 地理院タイル</li>
             </ul>
+            <p>
+              対象地域の例: 東京23区、横浜、川崎、さいたま、千葉、名古屋、大阪、京都、神戸、
+              札幌、仙台、広島、福岡 など。
+            </p>
             <p class="meta-note">
               データの精度・収録範囲・更新時期は、国土交通省が公開している元データに依存します。
             </p>
@@ -349,6 +353,18 @@
               <summary>3MFとSTLはどちらを選べばよいですか？</summary>
               <div class="faq__answer">
                 <p>通常は3MFをおすすめします。単位（mm）やメタデータを保持でき、スライサーでの取り扱いも安定します。STLは最も一般的な形式で、ほぼすべてのスライサーで開けます。</p>
+              </div>
+            </details>
+            <details>
+              <summary>道路や鉄道も含めることはできますか？</summary>
+              <div class="faq__answer">
+                <p>現状の対象は地形と建物（LOD1 / LOD2）です。道路・橋梁・鉄道・植生は含められません。これらを含む模型が必要な場合は、対応している作成サービスの利用をご検討ください。</p>
+              </div>
+            </details>
+            <details>
+              <summary>Blenderなどで自分で変換するのと何が違いますか？</summary>
+              <div class="faq__answer">
+                <p>自作の場合、PLATEAUデータのダウンロード、建物メッシュの結合、地面との隙間の埋め、土台の作成、スケール調整を自分で行う必要があります。Machimokiはこの工程を自動化し、水密な1つのメッシュとしてSTL / 3MFに書き出します。</p>
               </div>
             </details>
           </div>
