@@ -221,7 +221,10 @@ function createBuildingCustomShader(color: Color): CustomShader {
       ${CAD_LIGHTING_GLSL}
 
       void fragmentMain(FragmentInput fsInput, inout czm_modelMaterial material) {
-        float lightFactor = cadLightFactor(fsInput.attributes.positionEC);
+        float lightFactor = cadLightFactor(
+          fsInput.attributes.positionEC,
+          fsInput.attributes.normalEC
+        );
         // UNLITでは material.diffuse(linear) が最後に linear→sRGB される。
         // 地形のCADシェーダーと同じ表示色になるよう、sRGB側で明るさを掛けてから
         // linearへ戻す（地形は sRGB のまま v_color * lightFactor を出力している）。
@@ -357,10 +360,13 @@ function attachOrthographicZoom(viewer: Viewer): () => void {
   }
 }
 
-// 建物の接地感を出すためのAO。
-// 現行より弱い設定(intensity 0.4 / bias 0.5 / lengthCap 0.5)にすると、
-// 中距離で出ていた地形上面の水平縞・壁面の網目モアレが実用上消え、
-// 建物足元の薄い接地の締まりは残る(実測確認済み)。
+// 建物の接地感を出すためのAO。遮蔽を探す距離を足元の数mに縮め、
+// 平坦面に画面空間の粒状ノイズを残さない設定にする。
+// CesiumのAOは深度バッファを画素単位でランダム方向にマーチし、結果を
+// ブラーせず乗算するため、到達距離(lengthCap)が長いほど平坦面に1pxの
+// ディザが乗る。解像度スケールやDPRが整数でない環境だと、それが拡大されて
+// 壁面の網目モアレになる。lengthCap 0.02 / directionCount 6 / stepCount 8 は
+// Cesiumが旧アルゴリズム相当として推奨する組み合わせ(CHANGES.md)。
 function applyPreviewAo(viewer: Viewer, enabled = true): void {
   try {
     const ao = (
@@ -374,9 +380,11 @@ function applyPreviewAo(viewer: Viewer, enabled = true): void {
     if (!ao) return
     ao.enabled = enabled
     if (!enabled) return
-    ao.uniforms['intensity'] = 0.4
-    ao.uniforms['bias'] = 0.5
-    ao.uniforms['lengthCap'] = 0.5
+    ao.uniforms['intensity'] = 1.0
+    ao.uniforms['bias'] = 0.25
+    ao.uniforms['lengthCap'] = 0.02
+    ao.uniforms['directionCount'] = 6
+    ao.uniforms['stepCount'] = 8
     ao.uniforms['ambientOcclusionOnly'] = false
   } catch {
     void 0
