@@ -11,6 +11,12 @@ import { placeHoverCard, type Box } from './hoverCardPlacement'
 const SIZE = { width: 200, height: 80 }
 const BOUNDS = { width: 1200, height: 800 }
 
+function overlap(a: Box, b: Box): number {
+  const width = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left)
+  const height = Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top)
+  return width > 0 && height > 0 ? width * height : 0
+}
+
 function at(cursorX: number, cursorY: number, obstacles: Box[] = []) {
   return placeHoverCard({
     cursor: { x: cursorX, y: cursorY },
@@ -65,6 +71,37 @@ describe('placeHoverCard', () => {
     })
     assert.equal(pos.x, 8)
     assert.equal(pos.y, 8)
+  })
+
+  it('縦に長いパネルとデバッグパネルがあっても重ならない位置へ滑らせる', () => {
+    // 画面左の建物一覧（637件分の高さ）・右上の操作パネル・デバッグパネルに囲まれた位置。
+    const bounds = { width: 1000, height: 673 }
+    const size = { width: 260, height: 91 }
+    const cursor = { x: 490, y: 200 }
+    const obstacles: Box[] = [
+      { left: 16, top: 99, width: 264, height: 461 },
+      { left: 604, top: 90, width: 380, height: 265 },
+      { left: 408, top: 16, width: 576, height: 32 },
+      { left: 16, top: 16, width: 357, height: 34 },
+    ]
+    const pos = placeHoverCard({ cursor, size, bounds, obstacles })
+    const card: Box = { left: pos.x, top: pos.y, width: size.width, height: size.height }
+    for (const obstacle of obstacles) {
+      assert.equal(overlap(card, obstacle), 0, `${obstacle.left},${obstacle.top} と重なる`)
+    }
+    assert.ok(pos.x >= 8 && pos.x + size.width <= bounds.width - 8)
+    assert.ok(pos.y >= 8 && pos.y + size.height <= bounds.height - 8)
+    // カーソルは覆わない。
+    assert.ok(
+      !(
+        cursor.x > card.left &&
+        cursor.x < card.left + card.width &&
+        cursor.y > card.top &&
+        cursor.y < card.top + card.height
+      ),
+    )
+    // 画面の遠くへ飛ばさず、カーソルの近くに出す。
+    assert.ok(Math.hypot(pos.x - cursor.x, pos.y - cursor.y) < 400)
   })
 
   it('カードがコンテナより大きい場合も原点側へ寄せる', () => {
