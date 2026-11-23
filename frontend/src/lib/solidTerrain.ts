@@ -20,7 +20,7 @@ import {
   sampleTerrainMostDetailed,
 } from 'cesium'
 import type { TerrainProvider } from 'cesium'
-import { CAD_FRAGMENT_SHADER, CAD_VERTEX_SHADER } from './cadShader'
+import { CAD_TERRAIN_FRAGMENT_SHADER, CAD_VERTEX_SHADER } from './cadShader'
 
 export interface TerrainBounds {
   west: number
@@ -392,7 +392,7 @@ export function buildSolidTerrainPrimitive(
       flat: false,
       translucent: false,
       vertexShaderSource: CAD_VERTEX_SHADER,
-      fragmentShaderSource: CAD_FRAGMENT_SHADER,
+      fragmentShaderSource: CAD_TERRAIN_FRAGMENT_SHADER,
     })
   const topPrimitive = new Primitive({
     geometryInstances: new GeometryInstance({
@@ -630,7 +630,7 @@ function buildCavityPrimitive(
       flat: false,
       translucent: false,
       vertexShaderSource: CAD_VERTEX_SHADER,
-      fragmentShaderSource: CAD_FRAGMENT_SHADER,
+      fragmentShaderSource: CAD_TERRAIN_FRAGMENT_SHADER,
     }),
     // 開口部から覗く内面には影を描画しない。
     shadows: ShadowMode.DISABLED,
