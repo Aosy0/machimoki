@@ -27,6 +27,10 @@ const CONTENT_ORDER = new Map<EngravingContentId, number>(
 
 const MAX_LINE_SIZE_MM = 100
 
+/** 3Dビューの四隅ハンドルで拡大縮小するときの行サイズ範囲（パネルの入力範囲に揃える）。 */
+const RESIZE_MIN_LINE_SIZE_MM = 0.5
+const RESIZE_MAX_LINE_SIZE_MM = 50
+
 function contentOrder(id: string): number {
   return CONTENT_ORDER.get(id as EngravingContentId) ?? ENGRAVING_CONTENT_DEFS.length
 }
@@ -104,6 +108,147 @@ export function updateLineSize(
   const lines = [...options.lines]
   lines[index] = { ...line, sizeMm: size }
   return { ...options, lines }
+}
+
+/** 3Dビューで掴むブロックの隅。 */
+export type EngravingCorner = 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
+
+/** 描画順（左上から時計回り）。 */
+export const ENGRAVING_CORNERS: readonly EngravingCorner[] = [
+  'top-left',
+  'top-right',
+  'bottom-right',
+  'bottom-left',
+] as const
+
+/** 面ローカルmm座標。原点は面の左下、yは上向き。 */
+export interface EngravingPointMm {
+  uMm: number
+  vMm: number
+}
+
+/** ブロックの隅の面ローカルmm座標。 */
+export function engravingCornerPoint(
+  block: EngravingLayout['block'],
+  corner: EngravingCorner,
+): EngravingPointMm {
+  const right = corner === 'bottom-right' || corner === 'top-right'
+  const top = corner === 'top-left' || corner === 'top-right'
+  return {
+    uMm: block.x + (right ? block.width : 0),
+    vMm: block.y + (top ? block.height : 0),
+  }
+}
+
+/** 対角の隅（拡大縮小時に固定する点）。 */
+export function oppositeEngravingCorner(corner: EngravingCorner): EngravingCorner {
+  switch (corner) {
+    case 'bottom-left':
+      return 'top-right'
+    case 'bottom-right':
+      return 'top-left'
+    case 'top-left':
+      return 'bottom-right'
+    case 'top-right':
+      return 'bottom-left'
+  }
+}
+
+/** 隅ハンドルの一辺（面ローカルmm）。小さいブロックでも掴める大きさにする。 */
+export function engravingHandleSizeMm(block: EngravingLayout['block']): number {
+  const minSide = Math.min(block.width, block.height)
+  return Math.min(2.6, Math.max(1.2, minSide * 0.25))
+}
+
+/** 面ローカルmmで、ブロックの隅ハンドルに当たる位置ならその隅を返す。 */
+export function hitEngravingCorner(
+  block: EngravingLayout['block'],
+  uMm: number,
+  vMm: number,
+): EngravingCorner | null {
+  if (block.width <= 0 || block.height <= 0) return null
+  const radius = engravingHandleSizeMm(block) * 0.9
+  let hit: EngravingCorner | null = null
+  let hitDistance = Number.POSITIVE_INFINITY
+  for (const corner of ENGRAVING_CORNERS) {
+    const point = engravingCornerPoint(block, corner)
+    const distance = Math.hypot(uMm - point.uMm, vMm - point.vMm)
+    if (distance <= radius && distance < hitDistance) {
+      hit = corner
+      hitDistance = distance
+    }
+  }
+  return hit
+}
+
+/**
+ * 対角を固定して掴んだ隅をポインタへ動かすときの一様拡大率。
+ * 固定点から隅へ伸びるベクトルへの射影で求める。
+ */
+export function engravingCornerScale(
+  anchor: EngravingPointMm,
+  corner: EngravingPointMm,
+  pointer: EngravingPointMm,
+): number {
+  const du = corner.uMm - anchor.uMm
+  const dv = corner.vMm - anchor.vMm
+  const lengthSq = du * du + dv * dv
+  if (!(lengthSq > 1e-9)) return 1
+  return ((pointer.uMm - anchor.uMm) * du + (pointer.vMm - anchor.vMm) * dv) / lengthSq
+}
+
+/**
+ * 行サイズを一様に factor 倍する。全行がパネルの入力範囲（0.5..50mm）に
+ * 収まるよう factor を丸め、サイズは 0.1mm 単位に丸める。
+ */
+export function scaleEngravingLines(lines: EngravingLine[], factor: number): EngravingLine[] {
+  if (!Number.isFinite(factor) || factor <= 0) return lines
+  let minFactor = 0
+  let maxFactor = Number.POSITIVE_INFINITY
+  for (const line of lines) {
+    const size = Number.isFinite(line.sizeMm) ? line.sizeMm : 0
+    if (size <= 0) continue
+    minFactor = Math.max(minFactor, RESIZE_MIN_LINE_SIZE_MM / size)
+    maxFactor = Math.min(maxFactor, RESIZE_MAX_LINE_SIZE_MM / size)
+  }
+  if (!Number.isFinite(maxFactor) || minFactor > maxFactor) return lines
+  const clamped = Math.min(maxFactor, Math.max(minFactor, factor))
+  if (Math.abs(clamped - 1) < 1e-9) return lines
+  let changed = false
+  const scaled = lines.map((line) => {
+    const sizeMm = Math.round(line.sizeMm * clamped * 10) / 10
+    if (sizeMm === line.sizeMm) return line
+    changed = true
+    return { ...line, sizeMm }
+  })
+  return changed ? scaled : lines
+}
+
+/**
+ * 拡大縮小後の設定で、固定した隅が元の面ローカル位置に残るようブロック中心を置き直す。
+ * 使用可能領域からはみ出す場合は中心を 0..1 にクランプする。
+ */
+export function anchorEngravingBlock(
+  options: EngravingOptions,
+  currentLayout: EngravingLayout,
+  nextLayout: EngravingLayout,
+  fixedCorner: EngravingCorner,
+): EngravingOptions {
+  const anchor = engravingCornerPoint(currentLayout.block, fixedCorner)
+  const right = fixedCorner === 'bottom-right' || fixedCorner === 'top-right'
+  const top = fixedCorner === 'top-left' || fixedCorner === 'top-right'
+  const blockX = right ? anchor.uMm - nextLayout.block.width : anchor.uMm
+  const blockY = top ? anchor.vMm - nextLayout.block.height : anchor.vMm
+  const usable = nextLayout.usable
+  const centerX =
+    usable.width > 0
+      ? Math.min(1, Math.max(0, (blockX + nextLayout.block.width / 2 - usable.x) / usable.width))
+      : options.centerX
+  const centerY =
+    usable.height > 0
+      ? Math.min(1, Math.max(0, (blockY + nextLayout.block.height / 2 - usable.y) / usable.height))
+      : options.centerY
+  return { ...options, centerX, centerY }
 }
 
 /** レイアウト結果と印刷条件から、エディタに表示する警告を組み立てる。 */

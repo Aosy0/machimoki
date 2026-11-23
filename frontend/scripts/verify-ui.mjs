@@ -179,6 +179,7 @@ async function main() {
     engravingZoom: null,
     engravingOverlayVisible: null,
     engravingOverlayDrag: null,
+    engravingResize: null,
     engravingOverflowWarning: null,
     engravingOverflowStroke: null,
     engravingViewApi: null,
@@ -574,6 +575,37 @@ async function main() {
           })
           result.engravingOverlayVisible = true
           const blockLocator = page.locator('[data-testid="engraving-overlay-block"]')
+          // 右上のハンドルを外側へドラッグして、ブロック幅が増えることを確認する。
+          try {
+            const handleBox = await page
+              .locator('[data-testid="engraving-overlay-handle-top-right"]')
+              .boundingBox()
+            const blockBox = await blockLocator.boundingBox()
+            const widthBefore = Number(await blockLocator.getAttribute('width'))
+            if (handleBox && blockBox && Number.isFinite(widthBefore)) {
+              const hx = handleBox.x + handleBox.width / 2
+              const hy = handleBox.y + handleBox.height / 2
+              const dx = hx - (blockBox.x + blockBox.width / 2)
+              const dy = hy - (blockBox.y + blockBox.height / 2)
+              const length = Math.hypot(dx, dy) || 1
+              const step = Math.max(30, length * 0.6)
+              await page.mouse.move(hx, hy)
+              await page.mouse.down()
+              await page.mouse.move(hx + (dx / length) * step, hy + (dy / length) * step, {
+                steps: 8,
+              })
+              await page.mouse.up()
+              await page.waitForTimeout(400)
+              const widthAfter = Number(await blockLocator.getAttribute('width'))
+              result.engravingResize = {
+                beforeWidth: widthBefore,
+                afterWidth: widthAfter,
+                changed: Number.isFinite(widthAfter) && widthAfter > widthBefore * 1.02,
+              }
+            }
+          } catch (err) {
+            result.engravingResize = { error: String(err?.message ?? err) }
+          }
           const before = await blockLocator.boundingBox()
           const positionBefore = await page.evaluate(
             () => window.__previewControls?.getEngravingPosition?.() ?? null,
@@ -755,6 +787,7 @@ async function main() {
         (result.engravingGlyphPaths ?? 0) > 0 &&
         result.engravingZoom?.changed === true &&
         result.engravingOverlayVisible === true &&
+        result.engravingResize?.changed === true &&
         result.engravingOverlayDrag?.moved === true &&
         result.engravingAlign?.changed === true &&
         (!values.export ||

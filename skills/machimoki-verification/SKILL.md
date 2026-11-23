@@ -28,7 +28,7 @@ description: machimoki の動作確認手順。ヘッドレスでの範囲選択
 | 3Dプレビュー完了待ち | `npm run verify:ui -- --scenario preview --bounds ...`（既定で完了まで待つ） |
 | エクスポートまで確認 | `npm run verify:ui -- --scenario preview --bounds ... --export --export-out out.3mf` |
 | 分割印刷（土台＋建物）を確認 | `npm run verify:ui -- --scenario preview --bounds ... --split --export --export-out out.zip`（結果の `splitEntries` に `model_base.3mf` / `model_buildings.3mf` が入る） |
-| 刻印（3D上の位置決め）を確認 | `npm run verify:ui -- --scenario preview --bounds ... --engrave --export --timeout 180000`（`engravingPanel` / `engravingGlyphPaths` / `engravingViewFace` / `engravingOverlayDrag.moved` / `engravingMetadata.hasEngravedText` を確認） |
+| 刻印（3D上の位置決め）を確認 | `npm run verify:ui -- --scenario preview --bounds ... --engrave --export --timeout 180000`（`engravingPanel` / `engravingGlyphPaths` / `engravingViewFace` / `engravingResize.changed` / `engravingOverlayDrag.moved` / `engravingMetadata.hasEngravedText` を確認） |
 | 画像も保存 | 上記に `--shot` を追加（`--selector` / `--clip` で範囲を絞れる） |
 | 実ブラウザで確認 | `--headed` を追加 |
 

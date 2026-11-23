@@ -98,7 +98,11 @@ import {
   type PreviewLoadEstimate,
 } from '../lib/previewBudget'
 import { finalShapeGeometryKey } from '../lib/finalShapeKey'
-import type { EngravingFace, EngravingOptions } from '../../../core/src/engraving/types.ts'
+import type {
+  EngravingFace,
+  EngravingLine,
+  EngravingOptions,
+} from '../../../core/src/engraving/types.ts'
 import {
   engravingFaceVectors,
   faceViewDistance,
@@ -120,6 +124,17 @@ import {
   pointInFace,
   worldLengthToMm,
 } from '../lib/engraving3dOverlay'
+import {
+  ENGRAVING_CORNERS,
+  engravingCornerPoint,
+  engravingCornerScale,
+  engravingHandleSizeMm,
+  hitEngravingCorner,
+  oppositeEngravingCorner,
+  scaleEngravingLines,
+  type EngravingCorner,
+  type EngravingPointMm,
+} from '../lib/engravingEditor'
 import {
   type CachedFinalShapeMesh,
   type CachedSplitMesh,
@@ -748,6 +763,11 @@ interface Preview3DProps {
   /** 3Dモデル上でのドラッグ結果（刻印ブロック中心比 0..1）。 */
   onEngravingPositionChange?: (centerX: number, centerY: number) => void
   /**
+   * 3Dモデル上の四隅ハンドルのドラッグ結果。lines は掴んだ時点の設定を
+   * 一様拡大したもの、fixedCorner は位置を固定する対角の隅。
+   */
+  onEngravingResize?: (lines: EngravingLine[], fixedCorner: EngravingCorner) => void
+  /**
    * 刻印モード中か。モード中は完成形状を表示し、カメラ操作ロック・
    * 3Dオーバーレイ・自前ズームを有効にする。終了時は開始前の視点へ戻す。
    */
@@ -820,6 +840,7 @@ export default function Preview3D({
   engravingView = null,
   engravingOverlay = null,
   onEngravingPositionChange,
+  onEngravingResize,
   engravingMode = false,
 }: Preview3DProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -992,6 +1013,10 @@ export default function Preview3D({
   engravingOverlayRef.current = engravingOverlay
   const onEngravingPositionChangeRef = useRef(onEngravingPositionChange)
   onEngravingPositionChangeRef.current = onEngravingPositionChange
+  const onEngravingResizeRef = useRef(onEngravingResize)
+  onEngravingResizeRef.current = onEngravingResize
+  const engravingOptionsRef = useRef<EngravingOptions | null>(engraving ?? null)
+  engravingOptionsRef.current = engraving ?? null
   // 刻印モード中だけカメラロック・ドラッグ・オーバーレイ・自前ズームを有効にする。
   const engravingEditActive = engravingMode && engravingOverlay != null
   const engravingEditActiveRef = useRef(engravingEditActive)
@@ -1010,6 +1035,14 @@ export default function Preview3D({
   const engravingOverlayGeometryCacheRef = useRef<EngravingOverlayGeometryCache | null>(null)
   // ドラッグ中の pointerId（null = 非ドラッグ）。
   const engravingOverlayDragRef = useRef<{ pointerId: number } | null>(null)
+  // 四隅ハンドルの拡大縮小中に固定する情報（掴んだ時点の行サイズと対角）。
+  const engravingOverlayResizeRef = useRef<{
+    pointerId: number
+    fixedCorner: EngravingCorner
+    anchor: EngravingPointMm
+    handle: EngravingPointMm
+    lines: EngravingLine[]
+  } | null>(null)
   // 直近に通知した刻印ブロック中心（動作確認用）。
   const engravingPositionRef = useRef<{ centerX: number; centerY: number } | null>(null)
   const [terrainProvider, setTerrainProvider] = useState<TerrainProvider | null>(null)
@@ -4830,8 +4863,25 @@ export default function Preview3D({
       if (event.button !== 0) return
       const hit = hitAt(event)
       if (!hit) return
-      if (!pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)) return
-      engravingOverlayDragRef.current = { pointerId: event.pointerId }
+      // 隅ハンドルの上なら拡大縮小、面の内側なら位置移動として掴む。
+      const corner = hitEngravingCorner(hit.overlay.layout.block, hit.uMm, hit.vMm)
+      const options = engravingOptionsRef.current
+      if (corner && options && options.lines.length > 0) {
+        const block = hit.overlay.layout.block
+        const fixedCorner = oppositeEngravingCorner(corner)
+        engravingOverlayResizeRef.current = {
+          pointerId: event.pointerId,
+          fixedCorner,
+          anchor: engravingCornerPoint(block, fixedCorner),
+          handle: engravingCornerPoint(block, corner),
+          lines: options.lines,
+        }
+      } else {
+        if (!pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)) {
+          return
+        }
+        engravingOverlayDragRef.current = { pointerId: event.pointerId }
+      }
       try {
         canvas.setPointerCapture(event.pointerId)
       } catch {}
@@ -4840,12 +4890,28 @@ export default function Preview3D({
       canvas.style.cursor = 'grabbing'
     }
     const onPointerMove = (event: PointerEvent): void => {
+      const resize = engravingOverlayResizeRef.current
+      if (resize) {
+        if (resize.pointerId !== event.pointerId) return
+        const hit = hitAt(event)
+        if (!hit) return
+        const scale = engravingCornerScale(resize.anchor, resize.handle, hit)
+        const lines = scaleEngravingLines(resize.lines, scale)
+        if (lines !== resize.lines) {
+          onEngravingResizeRef.current?.(lines, resize.fixedCorner)
+        }
+        viewer.scene.requestRender()
+        event.preventDefault()
+        return
+      }
       const drag = engravingOverlayDragRef.current
       if (!drag) {
-        // 非ドラッグ時は面の上だけ grab カーソルにする。
+        // 非ドラッグ時は隅ハンドルなら pointer、面の上なら grab カーソルにする。
         const hit = hitAt(event)
-        canvas.style.cursor =
-          hit && pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)
+        const corner = hit ? hitEngravingCorner(hit.overlay.layout.block, hit.uMm, hit.vMm) : null
+        canvas.style.cursor = corner
+          ? 'pointer'
+          : hit && pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)
             ? 'grab'
             : 'default'
         return
@@ -4861,8 +4927,11 @@ export default function Preview3D({
     }
     const finishDrag = (event: PointerEvent): void => {
       const drag = engravingOverlayDragRef.current
-      if (!drag || drag.pointerId !== event.pointerId) return
+      const resize = engravingOverlayResizeRef.current
+      const matches = drag?.pointerId === event.pointerId || resize?.pointerId === event.pointerId
+      if (!matches) return
       engravingOverlayDragRef.current = null
+      engravingOverlayResizeRef.current = null
       try {
         canvas.releasePointerCapture(event.pointerId)
       } catch {}
@@ -4879,6 +4948,7 @@ export default function Preview3D({
       canvas.removeEventListener('pointerup', finishDrag, { capture: true })
       canvas.removeEventListener('pointercancel', finishDrag, { capture: true })
       engravingOverlayDragRef.current = null
+      engravingOverlayResizeRef.current = null
       canvas.style.cursor = 'default'
     }
   }, [engravingEditActive])
@@ -5153,6 +5223,29 @@ export default function Preview3D({
               )
             }),
           )}
+          {/* 四隅の拡大縮小ハンドル（当たり判定は canvas 側で行う）。 */}
+          {ENGRAVING_CORNERS.map((corner) => {
+            const block = engravingOverlay.layout.block
+            if (block.width <= 0 || block.height <= 0) return null
+            const size = engravingHandleSizeMm(block)
+            const point = engravingCornerPoint(block, corner)
+            return (
+              <rect
+                key={corner}
+                data-testid={`engraving-overlay-handle-${corner}`}
+                x={point.uMm - size / 2}
+                y={engravingOverlay.faceHeightMm - point.vMm - size / 2}
+                width={size}
+                height={size}
+                rx={size * 0.2}
+                fill="var(--accent)"
+                fillOpacity={0.9}
+                stroke="var(--surface)"
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            )
+          })}
         </svg>
       )}
       {/* 刻印モード中はビュー操作・断面パネルを隠して専用UIに集中する。 */}

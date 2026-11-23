@@ -20,7 +20,7 @@ import { loadFinalShapeCache } from './lib/finalShapeCache'
 import { loadBuildingMeshes, loadLayerMeshes, loadTerrainMesh } from './lib/meshDataCache'
 import { LAYER_COLORS } from './lib/layerColors'
 import EngravingPanel from './components/EngravingPanel'
-import type { EngravingOptions } from '../../core/src/engraving/types.ts'
+import type { EngravingLine, EngravingOptions } from '../../core/src/engraving/types.ts'
 import { defaultEngravingOptions } from '../../core/src/engraving/types.ts'
 import type { EngravingFont } from '../../core/src/engraving/font.ts'
 import type { EngravingLayout } from '../../core/src/engraving/layout.ts'
@@ -30,6 +30,7 @@ import { buildAutoTexts, defaultEngravingLines, resolvePlaceName } from './lib/e
 import { loadEngravingFont } from './lib/engravingFontClient'
 import { buildGlyphPathMap } from './lib/engravingSvg'
 import type { EngravingOverlayData } from './lib/engraving3dOverlay'
+import { anchorEngravingBlock, type EngravingCorner } from './lib/engravingEditor'
 import {
   useMapLibreRectangleSelection,
   type MapInteractionMode,
@@ -678,6 +679,22 @@ function App() {
       prev.centerX === centerX && prev.centerY === centerY ? prev : { ...prev, centerX, centerY },
     )
   }, [])
+  // 3Dの四隅ハンドル: 拡大後のレイアウトで、固定した対角の位置を保つよう中心を置き直す。
+  const handleEngravingResize = useCallback(
+    (lines: EngravingLine[], fixedCorner: EngravingCorner) => {
+      const faceDims = engravingDraftFaceDims
+      const font = engravingFont
+      if (!faceDims || !font) return
+      setEngravingDraft((prev) => {
+        const next = { ...prev, lines }
+        if (prev.lines.length === 0) return next
+        const currentLayout = layoutEngraving(faceDims, prev, font)
+        const nextLayout = layoutEngraving(faceDims, next, font)
+        return anchorEngravingBlock(next, currentLayout, nextLayout, fixedCorner)
+      })
+    },
+    [engravingDraftFaceDims, engravingFont],
+  )
   // 刻印モードのズーム（タッチ端末でも使えるようにボタンから呼ぶ）。
   const zoomEngravingView = useCallback((factor: number) => {
     const controls = (
@@ -1575,6 +1592,7 @@ function App() {
                 }
                 engravingOverlay={engravingOverlay}
                 onEngravingPositionChange={handleEngravingPositionChange}
+                onEngravingResize={handleEngravingResize}
               />
             )}
             {engravingMode && (
