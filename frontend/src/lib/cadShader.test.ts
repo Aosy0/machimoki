@@ -23,8 +23,11 @@ describe('地形の明るさ', () => {
     assert.ok(TERRAIN_LIGHT_BASE + TERRAIN_LIGHT_GAIN <= 1 + 1e-9)
   })
 
-  it('頂点法線と拡散光だけで明るさを決める（微分法線を使わない）', () => {
-    assert.match(CAD_TERRAIN_FRAGMENT_SHADER, /cadTerrainLightFactor\(v_cadNormalEC\)/)
-    assert.doesNotMatch(CAD_TERRAIN_FRAGMENT_SHADER, /dFdx|dFdy/)
+  // 頂点法線は面内で補間されるので、そのまま使うと稜線が消えてぼやける。
+  // 微分法線（三角形ごとに一定）でポリゴンの向きを残す。
+  it('三角形ごとの法線と拡散光で明るさを決める', () => {
+    assert.match(CAD_TERRAIN_FRAGMENT_SHADER, /in vec3 v_positionEC;/)
+    assert.match(CAD_TERRAIN_FRAGMENT_SHADER, /cadTerrainLightFactor\(v_positionEC\)/)
+    assert.match(CAD_TERRAIN_FRAGMENT_SHADER, /cross\(dFdx\(positionEC\), dFdy\(positionEC\)\)/)
   })
 })

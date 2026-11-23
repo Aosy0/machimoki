@@ -31,9 +31,11 @@ float cadLightFactor(vec3 positionEC, vec3 normalEC)
 /**
  * 地形（高さ場メッシュ）用の明るさ計算。
  *
- * 地形は頂点法線が常に有効なので、平滑化した法線をそのまま使う。位置のスクリーン
- * 空間微分から法線を作ると、ECEF（約6.8e6m）の差がfloat精度で潰れて急斜面に
- * 筋状の陰影ノイズが乗る。
+ * 地形の頂点法線は面の中で補間されるため、そのまま使うと三角形の稜線が消えて
+ * 全体がぼやける。CAD調にポリゴンの向きが読めるよう、位置のスクリーン空間微分から
+ * 三角形ごとに一定な法線を作る。位置は視点相対座標（czm_modelViewRelativeToEye）
+ * なので微分の値はカメラ距離のオーダーに収まり、ECEFの絶対座標のように
+ * float精度で潰れて筋状ノイズになることはない。
  *
  * 建物用の式 (0.61 + 0.95 * light) は dot >= 0.41 で1に飽和する。起伏の大きい
  * 地形では日照面のほぼ全面が純白に飛んで起伏が読めなくなるため、太陽高度45°の
@@ -43,9 +45,10 @@ export const TERRAIN_LIGHT_BASE = 0.34
 export const TERRAIN_LIGHT_GAIN = 0.66
 
 export const CAD_TERRAIN_LIGHTING_GLSL = `
-float cadTerrainLightFactor(vec3 normalEC)
+float cadTerrainLightFactor(vec3 positionEC)
 {
-    float light = max(dot(normalize(normalEC), normalize(czm_lightDirectionEC)), 0.0);
+    vec3 normal = normalize(cross(dFdx(positionEC), dFdy(positionEC)));
+    float light = max(dot(normal, normalize(czm_lightDirectionEC)), 0.0);
     return ${TERRAIN_LIGHT_BASE.toFixed(2)} + ${TERRAIN_LIGHT_GAIN.toFixed(2)} * light;
 }
 `
@@ -54,14 +57,14 @@ float cadTerrainLightFactor(vec3 normalEC)
 export const FLAT_TERRAIN_LIGHT_FACTOR = TERRAIN_LIGHT_BASE + TERRAIN_LIGHT_GAIN * Math.SQRT1_2
 
 export const CAD_TERRAIN_FRAGMENT_SHADER = `
-in vec3 v_cadNormalEC;
+in vec3 v_positionEC;
 in vec4 v_color;
 
 ${CAD_TERRAIN_LIGHTING_GLSL}
 
 void main()
 {
-    out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * cadTerrainLightFactor(v_cadNormalEC), v_color.a));
+    out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * cadTerrainLightFactor(v_positionEC), v_color.a));
 }
 `
 
