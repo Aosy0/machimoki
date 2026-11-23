@@ -260,6 +260,7 @@ and merge onto `defaultEngravingOptions()`.
 | `face` | `bottom` | `bottom` \| `south` \| `north` \| `east` \| `west`. `bottom` is unavailable when the bottom is open (`openBottom` / `splitAtGround`) or not flattened |
 | `lines` | `[]` | Array of `{ id: string, text: string, sizeMm: number, auto?: boolean }`. Newlines inside `text` split into lines |
 | `centerX`, `centerY` | `0.5` | Block center inside the usable face area (0..1) |
+| `align` | `center` | Line alignment inside the block frame: `left` | `center` | `right` |
 | `lineGapMm` | `1.5` | Extra gap between lines (printed mm) |
 | `depthMm` | `0.4` | Engraving depth (printed mm). Defaults to two layers |
 | `printProfile` | `{ nozzleMm: 0.4, layerHeightMm: 0.2 }` | FDM nozzle / layer height that drives the minimum stroke width and default depth |

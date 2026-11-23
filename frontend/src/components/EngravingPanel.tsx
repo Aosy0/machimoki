@@ -1,10 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import type {
+  EngravingAlign,
   EngravingFace,
   EngravingFaceDims,
   EngravingOptions,
 } from '../../../core/src/engraving/types.ts'
-import { ENGRAVING_FACES, engravingMaxDepthMm } from '../../../core/src/engraving/types.ts'
+import {
+  ENGRAVING_ALIGNS,
+  ENGRAVING_FACES,
+  engravingMaxDepthMm,
+} from '../../../core/src/engraving/types.ts'
 import { autoFitEngraving, layoutEngraving } from '../../../core/src/engraving/layout.ts'
 import type { EngravingFont } from '../../../core/src/engraving/font.ts'
 import { loadEngravingFont } from '../lib/engravingFontClient'
@@ -48,6 +53,12 @@ const FACE_LABELS: Record<EngravingFace, string> = {
   north: '北',
   east: '東',
   west: '西',
+}
+
+const ALIGN_LABELS: Record<EngravingAlign, string> = {
+  left: '左',
+  center: '中央',
+  right: '右',
 }
 
 /** 0.1mm 単位に丸めた表示用の数値（末尾の .0 は落とす）。 */
@@ -183,6 +194,11 @@ function EngravingPanel({
     onChange({ ...options, face })
   }
 
+  const handleAlignChange = (align: EngravingAlign) => {
+    if (align === options.align) return
+    onChange({ ...options, align })
+  }
+
   const handleContentToggle = (def: EngravingContentDef, checked: boolean) => {
     onChange(checked ? addContentLine(options, def, autoTexts) : removeContentLine(options, def.id))
   }
@@ -298,7 +314,45 @@ function EngravingPanel({
 
         {/* プレビュー */}
         <div>
-          <span style={labelStyle}>面のレイアウト</span>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px',
+              marginBottom: '8px',
+            }}
+          >
+            <span style={{ ...labelStyle, marginBottom: 0 }}>面のレイアウト</span>
+            <div style={{ display: 'flex', gap: '2px' }}>
+              {ENGRAVING_ALIGNS.map((align) => {
+                const active = options.align === align
+                return (
+                  <button
+                    key={align}
+                    type="button"
+                    data-testid={`engraving-align-${align}`}
+                    onClick={() => handleAlignChange(align)}
+                    aria-pressed={active}
+                    style={{
+                      minHeight: 28,
+                      minWidth: 32,
+                      padding: '4px 8px',
+                      fontSize: '12px',
+                      borderRadius: 'var(--radius-control)',
+                      background: active ? 'var(--border-strong)' : 'transparent',
+                      color: active ? 'var(--text)' : 'var(--text-dim)',
+                      border: '1px solid var(--border-strong)',
+                      fontWeight: active ? 500 : 400,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {ALIGN_LABELS[align]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
           {fontError ? (
             <div
               style={{

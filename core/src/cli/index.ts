@@ -23,8 +23,13 @@ import { DEFAULT_SHELL_THICKNESS_MM } from '../pipelineUtils.js'
 import { MIN_FRAME_HEIGHT_MM } from '../frameSplit.js'
 import { hasMiterBase, hasMiterWall } from '../frameSplitConstants.js'
 import { Bounds, ExportOptions, Lod } from '../types.js'
-import type { EngravingFace, EngravingLine, EngravingOptions } from '../engraving/types.js'
-import { ENGRAVING_FACES, defaultEngravingOptions } from '../engraving/types.js'
+import type {
+  EngravingAlign,
+  EngravingFace,
+  EngravingLine,
+  EngravingOptions,
+} from '../engraving/types.js'
+import { ENGRAVING_ALIGNS, ENGRAVING_FACES, defaultEngravingOptions } from '../engraving/types.js'
 import { configureNodeEngravingFont } from '../engraving/nodeFont.js'
 
 export const program = new Command()
@@ -83,6 +88,15 @@ function parseEngravingFace(value: unknown): EngravingFace {
   }
   throw new Error(
     `Invalid engraving.face: ${String(value)}. Expected one of ${ENGRAVING_FACES.join(', ')}`,
+  )
+}
+
+function parseEngravingAlign(value: unknown): EngravingAlign {
+  if (typeof value === 'string' && (ENGRAVING_ALIGNS as readonly string[]).includes(value)) {
+    return value as EngravingAlign
+  }
+  throw new Error(
+    `Invalid engraving.align: ${String(value)}. Expected one of ${ENGRAVING_ALIGNS.join(', ')}`,
   )
 }
 
@@ -146,6 +160,9 @@ export function mergeEngravingOptions(input: unknown): EngravingOptions {
       throw new Error('Invalid engraving.lineGapMm: expected a number >= 0')
     }
     options.lineGapMm = lineGapMm
+  }
+  if (record.align !== undefined) {
+    options.align = parseEngravingAlign(record.align)
   }
   if (record.depthMm !== undefined) {
     const depthMm = parseEngravingNumber('engraving.depthMm', record.depthMm)

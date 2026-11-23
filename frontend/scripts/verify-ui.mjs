@@ -525,6 +525,46 @@ async function main() {
         } catch {
           result.engravingZoom = null
         }
+        // 行の揃えボタンで、ブロック内の行の左端が変わることを確認する。
+        try {
+          const lineStarts = () =>
+            page.evaluate(() => {
+              const svg = document.querySelector('[data-testid="engraving-preview"]')
+              const rows = new Map()
+              for (const group of svg?.querySelectorAll('g') ?? []) {
+                const match = /translate\(([-\d.]+) ([-\d.]+)\)/.exec(
+                  group.getAttribute('transform') ?? '',
+                )
+                if (!match) continue
+                const x = Number(match[1])
+                const baseline = Number(match[2])
+                const current = rows.get(baseline)
+                if (current === undefined || x < current) rows.set(baseline, x)
+              }
+              return Array.from(rows.values()).sort((a, b) => a - b)
+            })
+          const alignButtons = await page.locator('[data-testid^="engraving-align-"]').count()
+          await page.click('[data-testid="engraving-align-left"]')
+          await page.waitForTimeout(200)
+          const leftXs = await lineStarts()
+          await page.click('[data-testid="engraving-align-right"]')
+          await page.waitForTimeout(200)
+          const rightXs = await lineStarts()
+          result.engravingAlign = {
+            buttons: alignButtons,
+            leftXs,
+            rightXs,
+            changed:
+              leftXs.length > 0 &&
+              leftXs.length === rightXs.length &&
+              leftXs.every((x, index) => rightXs[index] >= x - 1e-9) &&
+              leftXs.some((x, index) => rightXs[index] > x),
+          }
+          await page.click('[data-testid="engraving-align-center"]')
+          await page.waitForTimeout(200)
+        } catch (err) {
+          result.engravingAlign = { error: String(err?.message ?? err) }
+        }
         // 3Dモデル上のオーバーレイをドラッグして位置が動くことを確認する。
         // 面全体のSVGは固定サイズ＋transformなので、ブロック矩形の画面位置で判定する。
         try {
@@ -716,6 +756,7 @@ async function main() {
         result.engravingZoom?.changed === true &&
         result.engravingOverlayVisible === true &&
         result.engravingOverlayDrag?.moved === true &&
+        result.engravingAlign?.changed === true &&
         (!values.export ||
           values.split ||
           result.engravingMetadata?.hasEngravedText === true))

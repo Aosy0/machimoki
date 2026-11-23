@@ -90,6 +90,7 @@ export {
   defaultEngravingOptions,
   engravingMaxDepthMm,
   engravingMinFontSizes,
+  ENGRAVING_ALIGNS,
   engravingSideBandHeightMm,
   formatAttribution,
   formatCenterCoordinate,
@@ -104,6 +105,7 @@ export {
   setEngravingFontProvider,
 } from './engraving/index.js'
 export type {
+  EngravingAlign,
   EngravingApplyResult,
   EngravingFace,
   EngravingFaceDims,

@@ -214,6 +214,34 @@ describe('刻印レイアウト', () => {
     assert.ok(layout.undersizedLineIndices.length > 0)
   })
 
+  it('揃えをブロック枠内の左右に切り替えられる', () => {
+    const face = faceOf(computeEngravingFaceDims(modelDims()), 'bottom')
+    const options: EngravingOptions = {
+      ...baseOptions(),
+      lines: [
+        { id: 'long', text: 'AAAAAA', sizeMm: 6 },
+        { id: 'short', text: 'AA', sizeMm: 6 },
+      ],
+    }
+    const centered = layoutEngraving(face, { ...options, align: 'center' }, font)
+    const left = layoutEngraving(face, { ...options, align: 'left' }, font)
+    const right = layoutEngraving(face, { ...options, align: 'right' }, font)
+    assert.equal(centered.fits, true)
+    // 揃えてもブロックの位置・幅は変わらない。
+    assert.deepEqual(left.block, centered.block)
+    assert.deepEqual(right.block, centered.block)
+    assert.equal(left.lines[0].x, left.block.x)
+    assert.equal(left.lines[1].x, left.block.x)
+    assert.equal(right.lines[0].x + right.lines[0].widthMm, right.block.x + right.block.width)
+    assert.equal(right.lines[1].x + right.lines[1].widthMm, right.block.x + right.block.width)
+    for (const [index, line] of centered.lines.entries()) {
+      assert.ok(
+        Math.abs(line.x - (centered.block.x + (centered.block.width - line.widthMm) / 2)) < 1e-6,
+        `line ${index} is not centered`,
+      )
+    }
+  })
+
   it('自動調整で収まるサイズまで縮小される', () => {
     const face = faceOf(computeEngravingFaceDims(modelDims({ widthMm: 60, depthMm: 60 })), 'bottom')
     const options = baseOptions()

@@ -164,6 +164,7 @@ function buildVisualLines(
  *
  * - 余白 FACE_MARGIN_MM を除いた使用可能領域に、中心位置（0..1）でブロックを置く。
  * - 行はインクの高さで詰めて積む（行間 = lineGapMm）。
+ * - 行はブロック枠内で align（左・中央・右）に揃える。
  * - 面に収まらない場合は overflowX/Y が立ち、fits = false になる。
  */
 export function layoutEngraving(
@@ -242,6 +243,7 @@ export function layoutEngraving(
   const blockX = usable.x + centerXRatio * usable.width - blockWidth / 2
   const blockY = usable.y + centerYRatio * usable.height - blockHeight / 2
 
+  const align = options.align === 'left' || options.align === 'right' ? options.align : 'center'
   const lines: EngravingLayoutLine[] = []
   let cursorY = blockY + blockHeight
   for (const metric of metrics) {
@@ -251,7 +253,12 @@ export function layoutEngraving(
       sourceId: metric.sourceId,
       text: metric.text,
       sizeMm: metric.sizeMm,
-      x: blockX + (blockWidth - metric.widthMm) / 2,
+      x:
+        align === 'left'
+          ? blockX
+          : align === 'right'
+            ? blockX + blockWidth - metric.widthMm
+            : blockX + (blockWidth - metric.widthMm) / 2,
       baselineY,
       widthMm: metric.widthMm,
       glyphs: metric.glyphs,

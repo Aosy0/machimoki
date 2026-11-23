@@ -7,6 +7,11 @@
 
 export type EngravingFace = 'bottom' | 'south' | 'north' | 'east' | 'west'
 
+/** ブロック枠内での行の揃え。 */
+export type EngravingAlign = 'left' | 'center' | 'right'
+
+export const ENGRAVING_ALIGNS: readonly EngravingAlign[] = ['left', 'center', 'right'] as const
+
 export const ENGRAVING_FACES: readonly EngravingFace[] = [
   'bottom',
   'south',
@@ -99,6 +104,8 @@ export interface EngravingOptions {
   centerY: number
   /** 行間の追加スペース（印刷mm） */
   lineGapMm: number
+  /** 枠内での行の揃え */
+  align: EngravingAlign
   lines: EngravingLine[]
   /** 刻印深さ（印刷mm） */
   depthMm: number
@@ -114,6 +121,7 @@ export function defaultEngravingOptions(): EngravingOptions {
     centerX: 0.5,
     centerY: 0.5,
     lineGapMm: DEFAULT_LINE_GAP_MM,
+    align: 'center',
     lines: [],
     depthMm: defaultEngravingDepthMm(),
     printProfile: { ...DEFAULT_PRINT_PROFILE },

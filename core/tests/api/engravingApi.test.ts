@@ -71,6 +71,7 @@ describe('parseExportBody engraving', () => {
       centerX: 0.3,
       centerY: 0.6,
       lineGapMm: 2,
+      align: 'left',
       lines: [
         { id: 'coord', text: '35.68120N 139.76710E', sizeMm: 8 },
         { id: 'name', text: '新宿区', sizeMm: 10, auto: true },
@@ -93,6 +94,14 @@ describe('parseExportBody engraving', () => {
     const result = parseExportBody(baseBody({ engraving: { enabled: true, face: 'top' } }));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/Invalid engraving\.face/);
+  });
+
+  it('rejects an invalid align', () => {
+    const result = parseExportBody(
+      baseBody({ engraving: { enabled: true, align: 'justify' } }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/Invalid engraving\.align/);
   });
 
   it('rejects lines that are not an array', () => {

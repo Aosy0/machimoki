@@ -54,6 +54,7 @@ describe('CLI engraving parsing', () => {
         centerX: 0.25,
         centerY: 0.75,
         lineGapMm: 2,
+        align: 'right',
         lines: [
           { id: 'coord', text: '35.68120N 139.76710E', sizeMm: 8 },
           { id: 'name', text: '新宿区', sizeMm: 10, auto: true },
@@ -70,6 +71,7 @@ describe('CLI engraving parsing', () => {
       centerX: 0.25,
       centerY: 0.75,
       lineGapMm: 2,
+      align: 'right',
       lines: [
         { id: 'coord', text: '35.68120N 139.76710E', sizeMm: 8 },
         { id: 'name', text: '新宿区', sizeMm: 10, auto: true },
@@ -94,6 +96,12 @@ describe('CLI engraving parsing', () => {
 
   it('rejects an invalid face', () => {
     expect(() => parseEngravingOptionsJson('{"face":"top"}')).toThrow(/Invalid engraving\.face/);
+  });
+
+  it('rejects an invalid align', () => {
+    expect(() => parseEngravingOptionsJson('{"align":"justify"}')).toThrow(
+      /Invalid engraving\.align/,
+    );
   });
 
   it('rejects a non-object payload', () => {
