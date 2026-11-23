@@ -360,37 +360,6 @@ function attachOrthographicZoom(viewer: Viewer): () => void {
   }
 }
 
-// 建物の接地感を出すためのAO。遮蔽を探す距離を足元の数mに縮め、
-// 平坦面に画面空間の粒状ノイズを残さない設定にする。
-// CesiumのAOは深度バッファを画素単位でランダム方向にマーチし、結果を
-// ブラーせず乗算するため、到達距離(lengthCap)が長いほど平坦面に1pxの
-// ディザが乗る。解像度スケールやDPRが整数でない環境だと、それが拡大されて
-// 壁面の網目モアレになる。lengthCap 0.02 / directionCount 6 / stepCount 8 は
-// Cesiumが旧アルゴリズム相当として推奨する組み合わせ(CHANGES.md)。
-function applyPreviewAo(viewer: Viewer, enabled = true): void {
-  try {
-    const ao = (
-      viewer.scene.postProcessStages as unknown as {
-        ambientOcclusion?: {
-          enabled: boolean
-          uniforms: Record<string, number | boolean>
-        }
-      }
-    ).ambientOcclusion
-    if (!ao) return
-    ao.enabled = enabled
-    if (!enabled) return
-    ao.uniforms['intensity'] = 1.0
-    ao.uniforms['bias'] = 0.25
-    ao.uniforms['lengthCap'] = 0.02
-    ao.uniforms['directionCount'] = 6
-    ao.uniforms['stepCount'] = 8
-    ao.uniforms['ambientOcclusionOnly'] = false
-  } catch {
-    void 0
-  }
-}
-
 function applyContour(viewer: Viewer, style: GsiTileStyle): void {
   const globe: any = viewer.scene.globe
   const tp: any = globe.terrainProvider
@@ -4767,7 +4736,6 @@ export default function Preview3D({
     shadowMap.enabled = shadowsEnabled
     shadowMap.size = quality.shadowMapSize
     shadowMap.maximumDistance = quality.shadowMaximumDistance
-    applyPreviewAo(viewer, quality.ambientOcclusion)
     viewer.scene.requestRender()
   }, [quality, shadowsVisible])
 

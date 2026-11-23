@@ -11,7 +11,7 @@ describe('previewQuality', () => {
     vi.unstubAllGlobals()
   })
 
-  it('段階ごとにMSAA・影・AO・解像度が下がる', () => {
+  it('段階ごとにMSAA・影・解像度が下がる', () => {
     const high = PREVIEW_QUALITY_PROFILES.high
     const medium = PREVIEW_QUALITY_PROFILES.medium
     const low = PREVIEW_QUALITY_PROFILES.low
@@ -20,7 +20,6 @@ describe('previewQuality', () => {
     assert.ok(high.shadowMapSize > medium.shadowMapSize)
     assert.equal(medium.shadows, true)
     assert.equal(low.shadows, false)
-    assert.equal(low.ambientOcclusion, false)
     assert.ok(high.resolutionScale > low.resolutionScale)
     assert.equal(previewQualityProfile('medium'), medium)
   })

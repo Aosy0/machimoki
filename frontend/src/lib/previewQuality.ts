@@ -12,8 +12,6 @@ export interface PreviewQualityProfile {
   shadowMapSize: number
   /** 影を描画する最大距離（m）。 */
   shadowMaximumDistance: number
-  /** アンビエントオクルージョン（画面全体のポストプロセス）。 */
-  ambientOcclusion: boolean
   /** Cesiumの解像度スケール。1未満で描画ピクセルを間引く。 */
   resolutionScale: number
 }
@@ -26,7 +24,6 @@ export const PREVIEW_QUALITY_PROFILES: Record<PreviewQualityTier, PreviewQuality
     shadows: true,
     shadowMapSize: 4096,
     shadowMaximumDistance: 20000,
-    ambientOcclusion: true,
     resolutionScale: 1,
   },
   medium: {
@@ -36,7 +33,6 @@ export const PREVIEW_QUALITY_PROFILES: Record<PreviewQualityTier, PreviewQuality
     shadows: true,
     shadowMapSize: 1024,
     shadowMaximumDistance: 5000,
-    ambientOcclusion: false,
     resolutionScale: 0.85,
   },
   low: {
@@ -46,7 +42,6 @@ export const PREVIEW_QUALITY_PROFILES: Record<PreviewQualityTier, PreviewQuality
     shadows: false,
     shadowMapSize: 1024,
     shadowMaximumDistance: 5000,
-    ambientOcclusion: false,
     resolutionScale: 0.7,
   },
 }
