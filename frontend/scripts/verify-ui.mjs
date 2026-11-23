@@ -615,6 +615,8 @@ async function main() {
             const startY = before.y + before.height / 2
             await page.mouse.move(startX, startY)
             await page.mouse.down()
+            // 掴んだ瞬間にブロックが動かないこと（中心スナップの回帰確認）。
+            const held = await blockLocator.boundingBox()
             await page.mouse.move(startX + 80, startY + 40, { steps: 8 })
             await page.mouse.up()
             await page.waitForTimeout(400)
@@ -629,12 +631,19 @@ async function main() {
                 positionAfter != null &&
                 (Math.abs(positionAfter.centerX - positionBefore.centerX) > 0.01 ||
                   Math.abs(positionAfter.centerY - positionBefore.centerY) > 0.01))
+            // 掴んだ位置のずれを保ち、ポインタの移動量（+80,+40）だけ追従すること。
+            const heldStill = !!held && Math.hypot(held.x - before.x, held.y - before.y) <= 1.5
+            const followDelta =
+              !!after && Math.hypot(after.x - before.x - 80, after.y - before.y - 40) <= 20
             result.engravingOverlayDrag = {
               before: { x: Math.round(before.x), y: Math.round(before.y) },
+              held: held ? { x: Math.round(held.x), y: Math.round(held.y) } : null,
               after: after ? { x: Math.round(after.x), y: Math.round(after.y) } : null,
               positionBefore,
               positionAfter,
               moved,
+              heldStill,
+              followDelta,
             }
           }
         } catch {
@@ -789,6 +798,8 @@ async function main() {
         result.engravingOverlayVisible === true &&
         result.engravingResize?.changed === true &&
         result.engravingOverlayDrag?.moved === true &&
+        result.engravingOverlayDrag?.heldStill === true &&
+        result.engravingOverlayDrag?.followDelta === true &&
         result.engravingAlign?.changed === true &&
         (!values.export ||
           values.split ||

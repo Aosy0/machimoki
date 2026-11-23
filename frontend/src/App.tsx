@@ -1586,6 +1586,7 @@ function App() {
                 shadowsVisible={shadowsVisible}
                 onBusyChange={setPreviewBusy}
                 engraving={parameters.engraving.enabled ? parameters.engraving : null}
+                engravingDraft={engravingDraft}
                 engravingMode={engravingMode}
                 engravingView={
                   engravingMode ? { face: engravingDraft.face, nonce: engravingViewNonce } : null

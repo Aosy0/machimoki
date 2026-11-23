@@ -117,7 +117,6 @@ import {
   type Vec3,
   buildOverlayFaceFrame,
   computeHomography,
-  faceLocalToCenter,
   faceLocalToModel,
   homographyToMatrix3d,
   modelToEnu,
@@ -762,6 +761,8 @@ interface Preview3DProps {
   engravingOverlay?: EngravingOverlayData | null
   /** 3Dモデル上でのドラッグ結果（刻印ブロック中心比 0..1）。 */
   onEngravingPositionChange?: (centerX: number, centerY: number) => void
+  /** 編集中の刻印設定（未反映の値を含む）。3D上の拡大縮小の基準に使う。 */
+  engravingDraft?: EngravingOptions | null
   /**
    * 3Dモデル上の四隅ハンドルのドラッグ結果。lines は掴んだ時点の設定を
    * 一様拡大したもの、fixedCorner は位置を固定する対角の隅。
@@ -841,6 +842,7 @@ export default function Preview3D({
   engravingOverlay = null,
   onEngravingPositionChange,
   onEngravingResize,
+  engravingDraft = null,
   engravingMode = false,
 }: Preview3DProps) {
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -1015,8 +1017,8 @@ export default function Preview3D({
   onEngravingPositionChangeRef.current = onEngravingPositionChange
   const onEngravingResizeRef = useRef(onEngravingResize)
   onEngravingResizeRef.current = onEngravingResize
-  const engravingOptionsRef = useRef<EngravingOptions | null>(engraving ?? null)
-  engravingOptionsRef.current = engraving ?? null
+  const engravingDraftRef = useRef<EngravingOptions | null>(engravingDraft ?? null)
+  engravingDraftRef.current = engravingDraft ?? null
   // 刻印モード中だけカメラロック・ドラッグ・オーバーレイ・自前ズームを有効にする。
   const engravingEditActive = engravingMode && engravingOverlay != null
   const engravingEditActiveRef = useRef(engravingEditActive)
@@ -1033,8 +1035,14 @@ export default function Preview3D({
   const engravingOverlayUpdateRef = useRef<(() => void) | null>(null)
   // 面フレームの計算結果（毎フレームの bbox 走査を避ける）。
   const engravingOverlayGeometryCacheRef = useRef<EngravingOverlayGeometryCache | null>(null)
-  // ドラッグ中の pointerId（null = 非ドラッグ）。
-  const engravingOverlayDragRef = useRef<{ pointerId: number } | null>(null)
+  // 位置ドラッグ中の開始状態（掴んだ点と、その時点のブロック中心）。null = 非ドラッグ。
+  const engravingOverlayDragRef = useRef<{
+    pointerId: number
+    startUMm: number
+    startVMm: number
+    centerX: number
+    centerY: number
+  } | null>(null)
   // 四隅ハンドルの拡大縮小中に固定する情報（掴んだ時点の行サイズと対角）。
   const engravingOverlayResizeRef = useRef<{
     pointerId: number
@@ -4865,7 +4873,7 @@ export default function Preview3D({
       if (!hit) return
       // 隅ハンドルの上なら拡大縮小、面の内側なら位置移動として掴む。
       const corner = hitEngravingCorner(hit.overlay.layout.block, hit.uMm, hit.vMm)
-      const options = engravingOptionsRef.current
+      const options = engravingDraftRef.current
       if (corner && options && options.lines.length > 0) {
         const block = hit.overlay.layout.block
         const fixedCorner = oppositeEngravingCorner(corner)
@@ -4880,7 +4888,21 @@ export default function Preview3D({
         if (!pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)) {
           return
         }
-        engravingOverlayDragRef.current = { pointerId: event.pointerId }
+        // 掴んだ点とブロック中心のずれを保ったまま、ポインタの移動量だけ動かす。
+        const { block, usable } = hit.overlay.layout
+        engravingOverlayDragRef.current = {
+          pointerId: event.pointerId,
+          startUMm: hit.uMm,
+          startVMm: hit.vMm,
+          centerX:
+            usable.width > 0
+              ? Math.min(1, Math.max(0, (block.x + block.width / 2 - usable.x) / usable.width))
+              : 0.5,
+          centerY:
+            usable.height > 0
+              ? Math.min(1, Math.max(0, (block.y + block.height / 2 - usable.y) / usable.height))
+              : 0.5,
+        }
       }
       try {
         canvas.setPointerCapture(event.pointerId)
@@ -4919,9 +4941,17 @@ export default function Preview3D({
       if (drag.pointerId !== event.pointerId) return
       const hit = hitAt(event)
       if (!hit) return
-      const center = faceLocalToCenter(hit.overlay.layout, hit.uMm, hit.vMm)
-      engravingPositionRef.current = { centerX: center.centerX, centerY: center.centerY }
-      onEngravingPositionChangeRef.current?.(center.centerX, center.centerY)
+      const usable = hit.overlay.layout.usable
+      const centerX =
+        usable.width > 0
+          ? Math.min(1, Math.max(0, drag.centerX + (hit.uMm - drag.startUMm) / usable.width))
+          : drag.centerX
+      const centerY =
+        usable.height > 0
+          ? Math.min(1, Math.max(0, drag.centerY + (hit.vMm - drag.startVMm) / usable.height))
+          : drag.centerY
+      engravingPositionRef.current = { centerX, centerY }
+      onEngravingPositionChangeRef.current?.(centerX, centerY)
       viewer.scene.requestRender()
       event.preventDefault()
     }
