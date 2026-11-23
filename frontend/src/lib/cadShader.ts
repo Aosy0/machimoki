@@ -29,7 +29,7 @@ float cadLightFactor(vec3 positionEC, vec3 normalEC)
 `
 
 /**
- * 地形（高さ場メッシュ）用の明るさ計算。
+ * 地形（高さ場メッシュ）と完成形状（印刷プレビュー）で共通の明るさ計算。
  *
  * 地形の頂点法線は面の中で補間されるため、そのまま使うと三角形の稜線が消えて
  * 全体がぼやける。CAD調にポリゴンの向きが読めるよう、位置のスクリーン空間微分から
@@ -41,30 +41,30 @@ float cadLightFactor(vec3 positionEC, vec3 normalEC)
  * 地形では日照面のほぼ全面が純白に飛んで起伏が読めなくなるため、太陽高度45°の
  * 平坦面（light = 0.707）が飽和しないレンジにする。
  */
-export const TERRAIN_LIGHT_BASE = 0.34
-export const TERRAIN_LIGHT_GAIN = 0.66
+export const FACET_LIGHT_BASE = 0.34
+export const FACET_LIGHT_GAIN = 0.66
 
-export const CAD_TERRAIN_LIGHTING_GLSL = `
-float cadTerrainLightFactor(vec3 positionEC)
+export const CAD_FACET_LIGHTING_GLSL = `
+float cadFacetLightFactor(vec3 positionEC)
 {
     vec3 normal = normalize(cross(dFdx(positionEC), dFdy(positionEC)));
     float light = max(dot(normal, normalize(czm_lightDirectionEC)), 0.0);
-    return ${TERRAIN_LIGHT_BASE.toFixed(2)} + ${TERRAIN_LIGHT_GAIN.toFixed(2)} * light;
+    return ${FACET_LIGHT_BASE.toFixed(2)} + ${FACET_LIGHT_GAIN.toFixed(2)} * light;
 }
 `
 
-/** 太陽高度45°の平坦面での地形の明るさ。1に張り付くと起伏が飛ぶ。 */
-export const FLAT_TERRAIN_LIGHT_FACTOR = TERRAIN_LIGHT_BASE + TERRAIN_LIGHT_GAIN * Math.SQRT1_2
+/** 太陽高度45°の平坦面での明るさ。1に張り付くと起伏が飛ぶ。 */
+export const FLAT_FACET_LIGHT_FACTOR = FACET_LIGHT_BASE + FACET_LIGHT_GAIN * Math.SQRT1_2
 
 export const CAD_TERRAIN_FRAGMENT_SHADER = `
 in vec3 v_positionEC;
 in vec4 v_color;
 
-${CAD_TERRAIN_LIGHTING_GLSL}
+${CAD_FACET_LIGHTING_GLSL}
 
 void main()
 {
-    out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * cadTerrainLightFactor(v_positionEC), v_color.a));
+    out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * cadFacetLightFactor(v_positionEC), v_color.a));
 }
 `
 
@@ -93,16 +93,14 @@ void main()
 
 export const CAD_FRAGMENT_SHADER = `
 in vec3 v_positionEC;
-in vec3 v_cadNormalEC;
 in vec4 v_color;
 
-${CAD_LIGHTING_GLSL}
+${CAD_FACET_LIGHTING_GLSL}
 
 void main()
 {
-    // 最終形状・建物で同じ明るさ式を使う（建物はカスタムシェーダーから利用）。
-    float lightFactor = cadLightFactor(v_positionEC, v_cadNormalEC);
-
-    out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * lightFactor, v_color.a));
+    // 完成形状は地形と同じ面単位の陰影で描く。建物プレビュー用の式
+    // (0.61 + 0.95 * light) は日照面が飽和し、地形が白飛びするため使わない。
+    out_FragColor = czm_gammaCorrect(vec4(v_color.rgb * cadFacetLightFactor(v_positionEC), v_color.a));
 }
 `
