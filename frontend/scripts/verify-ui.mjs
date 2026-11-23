@@ -177,6 +177,8 @@ async function main() {
     engravingGlyphPaths: null,
     engravingViewFace: null,
     engravingZoom: null,
+    engravingHandleScreen: null,
+    engravingCursor: null,
     engravingOverlayVisible: null,
     engravingOverlayDrag: null,
     engravingResize: null,
@@ -507,14 +509,19 @@ async function main() {
         // モード中のズームボタンでカメラ距離が変わることを確認する。
         try {
           await page.waitForTimeout(1200)
+          const handleLocator = page.locator(
+            '[data-testid="engraving-overlay-handle-top-right"]',
+          )
           const heightBefore = await page.evaluate(
             () => window.__cesiumViewer?.camera?.positionCartographic?.height ?? null,
           )
+          const handleBefore = await handleLocator.boundingBox().catch(() => null)
           await page.click('[data-testid="engraving-zoom-out"]')
           await page.waitForTimeout(800)
           const heightAfter = await page.evaluate(
             () => window.__cesiumViewer?.camera?.positionCartographic?.height ?? null,
           )
+          const handleAfter = await handleLocator.boundingBox().catch(() => null)
           result.engravingZoom = {
             before: heightBefore === null ? null : Math.round(heightBefore * 10) / 10,
             after: heightAfter === null ? null : Math.round(heightAfter * 10) / 10,
@@ -522,6 +529,17 @@ async function main() {
               heightBefore !== null &&
               heightAfter !== null &&
               Math.abs(heightAfter - heightBefore) > 1,
+          }
+          // ハンドルはズームで画面サイズが変わらない（画面固定 12px）。
+          result.engravingHandleScreen = {
+            before: handleBefore ? Math.round(handleBefore.width * 10) / 10 : null,
+            after: handleAfter ? Math.round(handleAfter.width * 10) / 10 : null,
+            stable:
+              !!handleBefore &&
+              !!handleAfter &&
+              handleBefore.width >= 10 &&
+              handleAfter.width >= 10 &&
+              Math.abs(handleAfter.width - handleBefore.width) <= 2,
           }
         } catch {
           result.engravingZoom = null
@@ -585,6 +603,14 @@ async function main() {
             if (handleBox && blockBox && Number.isFinite(widthBefore)) {
               const hx = handleBox.x + handleBox.width / 2
               const hy = handleBox.y + handleBox.height / 2
+              // 隅の上では対角のリサイズカーソルになる。
+              await page.mouse.move(hx, hy)
+              await page.waitForTimeout(150)
+              const cursor = await page.evaluate(() => {
+                const canvas = document.querySelector('[data-testid="preview-canvas"] canvas')
+                return canvas ? getComputedStyle(canvas).cursor : ''
+              })
+              result.engravingCursor = { cursor, resize: cursor.includes('resize') }
               const dx = hx - (blockBox.x + blockBox.width / 2)
               const dy = hy - (blockBox.y + blockBox.height / 2)
               const length = Math.hypot(dx, dy) || 1
@@ -747,6 +773,9 @@ async function main() {
             const rect = svg?.querySelector('rect')
             return rect?.getAttribute('stroke') ?? null
           })
+          // 確認後は通常の刻印へ戻し、スクリーンショットには実使用時の状態を残す。
+          await customToggle.first().uncheck()
+          await page.waitForTimeout(400)
         }
       }
     }
@@ -795,6 +824,8 @@ async function main() {
         result.engravingSettingsHidden === true &&
         (result.engravingGlyphPaths ?? 0) > 0 &&
         result.engravingZoom?.changed === true &&
+        result.engravingHandleScreen?.stable === true &&
+        result.engravingCursor?.resize === true &&
         result.engravingOverlayVisible === true &&
         result.engravingResize?.changed === true &&
         result.engravingOverlayDrag?.moved === true &&

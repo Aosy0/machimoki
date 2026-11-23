@@ -13,8 +13,8 @@ import {
   editorWarnings,
   engravingCornerPoint,
   engravingCornerScale,
-  engravingHandleSizeMm,
-  hitEngravingCorner,
+  engravingResizeCursor,
+  hitEngravingCornerAtScreen,
   oppositeEngravingCorner,
   removeContentLine,
   scaleEngravingLines,
@@ -243,24 +243,42 @@ describe('engravingCornerPoint', () => {
   })
 })
 
-describe('hitEngravingCorner', () => {
+describe('hitEngravingCornerAtScreen', () => {
+  const identity = [1, 0, 0, 0, 1, 0, 0, 0, 1]
   const block = { x: 20, y: 20, width: 60, height: 20 }
+  const faceHeightMm = 100
 
-  it('隅の近くならその隅、離れた位置では null', () => {
-    assert.equal(hitEngravingCorner(block, 80.5, 40.5), 'top-right')
-    assert.equal(hitEngravingCorner(block, 20, 20), 'bottom-left')
-    assert.equal(hitEngravingCorner(block, 50, 30), null)
+  it('隅ハンドルの近くならその隅、離れた位置では null', () => {
+    // 面ローカル(top-right)=(80,40) → SVG(80,60)。
+    assert.equal(
+      hitEngravingCornerAtScreen(identity, block, faceHeightMm, 80.5, 60.5, 12),
+      'top-right',
+    )
+    // 面ローカル(bottom-left)=(20,20) → SVG(20,80)。
+    assert.equal(
+      hitEngravingCornerAtScreen(identity, block, faceHeightMm, 20, 80, 12),
+      'bottom-left',
+    )
+    assert.equal(hitEngravingCornerAtScreen(identity, block, faceHeightMm, 50, 70, 12), null)
   })
 
   it('幅か高さが0なら掴めない', () => {
-    assert.equal(hitEngravingCorner({ x: 0, y: 0, width: 0, height: 20 }, 0, 20), null)
+    assert.equal(
+      hitEngravingCornerAtScreen(identity, { x: 0, y: 0, width: 0, height: 20 }, 100, 0, 80, 12),
+      null,
+    )
   })
 })
 
-describe('engravingHandleSizeMm', () => {
-  it('短辺に比例し、1.2〜2.6mm に収まる', () => {
-    assert.equal(engravingHandleSizeMm({ x: 0, y: 0, width: 60, height: 20 }), 2.6)
-    assert.equal(engravingHandleSizeMm({ x: 0, y: 0, width: 60, height: 3 }), 1.2)
+describe('engravingResizeCursor', () => {
+  const identity = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  const block = { x: 20, y: 20, width: 60, height: 20 }
+
+  it('画面上の対角線の向きに合わせる', () => {
+    assert.equal(engravingResizeCursor(identity, block, 100, 'top-left'), 'nwse-resize')
+    assert.equal(engravingResizeCursor(identity, block, 100, 'bottom-right'), 'nwse-resize')
+    assert.equal(engravingResizeCursor(identity, block, 100, 'top-right'), 'nesw-resize')
+    assert.equal(engravingResizeCursor(identity, block, 100, 'bottom-left'), 'nesw-resize')
   })
 })
 
@@ -334,22 +352,26 @@ describe('anchorEngravingBlock', () => {
   }
 
   it('左下を固定すると、拡大後も左下が同じ位置に残る', () => {
-    const anchored = anchorEngravingBlock(options, current, next, 'bottom-left')
+    const anchor = { uMm: current.block.x, vMm: current.block.y }
+    const anchored = anchorEngravingBlock(options, anchor, next, 'bottom-left')
     const block = blockOf(anchored, next)
     assertClose(block.x, current.block.x, 1e-9)
     assertClose(block.y, current.block.y, 1e-9)
   })
 
   it('右上を固定すると、拡大後も右上が同じ位置に残る', () => {
-    const anchored = anchorEngravingBlock(options, current, next, 'top-right')
+    const anchor = {
+      uMm: current.block.x + current.block.width,
+      vMm: current.block.y + current.block.height,
+    }
+    const anchored = anchorEngravingBlock(options, anchor, next, 'top-right')
     const block = blockOf(anchored, next)
     assertClose(block.x + next.block.width, current.block.x + current.block.width, 1e-9)
     assertClose(block.y + next.block.height, current.block.y + current.block.height, 1e-9)
   })
 
   it('使用可能領域からはみ出す場合は中心を0..1にクランプする', () => {
-    const far = layout({ block: { x: 92, y: 50, width: 10, height: 10 } })
-    const anchored = anchorEngravingBlock(options, far, next, 'bottom-left')
+    const anchored = anchorEngravingBlock(options, { uMm: 92, vMm: 50 }, next, 'bottom-left')
     assert.equal(anchored.centerX, 1)
     assert.equal(anchored.centerY, 1)
   })

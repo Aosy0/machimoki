@@ -6,9 +6,11 @@ import {
   computeHomography,
   faceLocalToCenter,
   faceLocalToModel,
+  homographyScalePxPerMm,
   homographyToMatrix3d,
   modelToEnu,
   pointInFace,
+  projectHomographyPoint,
   worldLengthToMm,
   type MeshBounds,
   type ScreenPoint,
@@ -229,6 +231,37 @@ describe('computeHomography', () => {
     const value = homographyToMatrix3d(homography)
     assert.match(value, /^matrix3d\(/)
     assert.equal(value.split(',').length, 16)
+  })
+})
+
+describe('projectHomographyPoint', () => {
+  it('恒等変換はそのまま返す', () => {
+    assert.deepEqual(projectHomographyPoint([1, 0, 0, 0, 1, 0, 0, 0, 1], 3, 4), { x: 3, y: 4 })
+  })
+
+  it('分母が0なら null', () => {
+    assert.equal(projectHomographyPoint([1, 0, 0, 0, 1, 0, -1, 0, 1], 1, 0), null)
+  })
+})
+
+describe('homographyScalePxPerMm', () => {
+  const unit: ScreenPoint[] = [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0, y: 1 },
+  ]
+
+  it('局所倍率を px/mm で返す', () => {
+    const destination = unit.map((point) => ({ x: point.x * 2 + 10, y: point.y * 2 + 10 }))
+    const homography = computeHomography(unit, destination)
+    assert.ok(homography)
+    assert.ok(Math.abs(homographyScalePxPerMm(homography, 0.25, 0.5) - 2) < 1e-9)
+  })
+
+  it('恒等変換は1、投影できなければ0', () => {
+    assert.ok(Math.abs(homographyScalePxPerMm([1, 0, 0, 0, 1, 0, 0, 0, 1], 0.25, 0.5) - 1) < 1e-9)
+    assert.equal(homographyScalePxPerMm([1, 0, 0, 0, 1, 0, -1, 0, 1], 1, 0), 0)
   })
 })
 

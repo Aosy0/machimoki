@@ -117,7 +117,9 @@ import {
   type Vec3,
   buildOverlayFaceFrame,
   computeHomography,
+  faceLocalToCenter,
   faceLocalToModel,
+  homographyScalePxPerMm,
   homographyToMatrix3d,
   modelToEnu,
   pointInFace,
@@ -127,8 +129,8 @@ import {
   ENGRAVING_CORNERS,
   engravingCornerPoint,
   engravingCornerScale,
-  engravingHandleSizeMm,
-  hitEngravingCorner,
+  engravingResizeCursor,
+  hitEngravingCornerAtScreen,
   oppositeEngravingCorner,
   scaleEngravingLines,
   type EngravingCorner,
@@ -192,6 +194,12 @@ const ENGRAVING_ZOOM_MIN_FACTOR = 0.25
 const ENGRAVING_ZOOM_MAX_FACTOR = 8
 // 刻印オーバーレイのフェードイン用クラス（frontend/src/index.css）。
 const ENGRAVING_OVERLAY_FADE_CLASS = 'machimoki-engraving-overlay-in'
+// 刻印ブロックの四隅ハンドルは画面座標で一定の大きさにする（CSS px）。
+const ENGRAVING_HANDLE_SIZE_PX = 12
+// 当たり半径も画面座標で確保する（24×24 の操作領域）。
+const ENGRAVING_HANDLE_HIT_RADIUS_PX = 12
+// タッチ操作では 44×44 の操作領域を確保する（WCAG 2.5.5）。
+const ENGRAVING_TOUCH_HANDLE_HIT_RADIUS_PX = 22
 
 /** ワールド座標のカメラ姿勢（位置・視線・上方向）。 */
 interface CameraPose {
@@ -765,9 +773,13 @@ interface Preview3DProps {
   engravingDraft?: EngravingOptions | null
   /**
    * 3Dモデル上の四隅ハンドルのドラッグ結果。lines は掴んだ時点の設定を
-   * 一様拡大したもの、fixedCorner は位置を固定する対角の隅。
+   * 一様拡大したもの、fixedCorner は位置を固定する対角の隅、anchor はその面ローカルmm。
    */
-  onEngravingResize?: (lines: EngravingLine[], fixedCorner: EngravingCorner) => void
+  onEngravingResize?: (
+    lines: EngravingLine[],
+    fixedCorner: EngravingCorner,
+    anchor: EngravingPointMm,
+  ) => void
   /**
    * 刻印モード中か。モード中は完成形状を表示し、カメラ操作ロック・
    * 3Dオーバーレイ・自前ズームを有効にする。終了時は開始前の視点へ戻す。
@@ -1011,6 +1023,8 @@ export default function Preview3D({
   const engravingViewFaceRef = useRef<EngravingFace | null>(null)
   // 3Dモデル上の刻印オーバーレイ（SVG）。transform は scene.postRender で行列更新する。
   const engravingOverlaySvgRef = useRef<SVGSVGElement | null>(null)
+  // 直近フレームの SVG座標（mm）→ 画面px の射影行列（当たり判定に使う）。
+  const engravingOverlayHomographyRef = useRef<number[] | null>(null)
   const engravingOverlayRef = useRef<EngravingOverlayData | null>(engravingOverlay)
   engravingOverlayRef.current = engravingOverlay
   const onEngravingPositionChangeRef = useRef(onEngravingPositionChange)
@@ -1035,13 +1049,13 @@ export default function Preview3D({
   const engravingOverlayUpdateRef = useRef<(() => void) | null>(null)
   // 面フレームの計算結果（毎フレームの bbox 走査を避ける）。
   const engravingOverlayGeometryCacheRef = useRef<EngravingOverlayGeometryCache | null>(null)
-  // 位置ドラッグ中の開始状態（掴んだ点と、その時点のブロック中心）。null = 非ドラッグ。
+  // 位置ドラッグ中の開始状態（掴んだ点と、その時点のブロック中心mm）。null = 非ドラッグ。
   const engravingOverlayDragRef = useRef<{
     pointerId: number
     startUMm: number
     startVMm: number
-    centerX: number
-    centerY: number
+    centerUMm: number
+    centerVMm: number
   } | null>(null)
   // 四隅ハンドルの拡大縮小中に固定する情報（掴んだ時点の行サイズと対角）。
   const engravingOverlayResizeRef = useRef<{
@@ -3647,6 +3661,7 @@ export default function Preview3D({
     const viewer = viewerRef.current
     if (!svg || !viewer) return
     const hide = (): void => {
+      engravingOverlayHomographyRef.current = null
       if (svg.style.display !== 'none') {
         svg.style.display = 'none'
         // 次回表示時にフェードインをやり直せるようクラスを外す。
@@ -3700,6 +3715,7 @@ export default function Preview3D({
       hide()
       return
     }
+    engravingOverlayHomographyRef.current = homography
     if (svg.style.display !== 'block') {
       // 表示に切り替わる瞬間だけフェードインを再生する（CSS側で reduced-motion を尊重）。
       svg.style.display = 'block'
@@ -3708,6 +3724,28 @@ export default function Preview3D({
       svg.classList.add(ENGRAVING_OVERLAY_FADE_CLASS)
     }
     svg.style.transform = homographyToMatrix3d(homography)
+
+    // 四隅ハンドルは画面座標で一定の大きさに見えるよう、その隅の局所倍率から
+    // 面ローカルmmの一辺を逆算して属性を更新する（Reactの再レンダーでは消えない）。
+    const current = engravingOverlayRef.current
+    if (!current) return
+    const { block } = current.layout
+    if (block.width <= 0 || block.height <= 0) return
+    for (const handle of svg.querySelectorAll<SVGRectElement>('[data-engraving-handle]')) {
+      const corner = handle.dataset.engravingHandle as EngravingCorner | undefined
+      if (!corner) continue
+      const point = engravingCornerPoint(block, corner)
+      const centerX = point.uMm
+      const centerY = current.faceHeightMm - point.vMm
+      const scale = homographyScalePxPerMm(homography, centerX, centerY)
+      if (!(scale > 0)) continue
+      const size = ENGRAVING_HANDLE_SIZE_PX / scale
+      handle.setAttribute('x', String(centerX - size / 2))
+      handle.setAttribute('y', String(centerY - size / 2))
+      handle.setAttribute('width', String(size))
+      handle.setAttribute('height', String(size))
+      handle.setAttribute('rx', String(size * 0.2))
+    }
   }
   engravingOverlayUpdateRef.current = updateEngravingOverlay
 
@@ -4855,9 +4893,14 @@ export default function Preview3D({
       )
       return Cartesian3.dot(geometry.normalWorld, centerToCamera) > 0
     }
-    const hitAt = (
-      event: PointerEvent,
-    ): { uMm: number; vMm: number; overlay: EngravingOverlayData } | null => {
+    type EngravingHit = {
+      uMm: number
+      vMm: number
+      x: number
+      y: number
+      overlay: EngravingOverlayData
+    }
+    const hitAt = (event: PointerEvent): EngravingHit | null => {
       const overlay = engravingOverlayRef.current
       if (!overlay || !engravingEditActiveRef.current || sectionOnRef.current) return null
       const geometry = resolveEngravingOverlayGeometry()
@@ -4865,15 +4908,43 @@ export default function Preview3D({
       const point = canvasPoint(event)
       const local = engravingFaceLocalAtScreen(geometry, point.x, point.y)
       if (!local) return null
-      return { ...local, overlay }
+      return { ...local, x: point.x, y: point.y, overlay }
+    }
+    // 隅ハンドルは画面座標で判定する（面ローカルmmだとズームで当たり判定が縮む）。
+    const cornerAt = (hit: EngravingHit, event: PointerEvent): EngravingCorner | null => {
+      const homography = engravingOverlayHomographyRef.current
+      if (!homography) return null
+      return hitEngravingCornerAtScreen(
+        homography,
+        hit.overlay.layout.block,
+        hit.overlay.faceHeightMm,
+        hit.x,
+        hit.y,
+        event.pointerType === 'touch'
+          ? ENGRAVING_TOUCH_HANDLE_HIT_RADIUS_PX
+          : ENGRAVING_HANDLE_HIT_RADIUS_PX,
+      )
+    }
+    const resizeCursorAt = (hit: EngravingHit, corner: EngravingCorner): string | null => {
+      const homography = engravingOverlayHomographyRef.current
+      if (!homography) return null
+      return engravingResizeCursor(
+        homography,
+        hit.overlay.layout.block,
+        hit.overlay.faceHeightMm,
+        corner,
+      )
     }
     const onPointerDown = (event: PointerEvent): void => {
-      if (event.button !== 0) return
+      if (event.button !== 0 || !event.isPrimary) return
+      // 2本目のポインタで進行中のドラッグ状態を上書きしない。
+      if (engravingOverlayDragRef.current || engravingOverlayResizeRef.current) return
       const hit = hitAt(event)
       if (!hit) return
       // 隅ハンドルの上なら拡大縮小、面の内側なら位置移動として掴む。
-      const corner = hitEngravingCorner(hit.overlay.layout.block, hit.uMm, hit.vMm)
+      const corner = cornerAt(hit, event)
       const options = engravingDraftRef.current
+      let cursor = 'grabbing'
       if (corner && options && options.lines.length > 0) {
         const block = hit.overlay.layout.block
         const fixedCorner = oppositeEngravingCorner(corner)
@@ -4884,24 +4955,19 @@ export default function Preview3D({
           handle: engravingCornerPoint(block, corner),
           lines: options.lines,
         }
+        cursor = resizeCursorAt(hit, corner) ?? 'nwse-resize'
       } else {
         if (!pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)) {
           return
         }
         // 掴んだ点とブロック中心のずれを保ったまま、ポインタの移動量だけ動かす。
-        const { block, usable } = hit.overlay.layout
+        const { block } = hit.overlay.layout
         engravingOverlayDragRef.current = {
           pointerId: event.pointerId,
           startUMm: hit.uMm,
           startVMm: hit.vMm,
-          centerX:
-            usable.width > 0
-              ? Math.min(1, Math.max(0, (block.x + block.width / 2 - usable.x) / usable.width))
-              : 0.5,
-          centerY:
-            usable.height > 0
-              ? Math.min(1, Math.max(0, (block.y + block.height / 2 - usable.y) / usable.height))
-              : 0.5,
+          centerUMm: block.x + block.width / 2,
+          centerVMm: block.y + block.height / 2,
         }
       }
       try {
@@ -4909,7 +4975,7 @@ export default function Preview3D({
       } catch {}
       event.preventDefault()
       event.stopPropagation()
-      canvas.style.cursor = 'grabbing'
+      canvas.style.cursor = cursor
     }
     const onPointerMove = (event: PointerEvent): void => {
       const resize = engravingOverlayResizeRef.current
@@ -4920,7 +4986,7 @@ export default function Preview3D({
         const scale = engravingCornerScale(resize.anchor, resize.handle, hit)
         const lines = scaleEngravingLines(resize.lines, scale)
         if (lines !== resize.lines) {
-          onEngravingResizeRef.current?.(lines, resize.fixedCorner)
+          onEngravingResizeRef.current?.(lines, resize.fixedCorner, resize.anchor)
         }
         viewer.scene.requestRender()
         event.preventDefault()
@@ -4928,12 +4994,16 @@ export default function Preview3D({
       }
       const drag = engravingOverlayDragRef.current
       if (!drag) {
-        // 非ドラッグ時は隅ハンドルなら pointer、面の上なら grab カーソルにする。
+        // 非ドラッグ時は隅なら対角カーソル、面の上なら grab にする。
         const hit = hitAt(event)
-        const corner = hit ? hitEngravingCorner(hit.overlay.layout.block, hit.uMm, hit.vMm) : null
+        if (!hit) {
+          canvas.style.cursor = 'default'
+          return
+        }
+        const corner = cornerAt(hit, event)
         canvas.style.cursor = corner
-          ? 'pointer'
-          : hit && pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)
+          ? (resizeCursorAt(hit, corner) ?? 'pointer')
+          : pointInFace(hit.uMm, hit.vMm, hit.overlay.faceWidthMm, hit.overlay.faceHeightMm)
             ? 'grab'
             : 'default'
         return
@@ -4941,42 +5011,47 @@ export default function Preview3D({
       if (drag.pointerId !== event.pointerId) return
       const hit = hitAt(event)
       if (!hit) return
-      const usable = hit.overlay.layout.usable
-      const centerX =
-        usable.width > 0
-          ? Math.min(1, Math.max(0, drag.centerX + (hit.uMm - drag.startUMm) / usable.width))
-          : drag.centerX
-      const centerY =
-        usable.height > 0
-          ? Math.min(1, Math.max(0, drag.centerY + (hit.vMm - drag.startVMm) / usable.height))
-          : drag.centerY
-      engravingPositionRef.current = { centerX, centerY }
-      onEngravingPositionChangeRef.current?.(centerX, centerY)
+      const center = faceLocalToCenter(
+        hit.overlay.layout,
+        drag.centerUMm + (hit.uMm - drag.startUMm),
+        drag.centerVMm + (hit.vMm - drag.startVMm),
+      )
+      engravingPositionRef.current = center
+      onEngravingPositionChangeRef.current?.(center.centerX, center.centerY)
       viewer.scene.requestRender()
       event.preventDefault()
     }
-    const finishDrag = (event: PointerEvent): void => {
+    const endDrag = (pointerId: number): boolean => {
       const drag = engravingOverlayDragRef.current
       const resize = engravingOverlayResizeRef.current
-      const matches = drag?.pointerId === event.pointerId || resize?.pointerId === event.pointerId
-      if (!matches) return
+      if (drag?.pointerId !== pointerId && resize?.pointerId !== pointerId) return false
       engravingOverlayDragRef.current = null
       engravingOverlayResizeRef.current = null
+      return true
+    }
+    const finishDrag = (event: PointerEvent): void => {
+      if (!endDrag(event.pointerId)) return
       try {
         canvas.releasePointerCapture(event.pointerId)
       } catch {}
       canvas.style.cursor = 'default'
       event.preventDefault()
     }
+    // capture を失ったら状態だけ解除する（release は pointerup 側で行う）。
+    const onLostPointerCapture = (event: PointerEvent): void => {
+      if (endDrag(event.pointerId)) canvas.style.cursor = 'default'
+    }
     canvas.addEventListener('pointerdown', onPointerDown, { capture: true })
     canvas.addEventListener('pointermove', onPointerMove, { capture: true })
     canvas.addEventListener('pointerup', finishDrag, { capture: true })
     canvas.addEventListener('pointercancel', finishDrag, { capture: true })
+    canvas.addEventListener('lostpointercapture', onLostPointerCapture, { capture: true })
     return () => {
       canvas.removeEventListener('pointerdown', onPointerDown, { capture: true })
       canvas.removeEventListener('pointermove', onPointerMove, { capture: true })
       canvas.removeEventListener('pointerup', finishDrag, { capture: true })
       canvas.removeEventListener('pointercancel', finishDrag, { capture: true })
+      canvas.removeEventListener('lostpointercapture', onLostPointerCapture, { capture: true })
       engravingOverlayDragRef.current = null
       engravingOverlayResizeRef.current = null
       canvas.style.cursor = 'default'
@@ -5253,21 +5328,15 @@ export default function Preview3D({
               )
             }),
           )}
-          {/* 四隅の拡大縮小ハンドル（当たり判定は canvas 側で行う）。 */}
+          {/* 四隅の拡大縮小ハンドル。位置と大きさは postRender が画面座標基準で更新する。 */}
           {ENGRAVING_CORNERS.map((corner) => {
             const block = engravingOverlay.layout.block
             if (block.width <= 0 || block.height <= 0) return null
-            const size = engravingHandleSizeMm(block)
-            const point = engravingCornerPoint(block, corner)
             return (
               <rect
                 key={corner}
                 data-testid={`engraving-overlay-handle-${corner}`}
-                x={point.uMm - size / 2}
-                y={engravingOverlay.faceHeightMm - point.vMm - size / 2}
-                width={size}
-                height={size}
-                rx={size * 0.2}
+                data-engraving-handle={corner}
                 fill="var(--accent)"
                 fillOpacity={0.9}
                 stroke="var(--surface)"

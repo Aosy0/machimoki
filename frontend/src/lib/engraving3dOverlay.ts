@@ -257,6 +257,41 @@ export function computeHomography(
   ]
 }
 
+/** 射影変換行列（行優先3x3）で点を画面座標へ投影する。分母が0に近ければ null。 */
+export function projectHomographyPoint(
+  homography: readonly number[],
+  x: number,
+  y: number,
+): ScreenPoint | null {
+  if (homography.length < 9) return null
+  const [h11, h12, h13, h21, h22, h23, h31, h32] = homography
+  const w = h31 * x + h32 * y + 1
+  if (!Number.isFinite(w) || Math.abs(w) < 1e-9) return null
+  const px = (h11 * x + h12 * y + h13) / w
+  const py = (h21 * x + h22 * y + h23) / w
+  return Number.isFinite(px) && Number.isFinite(py) ? { x: px, y: py } : null
+}
+
+/**
+ * 射影変換のその点での局所倍率（px/mm、x/y方向の平均）。
+ * 画面固定サイズのハンドルを mm 座標で描くために使う。
+ */
+export function homographyScalePxPerMm(
+  homography: readonly number[],
+  x: number,
+  y: number,
+): number {
+  const origin = projectHomographyPoint(homography, x, y)
+  const alongX = projectHomographyPoint(homography, x + 1, y)
+  const alongY = projectHomographyPoint(homography, x, y + 1)
+  if (!origin || !alongX || !alongY) return 0
+  return (
+    (Math.hypot(alongX.x - origin.x, alongX.y - origin.y) +
+      Math.hypot(alongY.x - origin.x, alongY.y - origin.y)) /
+    2
+  )
+}
+
 /**
  * 射影変換行列（行優先3x3）を CSS matrix3d 文字列にする。
  * transform-origin: 0 0 で、要素ローカル座標をそのまま射影変換する。

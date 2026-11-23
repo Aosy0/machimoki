@@ -30,7 +30,11 @@ import { buildAutoTexts, defaultEngravingLines, resolvePlaceName } from './lib/e
 import { loadEngravingFont } from './lib/engravingFontClient'
 import { buildGlyphPathMap } from './lib/engravingSvg'
 import type { EngravingOverlayData } from './lib/engraving3dOverlay'
-import { anchorEngravingBlock, type EngravingCorner } from './lib/engravingEditor'
+import {
+  anchorEngravingBlock,
+  type EngravingCorner,
+  type EngravingPointMm,
+} from './lib/engravingEditor'
 import {
   useMapLibreRectangleSelection,
   type MapInteractionMode,
@@ -681,16 +685,16 @@ function App() {
   }, [])
   // 3Dの四隅ハンドル: 拡大後のレイアウトで、固定した対角の位置を保つよう中心を置き直す。
   const handleEngravingResize = useCallback(
-    (lines: EngravingLine[], fixedCorner: EngravingCorner) => {
+    (lines: EngravingLine[], fixedCorner: EngravingCorner, anchor: EngravingPointMm) => {
       const faceDims = engravingDraftFaceDims
       const font = engravingFont
       if (!faceDims || !font) return
       setEngravingDraft((prev) => {
         const next = { ...prev, lines }
         if (prev.lines.length === 0) return next
-        const currentLayout = layoutEngraving(faceDims, prev, font)
+        // 固定隅は pointerdown 時の面ローカルmmをそのまま使う（再レイアウト不要）。
         const nextLayout = layoutEngraving(faceDims, next, font)
-        return anchorEngravingBlock(next, currentLayout, nextLayout, fixedCorner)
+        return anchorEngravingBlock(next, anchor, nextLayout, fixedCorner)
       })
     },
     [engravingDraftFaceDims, engravingFont],

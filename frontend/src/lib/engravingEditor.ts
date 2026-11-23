@@ -15,6 +15,7 @@ import {
   type EngravingContentDef,
   type EngravingContentId,
 } from './engravingContent'
+import { type ScreenPoint, projectHomographyPoint } from './engraving3dOverlay'
 
 export interface EngravingEditorWarning {
   level: 'error' | 'warning'
@@ -39,11 +40,6 @@ function contentOrder(id: string): number {
 function formatMm(value: number): string {
   return String(Math.round(value * 10) / 10)
 }
-
-/**
- * 面ローカルmmの移動量を、使用可能領域内のブロック中心比（0..1）の変化に変換する。
- * （3Dモデル上でのドラッグは絶対座標から求めるため、この関数は使わない）
- */
 
 /** 内容をONにする。既に行があれば何も変えない。 */
 export function addContentLine(
@@ -154,31 +150,57 @@ export function oppositeEngravingCorner(corner: EngravingCorner): EngravingCorne
   }
 }
 
-/** 隅ハンドルの一辺（面ローカルmm）。小さいブロックでも掴める大きさにする。 */
-export function engravingHandleSizeMm(block: EngravingLayout['block']): number {
-  const minSide = Math.min(block.width, block.height)
-  return Math.min(2.6, Math.max(1.2, minSide * 0.25))
+/** ブロックの隅を画面座標へ投影する（SVG座標は y 下向き）。 */
+export function engravingCornerScreenPoint(
+  homography: readonly number[],
+  block: EngravingLayout['block'],
+  faceHeightMm: number,
+  corner: EngravingCorner,
+): ScreenPoint | null {
+  const point = engravingCornerPoint(block, corner)
+  return projectHomographyPoint(homography, point.uMm, faceHeightMm - point.vMm)
 }
 
-/** 面ローカルmmで、ブロックの隅ハンドルに当たる位置ならその隅を返す。 */
-export function hitEngravingCorner(
+/** 画面座標で、ブロックの隅ハンドルに当たる位置ならその隅を返す。 */
+export function hitEngravingCornerAtScreen(
+  homography: readonly number[],
   block: EngravingLayout['block'],
-  uMm: number,
-  vMm: number,
+  faceHeightMm: number,
+  x: number,
+  y: number,
+  radiusPx: number,
 ): EngravingCorner | null {
   if (block.width <= 0 || block.height <= 0) return null
-  const radius = engravingHandleSizeMm(block) * 0.9
   let hit: EngravingCorner | null = null
   let hitDistance = Number.POSITIVE_INFINITY
   for (const corner of ENGRAVING_CORNERS) {
-    const point = engravingCornerPoint(block, corner)
-    const distance = Math.hypot(uMm - point.uMm, vMm - point.vMm)
-    if (distance <= radius && distance < hitDistance) {
+    const point = engravingCornerScreenPoint(homography, block, faceHeightMm, corner)
+    if (!point) continue
+    const distance = Math.hypot(x - point.x, y - point.y)
+    if (distance <= radiusPx && distance < hitDistance) {
       hit = corner
       hitDistance = distance
     }
   }
   return hit
+}
+
+/** 隅をつかむときの対角カーソル（画面上の対角線の向きで決める）。 */
+export function engravingResizeCursor(
+  homography: readonly number[],
+  block: EngravingLayout['block'],
+  faceHeightMm: number,
+  corner: EngravingCorner,
+): 'nwse-resize' | 'nesw-resize' {
+  const point = engravingCornerScreenPoint(homography, block, faceHeightMm, corner)
+  const opposite = engravingCornerScreenPoint(
+    homography,
+    block,
+    faceHeightMm,
+    oppositeEngravingCorner(corner),
+  )
+  if (!point || !opposite) return 'nwse-resize'
+  return (point.x - opposite.x) * (point.y - opposite.y) >= 0 ? 'nwse-resize' : 'nesw-resize'
 }
 
 /**
@@ -230,11 +252,10 @@ export function scaleEngravingLines(lines: EngravingLine[], factor: number): Eng
  */
 export function anchorEngravingBlock(
   options: EngravingOptions,
-  currentLayout: EngravingLayout,
+  anchor: EngravingPointMm,
   nextLayout: EngravingLayout,
   fixedCorner: EngravingCorner,
 ): EngravingOptions {
-  const anchor = engravingCornerPoint(currentLayout.block, fixedCorner)
   const right = fixedCorner === 'bottom-right' || fixedCorner === 'top-right'
   const top = fixedCorner === 'top-left' || fixedCorner === 'top-right'
   const blockX = right ? anchor.uMm - nextLayout.block.width : anchor.uMm
