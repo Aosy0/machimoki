@@ -68,6 +68,7 @@ import {
 } from './lib/mapSelectionResize'
 import { coercePresetBounds, parseManualCoords } from './lib/mapSelectionInput'
 import { computeModelDimensions } from './lib/selectionBounds'
+import { omitAdvancedParameters } from './lib/parameterPersistence'
 
 type Tab = 'map' | 'preview'
 
@@ -78,6 +79,7 @@ const TABS = [
 ] as const
 
 // リロードで選択範囲・設定・タブが失われないよう localStorage に保存する。
+// 詳細設定の項目は保存も復元もしない（重い最終形状の自動生成を避けるため）。
 const SELECTION_STORAGE_KEY = 'machimoki.selectionBounds'
 const PARAMETERS_STORAGE_KEY = 'machimoki.parameters'
 const TAB_STORAGE_KEY = 'machimoki.activeTab'
@@ -159,7 +161,7 @@ function loadStoredParameters(): Parameters {
     if (!raw) return DEFAULT_PARAMETERS
     const parsed: unknown = JSON.parse(raw)
     if (parsed && typeof parsed === 'object') {
-      const stored = parsed as Partial<Parameters>
+      const stored = omitAdvancedParameters(parsed as Partial<Parameters>)
       const storedEngraving = stored.engraving
       return {
         ...DEFAULT_PARAMETERS,
@@ -243,7 +245,10 @@ function App() {
   // 設定とタブを保存する（リロードで復元する）。
   useEffect(() => {
     try {
-      localStorage.setItem(PARAMETERS_STORAGE_KEY, JSON.stringify(parameters))
+      localStorage.setItem(
+        PARAMETERS_STORAGE_KEY,
+        JSON.stringify(omitAdvancedParameters(parameters)),
+      )
     } catch {
       void 0
     }
